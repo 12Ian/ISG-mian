@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+sqlalchemy
+pyside6
+numpy
+opencv-python
+pandas
+librosa
+soundfile
+psutil
+pillow
+mutagen
+python-multipart
