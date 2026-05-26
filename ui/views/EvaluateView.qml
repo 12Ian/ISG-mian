@@ -43,12 +43,44 @@ Item {
     property var evalAlgorithmMap: ({})
     property var algoParamsMap: ({})
     property string pendingAlgoKey: ""
+    property var evalMetricHeaders: []
+
+    // 访问主窗口的全局状态管理器 (跨页面切换保持数据)
+    property var appState: typeof window !== "undefined" && window ? window.appState : null
 
     // 训练算法 -> 评估算法 绑定表 (key -> key)
     property var trainingToEvalKey: ({
         "training.image.sonar_oltr_classifier": "evaluation.multimodal.sonar_oltr_plud",
-        "training.image.yolov5_detector": "evaluation.image.yolov5_evaluator"
+        "training.image.yolov5_detector": "evaluation.image.yolov5_evaluator",
+        "training.timeseries.ship_predictor": "evaluation.timeseries.ship_evaluator",
+        "training.timeseries.hyfd_fault_diagnosis": "evaluation.timeseries.hyfd_fault_evaluator",
+        "training.multimodal.fusion_detector": "evaluation.multimodal.fusion_evaluator",
+        "training.multimodal.seg": "evaluation.multimodal.seg_evaluator"
     })
+
+    // 场景 → 算法 绑定表 (按场景key过滤算法key)
+    property var scenarioAlgoMap: ({
+        "underwater_target_detection_recognition": [
+            "training.image.sonar_oltr_classifier",
+            "training.image.ship_classifier",
+            "training.demo_classifier"
+        ],
+        "ship_target_recognition_tracking": [
+            "training.image.yolov5_detector"
+        ],
+        "system_health_fault_diagnosis": [
+            "training.timeseries.hyfd_fault_diagnosis"
+        ],
+        "intelligent_decision_command_control": [
+            "training.timeseries.ship_predictor"
+        ],
+        "multimodal_data_fusion": [
+            "training.multimodal.fusion_detector",
+            "training.multimodal.seg"
+        ]
+    })
+    // 所有训练算法的完整列表 (用于场景过滤)
+    property var allTrainingAlgos: []
 
     ListModel { id: scenarioModel }
     ListModel { id: datasetModel }
@@ -64,6 +96,21 @@ Item {
             if (!taskQueueModel.get(i).isSelected) _allSel = false
         }
         root.isAllSelected = _allSel
+    }
+
+    function filterAlgorithmsByScenario() {
+        algoModel.clear()
+        var scIdx = scenarioCombo.currentIndex
+        var scKey = scIdx >= 0 ? (scenarioModel.get(scIdx).key || "") : ""
+        var allowedKeys = root.scenarioAlgoMap[scKey] || []
+        for (var i = 0; i < root.allTrainingAlgos.length; i++) {
+            var algo = root.allTrainingAlgos[i]
+            // 无场景映射时显示所有算法，有映射则只显示匹配的
+            if (allowedKeys.length === 0 || allowedKeys.indexOf(algo.key) >= 0) {
+                algoModel.append(algo)
+            }
+        }
+        if (algoModel.count > 0) algoCombo.currentIndex = 0
     }
 
     function getCurrentTime() {
@@ -91,6 +138,8 @@ Item {
                 scenarioModel.append({id: scenarios[i].id || 0, name: scenarios[i].name || scenarios[i].key || "", key: scenarios[i].key || ""})
             }
             if (scenarioModel.count > 0) scenarioCombo.currentIndex = 0
+            // 场景加载完后检查是否有待恢复的训练任务
+            root.restoreTrainingTasksFromBackend()
         }
 
         function onDatasetsUpdated(data) {
@@ -120,10 +169,9 @@ Item {
             if (old) { var oks = Object.keys(old); for (var kk = 0; kk < oks.length; kk++) map[oks[kk]] = old[oks[kk]] }
             var oldEvalMap = root.evalAlgorithmMap || {}
             var evalMap = {}
-            // Preserve previously loaded evaluation entries
             for (var ek in oldEvalMap) { if (oldEvalMap.hasOwnProperty(ek)) evalMap[ek] = oldEvalMap[ek] }
-            algoModel.clear()
             var paramsMap = {}
+            var trainingList = []
             for (var i = 0; i < algorithms.length; i++) {
                 var a = algorithms[i]
                 map[String(a.id)] = a.name || a.key || ""
@@ -134,13 +182,15 @@ Item {
                 if (a.category === "evaluation") {
                     evalMap[a.key || a.name] = {id: a.id || 0, name: a.name || a.key || ""}
                 } else if (a.category === "training") {
-                    algoModel.append({id: a.id || 0, name: a.name || a.key || "", modality: a.modality || "", key: a.key || ""})
+                    trainingList.push({id: a.id || 0, name: a.name || a.key || "", modality: a.modality || "", key: a.key || ""})
                 }
             }
             root.algorithmNameMap = map
             root.evalAlgorithmMap = evalMap
             root.algoParamsMap = paramsMap
-            if (algoModel.count > 0) algoCombo.currentIndex = 0
+            root.allTrainingAlgos = trainingList
+            // 根据当前场景过滤算法列表
+            root.filterAlgorithmsByScenario()
         }
 
         function onTrainingTasksUpdated(data) {
@@ -173,6 +223,8 @@ Item {
                 }
                 if (allDone) root.isTraining = false
             }
+            // 同步到全局状态
+            root.saveToAppState()
         }
 
         function onTrainingStatusUpdated(message, success, progressVal) {
@@ -192,8 +244,14 @@ Item {
             if (root.isEvaluating) {
                 var items = data.items || []
                 for (var i = 0; i < items.length; i++) {
-                    if ((items[i].id || 0) === root.currentEvalTaskId && items[i].status === "completed") {
-                        backendService.getEvaluationResults(root.currentEvalTaskId)
+                    var it = items[i]
+                    if ((it.id || 0) === root.currentEvalTaskId) {
+                        if (it.status === "completed") {
+                            backendService.getEvaluationResults(root.currentEvalTaskId)
+                        } else if (it.status === "failed") {
+                            root.isEvaluating = false
+                            root.showToast("⚠️ 评估失败: " + (it.error_message || it.progress_message || "未知错误"))
+                        }
                         break
                     }
                 }
@@ -202,32 +260,144 @@ Item {
 
         function onEvaluationResultsUpdated(data) {
             evalResultModel.clear()
+            evalMetricHeaders = []
             var items = data && data.data ? data.data.items || [] : (data && data.items ? data.items : [])
+            // 收集所有指标键
+            var allKeys = []
+            for (var i = 0; i < items.length; i++) {
+                var mk = Object.keys(items[i].metrics || {})
+                for (var k = 0; k < mk.length; k++) {
+                    if (allKeys.indexOf(mk[k]) < 0) allKeys.push(mk[k])
+                }
+            }
+            // 过滤掉内部字段和超大对象
+            var skipKeys = ["num_classes", "class_names", "per_class_ap", "model_type", "num_test_sequences",
+                           "label_distribution", "train_count", "val_count", "test_count", "feature_cols"]
+            for (var s = 0; s < skipKeys.length; s++) {
+                var idx = allKeys.indexOf(skipKeys[s])
+                if (idx >= 0) allKeys.splice(idx, 1)
+            }
+            if (allKeys.length === 0) allKeys = ["accuracy", "macro_f1"]
+            evalMetricHeaders = allKeys
+
             for (var i = 0; i < items.length; i++) {
                 var r = items[i]
                 var m = r.metrics || {}
+                var vals = []
+                for (var k = 0; k < allKeys.length; k++) {
+                    var v = m[allKeys[k]]
+                    if (v !== undefined && v !== null) {
+                        if (typeof v === "number") vals.push(v < 10 ? Number(v).toFixed(4) : Number(v).toFixed(2))
+                        else vals.push(String(v))
+                    } else {
+                        vals.push("-")
+                    }
+                }
                 evalResultModel.append({
                     taskId: r.task_id || 0,
                     modelName: r.model_name || "",
                     evalMethod: r.model_name || r.method || "评估算法",
-                    accuracy: m.accuracy !== undefined ? Number(m.accuracy).toFixed(2) : "-",
-                    osfm: m.osfm !== undefined ? Number(m.osfm).toFixed(4) : "-",
-                    macroF1: m.macro_f1 !== undefined ? Number(m.macro_f1).toFixed(4) : "-",
-                    gmean: m.gmean !== undefined ? Number(m.gmean).toFixed(4) : "-",
-                    nma: m.nma !== undefined ? Number(m.nma).toFixed(4) : "-",
+                    metricValues: vals,
+                    metricValuesJson: JSON.stringify(vals),
                     summary: r.summary || ""
                 })
             }
             root.isEvaluating = false
+            root.saveToAppState()
             if (evalResultModel.count > 0) root.showToast("✅ 评估比对完成，共 " + evalResultModel.count + " 条结果")
         }
     }
 
     Component.onCompleted: {
+        // 从全局状态恢复评估历史和训练队列
+        root.restoreFromAppState()
         backendService.getScenarios()
         backendService.getDatasets(1, 100, "")
-        // Load ALL algorithms: training for dropdown, evaluation for binding map
         backendService.getAlgorithms("", "")
+        root.restoreTrainingTasksFromBackend()
+    }
+
+    Component.onDestruction: {
+        root.saveToAppState()
+    }
+
+    // ================= 全局状态保存/恢复 =================
+    function saveToAppState() {
+        if (!root.appState) return
+        // 把 ListModel 序列化为 JSON 数组保存
+        var histArr = []
+        for (var hi = 0; hi < evalHistoryModel.count; hi++) {
+            var h = evalHistoryModel.get(hi)
+            histArr.push({projectName: h.projectName, scenario: h.scenario, datasets: h.datasets,
+                          algos: h.algos, trainStatus: h.trainStatus, evalReport: h.evalReport,
+                          time: h.time, detailsJson: h.detailsJson})
+        }
+        root.appState.evalHistoryJson = JSON.stringify(histArr)
+
+        var queueArr = []
+        for (var qi = 0; qi < taskQueueModel.count; qi++) {
+            var q = taskQueueModel.get(qi)
+            queueArr.push({taskId: q.taskId, evalTaskId: q.evalTaskId, scenario: q.scenario,
+                           dataset: q.dataset, datasetId: q.datasetId, algo: q.algo,
+                           algoId: q.algoId, algoKey: q.algoKey, params: q.params,
+                           isSelected: q.isSelected, trainStatus: q.trainStatus,
+                           trainProgress: q.trainProgress, progressMessage: q.progressMessage,
+                           dbStatus: q.dbStatus, resultJson: q.resultJson, outputDir: q.outputDir})
+        }
+        root.appState.evalTaskQueueJson = JSON.stringify(queueArr)
+
+        var resArr = []
+        for (var ri = 0; ri < evalResultModel.count; ri++) {
+            var r = evalResultModel.get(ri)
+            resArr.push({taskId: r.taskId, modelName: r.modelName, evalMethod: r.evalMethod,
+                         metricValues: r.metricValues, metricValuesJson: r.metricValuesJson, summary: r.summary})
+        }
+        root.appState.evalResultJson = JSON.stringify(resArr)
+        root.appState.evalMetricHeadersJson = JSON.stringify(root.evalMetricHeaders)
+        root.appState.evalIsTraining = root.isTraining
+        root.appState.evalTaskCounter = root.taskCounter
+    }
+
+    function restoreFromAppState() {
+        if (!root.appState) return
+        root.isTraining = root.appState.evalIsTraining || false
+        root.taskCounter = root.appState.evalTaskCounter || 1
+
+        // 恢复评估历史
+        try {
+            var histArr = JSON.parse(root.appState.evalHistoryJson || "[]")
+            for (var hi = 0; hi < histArr.length; hi++) {
+                evalHistoryModel.append(histArr[hi])
+            }
+        } catch(e) {}
+
+        // 恢复训练任务队列
+        try {
+            var queueArr = JSON.parse(root.appState.evalTaskQueueJson || "[]")
+            for (var qi = 0; qi < queueArr.length; qi++) {
+                taskQueueModel.append(queueArr[qi])
+            }
+        } catch(e) {}
+
+        // 恢复评估结果
+        try {
+            var resArr = JSON.parse(root.appState.evalResultJson || "[]")
+            for (var ri = 0; ri < resArr.length; ri++) {
+                evalResultModel.append(resArr[ri])
+            }
+        } catch(e) {}
+
+        // 恢复评估指标表头
+        try {
+            root.evalMetricHeaders = JSON.parse(root.appState.evalMetricHeadersJson || "[]")
+        } catch(e) {}
+    }
+
+    function restoreTrainingTasksFromBackend() {
+        // 当场景下拉框有数据且没有本地队列时，查后端补充正在训练/已完成的任务
+        if (scenarioModel.count === 0) return
+        if (taskQueueModel.count > 0) return  // 已有队列不重复查询
+        backendService.getTrainingTasks(0, "")
     }
 
     // ================= Toast =================
@@ -337,10 +507,12 @@ Item {
                             time: root.getCurrentTime(),
                             detailsJson: JSON.stringify(detailsArr)
                         })
+                        root.saveToAppState()
                         saveProjectPopup.close()
                         root.showToast("✅ 评估工程已归档")
                         taskQueueModel.clear(); evalResultModel.clear()
                         root.taskCounter = 1; root.viewMode = "history"
+                        root.saveToAppState()
                     }
                 }
             }
@@ -582,6 +754,7 @@ Item {
                     ComboBox { id: scenarioCombo; model: scenarioModel; textRole: "name"; Layout.preferredWidth: 160
                         background: Rectangle { color: root.bgDark; border.color: root.borderColor; radius: 4 }
                         contentItem: Text { text: parent.currentText; color: root.textColor; verticalAlignment: Text.AlignVCenter; padding: 10 }
+                        onCurrentIndexChanged: root.filterAlgorithmsByScenario()
                     }
                 }
                 Text { text: "➡"; color: root.borderColor; font.pixelSize: 16 }
@@ -746,7 +919,7 @@ Item {
                                     property bool btnHov: delBtnMa.containsMouse
                                     Text { text: "删除"; color: root.dangerColor; font.pixelSize: 11; anchors.centerIn: parent }
                                     MouseArea { id: delBtnMa; anchors.fill: parent; cursorShape: Qt.PointingHandCursor; hoverEnabled: true
-                                        onClicked: { taskQueueModel.remove(index); root.checkStates() }
+                                        onClicked: { taskQueueModel.remove(index); root.checkStates(); root.saveToAppState() }
                                     }
                                 }
                             }
@@ -787,17 +960,26 @@ Item {
                     Text { visible: evalResultModel.count === 0; text: root.isEvaluating ? "⏳ 正在执行评估比对..." : "请先完成训练，然后点击启动评估比对"; color: root.isEvaluating ? root.primaryColor : root.textMuted; font.pixelSize: 13; font.family: "Courier"; anchors.centerIn: parent }
 
                     ColumnLayout { anchors.fill: parent; spacing: 0; visible: evalResultModel.count > 0
-                        // 表头
-                        Rectangle { Layout.fillWidth: true; height: 36; color: root.bgDark
-                            RowLayout { anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12; spacing: 8
-                                Label { text: "模型"; color: root.textMuted; font.pixelSize: 12; font.bold: true; Layout.preferredWidth: 100 }
-                                Label { text: "方法"; color: root.textMuted; font.pixelSize: 12; font.bold: true; Layout.preferredWidth: 70 }
-                                Label { text: "Acc(%)↑"; color: root.textMuted; font.pixelSize: 12; font.bold: true; Layout.preferredWidth: 80; horizontalAlignment: Text.AlignRight }
-                                Label { text: "OSFM↑"; color: root.textMuted; font.pixelSize: 12; font.bold: true; Layout.preferredWidth: 80; horizontalAlignment: Text.AlignRight }
-                                Label { text: "Macro-F1↑"; color: root.textMuted; font.pixelSize: 12; font.bold: true; Layout.preferredWidth: 85; horizontalAlignment: Text.AlignRight }
-                                Label { text: "G-Mean↑"; color: root.textMuted; font.pixelSize: 12; font.bold: true; Layout.preferredWidth: 85; horizontalAlignment: Text.AlignRight }
-                                Label { text: "NMA↑"; color: root.textMuted; font.pixelSize: 12; font.bold: true; Layout.preferredWidth: 80; horizontalAlignment: Text.AlignRight }
-                                Item { Layout.fillWidth: true }
+                        // 表头 - 动态列 (可横向滚动)
+                        Rectangle { Layout.fillWidth: true; height: 40; color: root.bgDark
+                            Flickable {
+                                anchors.fill: parent
+                                contentWidth: headerRow.implicitWidth + 24
+                                clip: true; boundsBehavior: Flickable.StopAtBounds
+                                Row {
+                                    id: headerRow; anchors.leftMargin: 12; anchors.verticalCenter: parent.verticalCenter
+                                    spacing: 8
+                                    Label { text: "模型"; color: root.textMuted; font.pixelSize: 12; font.bold: true; width: 120 }
+                                    Repeater {
+                                        model: evalMetricHeaders
+                                        Label {
+                                            text: String(modelData).length > 10 ? String(modelData).substring(0, 10) + "…" : modelData
+                                            color: root.textMuted; font.pixelSize: 11; font.bold: true
+                                            width: Math.max(75, String(modelData).length * 10)
+                                            elide: Text.ElideRight; horizontalAlignment: Text.AlignRight
+                                        }
+                                    }
+                                }
                             }
                         }
                         Rectangle { Layout.fillWidth: true; height: 1; color: root.borderColor }
@@ -809,16 +991,25 @@ Item {
                                 width: ListView.view ? ListView.view.width : 0; height: 40
                                 color: index % 2 === 0 ? Theme.panel : "transparent"
                                 Rectangle { width: parent.width; height: 1; color: root.borderColor; anchors.bottom: parent.bottom }
+                                property var _vals: JSON.parse(metricValuesJson || "[]")
 
-                                RowLayout { anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12; spacing: 8
-                                    Label { text: modelName; color: root.primaryColor; font.pixelSize: 13; font.bold: true; Layout.preferredWidth: 100; elide: Text.ElideRight }
-                                    Label { text: evalMethod; color: root.textColor; font.pixelSize: 13; Layout.preferredWidth: 70 }
-                                    Label { text: accuracy; color: root.textColor; font.pixelSize: 14; font.family: "Courier"; font.bold: true; Layout.preferredWidth: 80; horizontalAlignment: Text.AlignRight }
-                                    Label { text: osfm; color: root.textColor; font.pixelSize: 14; font.family: "Courier"; font.bold: true; Layout.preferredWidth: 80; horizontalAlignment: Text.AlignRight }
-                                    Label { text: macroF1; color: root.textColor; font.pixelSize: 14; font.family: "Courier"; font.bold: true; Layout.preferredWidth: 85; horizontalAlignment: Text.AlignRight }
-                                    Label { text: gmean; color: root.textColor; font.pixelSize: 14; font.family: "Courier"; font.bold: true; Layout.preferredWidth: 85; horizontalAlignment: Text.AlignRight }
-                                    Label { text: nma; color: root.textColor; font.pixelSize: 14; font.family: "Courier"; font.bold: true; Layout.preferredWidth: 80; horizontalAlignment: Text.AlignRight }
-                                    Item { Layout.fillWidth: true }
+                                Flickable {
+                                    anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12
+                                    contentWidth: dataRow.implicitWidth
+                                    clip: true; boundsBehavior: Flickable.StopAtBounds
+                                    Row {
+                                        id: dataRow; spacing: 8; anchors.verticalCenter: parent.verticalCenter
+                                        Label { text: modelName; color: root.primaryColor; font.pixelSize: 13; font.bold: true; width: 120; elide: Text.ElideRight }
+                                        Repeater {
+                                            model: root.evalMetricHeaders.length
+                                            Label {
+                                                text: index < _vals.length ? _vals[index] : "-"
+                                                color: root.textColor; font.pixelSize: 13; font.family: "Courier"; font.bold: true
+                                                width: Math.max(75, String(root.evalMetricHeaders[index] || "").length * 10)
+                                                horizontalAlignment: Text.AlignRight
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -834,7 +1025,7 @@ Item {
                             Text { text: "清空评估面板"; color: root.dangerColor; font.pixelSize: 12; font.bold: true }
                         }
                         MouseArea { anchors.fill: parent; cursorShape: evalResultModel.count > 0 ? Qt.PointingHandCursor : Qt.ForbiddenCursor; enabled: evalResultModel.count > 0
-                            onClicked: { taskQueueModel.clear(); evalResultModel.clear() }
+                            onClicked: { taskQueueModel.clear(); evalResultModel.clear(); root.saveToAppState() }
                         }
                     }
                     Rectangle { width: 160; height: 36; radius: 4
@@ -912,25 +1103,10 @@ Item {
         return result
     }
 
-    function appendTaskToQueue(useDefaults) {
+    function appendTaskToQueue() {
         var dsItem = datasetModel.get(datasetCombo.currentIndex)
         var algoItem = algoModel.get(algoCombo.currentIndex)
-
-        var taskParams = {}
-        if (useDefaults) {
-            var rawParams = root.algoParamsMap[root.pendingAlgoKey] || []
-            for (var i = 0; i < rawParams.length; i++) {
-                var rp = rawParams[i]
-                var v = rp.default_value
-                if (typeof v !== "string") v = JSON.stringify(v)
-                if (v === "true") { taskParams[rp.name] = true }
-                else if (v === "false") { taskParams[rp.name] = false }
-                else if (!isNaN(v) && v.trim() !== "") { taskParams[rp.name] = Number(v) }
-                else { taskParams[rp.name] = v }
-            }
-        } else {
-            taskParams = root.collectEditedParams()
-        }
+        var taskParams = root.collectEditedParams()
 
         taskQueueModel.append({
             taskId: 0,
@@ -954,6 +1130,7 @@ Item {
         root.checkStates()
         root.pendingAlgoKey = ""
         algoParamsPopup.close()
+        root.saveToAppState()
         root.showToast("✅ 已追加训练任务至队列")
     }
 
@@ -967,44 +1144,64 @@ Item {
     }
 
     function startEvaluation() {
-        root.isEvaluating = true
         evalResultModel.clear()
+
+        var totalTasks = taskQueueModel.count
+        var selectedDone = 0
+        var noEvalBind = 0
+        var noCheckpoint = 0
+        var startedCount = 0
 
         for (var i = 0; i < taskQueueModel.count; i++) {
             var t = taskQueueModel.get(i)
-            if (t.isSelected && t.trainStatus === 2 && t.taskId > 0) {
-                var scId = root.findScenarioId(t.scenario)
+            if (!t.isSelected) continue
+            if (t.trainStatus !== 2) continue
+            if (!t.taskId || t.taskId <= 0) continue
+            selectedDone++
 
-                // 查找绑定的评估算法
-                var evalAlgoId = 0
-                var evalKey = root.trainingToEvalKey[t.algoKey || ""]
-                if (evalKey && root.evalAlgorithmMap[evalKey]) {
-                    evalAlgoId = root.evalAlgorithmMap[evalKey].id
-                }
-                if (!evalAlgoId) {
-                    // 无绑定的评估算法, 回退到训练算法ID
-                    evalAlgoId = t.algoId || 0
-                }
-
-                // 提取训练产出的 checkpoint 路径
-                var checkpointPath = ""
-                var rj = t.resultJson || {}
-                if (rj.artifacts && rj.artifacts.length > 0) {
-                    checkpointPath = rj.artifacts[0] || ""
-                }
-
-                var evalParams = {}
-                if (checkpointPath) {
-                    evalParams.model_checkpoint_path = checkpointPath
-                }
-
-                var evalResult = backendService.createEvaluationTask(scId, t.datasetId, t.datasetId, evalAlgoId, evalParams)
-                if (evalResult && evalResult.status === "success") {
-                    taskQueueModel.setProperty(i, "evalTaskId", evalResult.id || 0)
-                    backendService.startEvaluationTask(evalResult.id)
-                    root.currentEvalTaskId = evalResult.id || 0
-                }
+            var scId = root.findScenarioId(t.scenario)
+            var evalAlgoId = 0
+            var evalKey = root.trainingToEvalKey[t.algoKey || ""]
+            if (evalKey && root.evalAlgorithmMap[evalKey]) {
+                evalAlgoId = root.evalAlgorithmMap[evalKey].id
             }
+            if (!evalAlgoId) {
+                noEvalBind++
+                continue
+            }
+
+            var checkpointPath = ""
+            var rj = t.resultJson || {}
+            if (rj.artifacts && rj.artifacts.length > 0) {
+                checkpointPath = rj.artifacts[0] || ""
+            }
+            if (!checkpointPath) {
+                noCheckpoint++
+                continue
+            }
+
+            var evalParams = {}
+            evalParams.model_checkpoint_path = checkpointPath
+
+            var evalResult = backendService.createEvaluationTask(scId, t.datasetId, t.datasetId, evalAlgoId, evalParams)
+            if (evalResult && evalResult.status === "success") {
+                taskQueueModel.setProperty(i, "evalTaskId", evalResult.id || 0)
+                backendService.startEvaluationTask(evalResult.id)
+                root.currentEvalTaskId = evalResult.id || 0
+                startedCount++
+            } else {
+                root.showToast("⚠️ 创建评估任务失败: " + (evalResult ? (evalResult.message || "未知") : "无响应"))
+            }
+        }
+
+        if (startedCount > 0) {
+            root.isEvaluating = true
+        } else {
+            var reason = "总任务:" + totalTasks + " 已完成选中:" + selectedDone
+            if (selectedDone === 0) reason += " (请勾选已完成训练的任务)"
+            else if (noEvalBind > 0) reason += " 缺评估绑定:" + noEvalBind
+            else if (noCheckpoint > 0) reason += " 缺模型文件:" + noCheckpoint
+            root.showToast("⚠️ 无可评估任务 - " + reason)
         }
     }
 
@@ -1026,7 +1223,8 @@ Item {
                 var rp = rawParams[i]
                 var val = rp.default_value
                 if (typeof val !== "string") val = JSON.stringify(val)
-                editable.push({name: rp.name, label: rp.label || rp.name, value: val})
+                var opts = rp.options || rp.options_json || []
+                editable.push({name: rp.name, label: rp.label || rp.name, value: val, defaultValue: val, optionsJson: JSON.stringify(opts)})
             }
             paramEditModel.clear()
             for (var j = 0; j < editable.length; j++) {
@@ -1073,13 +1271,33 @@ Item {
                     delegate: Rectangle {
                         width: paramEditList.width; height: 40
                         color: index % 2 === 0 ? "transparent" : root.tableHoverBg
+                        property var _opts: { try { return JSON.parse(model.optionsJson || "[]") } catch(e) { return [] } }
                         RowLayout {
                             anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12; spacing: 10
                             Text {
                                 text: model.label; color: root.textColor; font.pixelSize: 13
                                 Layout.fillWidth: true; verticalAlignment: Text.AlignVCenter
                             }
+                            // 有 options = 下拉框
+                            ComboBox {
+                                visible: _opts.length > 0
+                                Layout.preferredWidth: 200
+                                model: _opts
+                                currentIndex: {
+                                    var cv = model.value !== undefined ? String(model.value) : ""
+                                    for (var oi = 0; oi < _opts.length; oi++) { if (String(_opts[oi]) === cv) return oi }
+                                    return 0
+                                }
+                                onCurrentIndexChanged: {
+                                    if (currentIndex >= 0 && currentIndex < _opts.length)
+                                        paramEditModel.setProperty(index, "value", _opts[currentIndex])
+                                }
+                                background: Rectangle { color: "transparent"; border.color: root.borderColor; border.width: 1; radius: 4 }
+                                contentItem: Text { text: parent.currentText || ""; color: root.primaryColor; font.pixelSize: 13; verticalAlignment: Text.AlignVCenter; padding: 8 }
+                            }
+                            // 无 options = 文本输入
                             Rectangle {
+                                visible: _opts.length === 0
                                 Layout.preferredWidth: 200; height: 30
                                 color: "transparent"; border.color: root.borderColor; border.width: 1; radius: 4
                                 TextInput {
@@ -1097,16 +1315,21 @@ Item {
             RowLayout { Layout.fillWidth: true; spacing: 15
                 Item { Layout.fillWidth: true }
                 Button {
-                    text: "使用默认值"; Layout.preferredWidth: 100; Layout.preferredHeight: 32
+                    text: "恢复默认"; Layout.preferredWidth: 100; Layout.preferredHeight: 32
                     background: Rectangle { color: "transparent"; border.color: root.borderColor; border.width: 1; radius: 4 }
                     contentItem: Text { text: parent.text; color: root.textMuted; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                    onClicked: root.appendTaskToQueue(true)
+                    onClicked: {
+                        for (var ri = 0; ri < paramEditModel.count; ri++) {
+                            var defVal = paramEditModel.get(ri).defaultValue
+                            if (defVal !== undefined) paramEditModel.setProperty(ri, "value", defVal)
+                        }
+                    }
                 }
                 Button {
                     text: "确认追加"; Layout.preferredWidth: 100; Layout.preferredHeight: 32
                     background: Rectangle { color: root.primaryColor; radius: 4 }
                     contentItem: Text { text: parent.text; color: "black"; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                    onClicked: root.appendTaskToQueue(false)
+                    onClicked: root.appendTaskToQueue()
                 }
             }
         }

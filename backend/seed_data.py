@@ -2043,6 +2043,112 @@ DEFAULT_ALGORITHMS = (
         ],
     },
     # =========================================================================
+    # 多模态语义分割 - 图像+雷达
+    # =========================================================================
+    {
+        "key": "training.multimodal.seg",
+        "name": "多模态语义分割训练 (图像+雷达)",
+        "category": "training",
+        "modality": "multimodal",
+        "entry_type": "python_function",
+        "module_path": "plugins.training.multimodal_seg",
+        "callable_name": "run",
+        "description": "多模态UNet融合RGB图像和雷达特征，逐像素语义分割水面场景。",
+        "input_contract": {"dataset_required": True, "sample_required": True, "fields": ["images", "semantic_masks"]},
+        "output_contract": {"produces": ["model_checkpoint"], "artifact_types": ["checkpoint"]},
+        "parameters": [
+            {"name": "epochs", "label": "训练轮次", "type": "integer", "required": False, "default_value": 30, "description": "训练epoch"},
+            {"name": "batch_size", "label": "批大小", "type": "integer", "required": False, "default_value": 8, "description": "批次大小"},
+            {"name": "learning_rate", "label": "学习率", "type": "number", "required": False, "default_value": 0.001, "description": "学习率"},
+            {"name": "img_size", "label": "图像尺寸", "type": "integer", "required": False, "default_value": 256, "description": "输入尺寸"},
+            {"name": "train_ratio", "label": "训练集比例", "type": "number", "required": False, "default_value": 0.7, "description": "训练集占比"},
+            {"name": "val_ratio", "label": "验证集比例", "type": "number", "required": False, "default_value": 0.15, "description": "验证集占比"},
+        ],
+    },
+    # =========================================================================
+    # 多模态融合检测 - 图像+雷达
+    # =========================================================================
+    {
+        "key": "training.multimodal.fusion_detector",
+        "name": "多模态融合检测训练 (图像+雷达)",
+        "category": "training",
+        "modality": "multimodal",
+        "entry_type": "python_function",
+        "module_path": "plugins.training.multimodal_fusion_detector",
+        "callable_name": "run",
+        "description": "双流CNN同时处理RGB图像和雷达特征图，特征融合后进行目标检测分类。",
+        "input_contract": {"dataset_required": True, "sample_required": True, "fields": ["images", "radar_npz", "yolo_labels"]},
+        "output_contract": {"produces": ["model_checkpoint"], "artifact_types": ["checkpoint"]},
+        "parameters": [
+            {"name": "epochs", "label": "训练轮次", "type": "integer", "required": False, "default_value": 50, "description": "训练epoch"},
+            {"name": "batch_size", "label": "批大小", "type": "integer", "required": False, "default_value": 16, "description": "批次大小"},
+            {"name": "learning_rate", "label": "学习率", "type": "number", "required": False, "default_value": 0.001, "description": "初始学习率"},
+            {"name": "img_size", "label": "图像尺寸", "type": "integer", "required": False, "default_value": 320, "description": "输入图像尺寸"},
+            {"name": "train_ratio", "label": "训练集比例", "type": "number", "required": False, "default_value": 0.7, "description": "训练集占比"},
+            {"name": "val_ratio", "label": "验证集比例", "type": "number", "required": False, "default_value": 0.15, "description": "验证集占比"},
+        ],
+    },
+    # =========================================================================
+    # 故障诊断训练 - HyFD-SME
+    # =========================================================================
+    {
+        "key": "training.timeseries.hyfd_fault_diagnosis",
+        "name": "HyFD-SME 主机故障诊断训练",
+        "category": "training",
+        "modality": "tabular",
+        "entry_type": "python_function",
+        "module_path": "plugins.training.hyfd_fault_diagnosis",
+        "callable_name": "run",
+        "description": "基于HyFD-SME混合模型(时域特征+ResNet34+注意力)的船舶主机故障诊断，排气温度6类故障分类。",
+        "input_contract": {"dataset_required": True, "sample_required": True, "fields": ["csv_file"]},
+        "output_contract": {"produces": ["model_checkpoint"], "artifact_types": ["checkpoint"]},
+        "parameters": [
+            {"name": "epochs", "label": "训练轮次", "type": "integer", "required": False, "default_value": 100, "description": "训练epoch"},
+            {"name": "batch_size", "label": "批大小", "type": "integer", "required": False, "default_value": 256, "description": "批次大小"},
+            {"name": "learning_rate", "label": "学习率", "type": "number", "required": False, "default_value": 0.001, "description": "最大学习率"},
+            {"name": "window_size", "label": "滑动窗口", "type": "integer", "required": False, "default_value": 64, "description": "时序窗口大小"},
+            {"name": "stride", "label": "窗口步长", "type": "integer", "required": False, "default_value": 16, "description": "滑动窗口步长"},
+            {"name": "random_seed", "label": "随机种子", "type": "integer", "required": False, "default_value": 777, "description": "数据划分种子"},
+            {"name": "snr", "label": "信噪比(dB)", "type": "string", "required": False, "default_value": "None", "options": ["None", "-4", "-2", "0", "2", "4"], "description": "噪声水平"},
+            {"name": "train_ratio", "label": "训练集比例", "type": "number", "required": False, "default_value": 0.7, "description": "训练集占比"},
+            {"name": "val_ratio", "label": "验证集比例", "type": "number", "required": False, "default_value": 0.1, "description": "验证集占比"},
+        ],
+    },
+    # =========================================================================
+    # 时序预测训练 - LSTM/GRU/Transformer
+    # =========================================================================
+    {
+        "key": "training.timeseries.ship_predictor",
+        "name": "船舶位置时序预测训练",
+        "category": "training",
+        "modality": "tabular",
+        "entry_type": "python_function",
+        "module_path": "plugins.training.timeseries_ship_predictor",
+        "callable_name": "run",
+        "description": "基于LSTM/GRU/Transformer的船舶位置时序预测，输入CSV中的经度/纬度/航速/航向，预测未来轨迹。",
+        "input_contract": {
+            "dataset_required": True,
+            "sample_required": True,
+            "fields": ["csv_file"],
+        },
+        "output_contract": {
+            "produces": ["model_checkpoint"],
+            "artifact_types": ["checkpoint"],
+        },
+        "parameters": [
+            {"name": "model_type", "label": "模型类型", "type": "string", "required": False, "default_value": "LSTM", "options": ["LSTM", "GRU", "TRANSFORMER"], "description": "时序预测模型架构"},
+            {"name": "hidden_size", "label": "隐藏层大小", "type": "integer", "required": False, "default_value": 64, "description": "隐藏单元数"},
+            {"name": "num_layers", "label": "网络层数", "type": "integer", "required": False, "default_value": 2, "description": "循环/Transformer层数"},
+            {"name": "epochs", "label": "训练轮次", "type": "integer", "required": False, "default_value": 50, "description": "训练epoch数量"},
+            {"name": "batch_size", "label": "批大小", "type": "integer", "required": False, "default_value": 64, "description": "批次大小"},
+            {"name": "learning_rate", "label": "学习率", "type": "number", "required": False, "default_value": 0.001, "description": "优化器学习率"},
+            {"name": "lookback_window", "label": "回顾窗口", "type": "integer", "required": False, "default_value": 20, "description": "过去时间步数"},
+            {"name": "prediction_window", "label": "预测窗口", "type": "integer", "required": False, "default_value": 10, "description": "预测未来时间步数"},
+            {"name": "train_ratio", "label": "训练集比例", "type": "number", "required": False, "default_value": 0.7, "description": "训练集占比"},
+            {"name": "val_ratio", "label": "验证集比例", "type": "number", "required": False, "default_value": 0.15, "description": "验证集占比"},
+        ],
+    },
+    # =========================================================================
     # 目标检测训练 - YOLOv5
     # =========================================================================
     {
@@ -2128,6 +2234,85 @@ DEFAULT_ALGORITHMS = (
                 "default_value": "",
                 "description": "GPU设备号，空=自动选择",
             },
+        ],
+    },
+    # =========================================================================
+    # 多模态语义分割评估
+    # =========================================================================
+    {
+        "key": "evaluation.multimodal.seg_evaluator",
+        "name": "多模态语义分割评估",
+        "category": "evaluation",
+        "modality": "multimodal",
+        "entry_type": "python_function",
+        "module_path": "plugins.evaluation.multimodal_seg_evaluator",
+        "callable_name": "run",
+        "description": "加载多模态分割模型checkpoint，评估mIoU指标。",
+        "input_contract": {"dataset_required": True, "sample_required": False},
+        "output_contract": {"produces": ["metrics", "artifacts"], "artifact_types": ["report"]},
+        "parameters": [
+            {"name": "batch_size", "label": "批大小", "type": "integer", "required": False, "default_value": 8},
+        ],
+    },
+    # =========================================================================
+    # 多模态融合检测评估
+    # =========================================================================
+    {
+        "key": "evaluation.multimodal.fusion_evaluator",
+        "name": "多模态融合检测评估",
+        "category": "evaluation",
+        "modality": "multimodal",
+        "entry_type": "python_function",
+        "module_path": "plugins.evaluation.multimodal_fusion_evaluator",
+        "callable_name": "run",
+        "description": "加载多模态融合检测模型checkpoint，在测试集上评估分类准确率。",
+        "input_contract": {"dataset_required": True, "sample_required": False, "fields": ["checkpoint_path"]},
+        "output_contract": {"produces": ["metrics", "artifacts"], "artifact_types": ["report"]},
+        "parameters": [
+            {"name": "batch_size", "label": "批大小", "type": "integer", "required": False, "default_value": 16, "description": "评估批次大小"},
+        ],
+    },
+    # =========================================================================
+    # 故障诊断评估
+    # =========================================================================
+    {
+        "key": "evaluation.timeseries.hyfd_fault_evaluator",
+        "name": "HyFD-SME 故障诊断评估",
+        "category": "evaluation",
+        "modality": "multimodal",
+        "entry_type": "python_function",
+        "module_path": "plugins.evaluation.hyfd_fault_evaluator",
+        "callable_name": "run",
+        "description": "加载HyFD-SME训练产出的checkpoint，在测试集上评估故障分类准确率。",
+        "input_contract": {"dataset_required": True, "sample_required": False, "fields": ["checkpoint_path"]},
+        "output_contract": {"produces": ["metrics", "artifacts"], "artifact_types": ["report"]},
+        "parameters": [
+            {"name": "batch_size", "label": "批大小", "type": "integer", "required": False, "default_value": 256, "description": "评估批次大小"},
+        ],
+    },
+    # =========================================================================
+    # 时序预测评估
+    # =========================================================================
+    {
+        "key": "evaluation.timeseries.ship_evaluator",
+        "name": "船舶位置时序预测评估",
+        "category": "evaluation",
+        "modality": "multimodal",
+        "entry_type": "python_function",
+        "module_path": "plugins.evaluation.timeseries_ship_evaluator",
+        "callable_name": "run",
+        "description": "加载时序预测模型的checkpoint，在测试集上评估MAE/RMSE/MAPE/R²/地理距离误差。",
+        "input_contract": {
+            "dataset_required": True,
+            "sample_required": False,
+            "fields": ["checkpoint_path"],
+        },
+        "output_contract": {
+            "produces": ["metrics", "artifacts"],
+            "artifact_types": ["report"],
+        },
+        "parameters": [
+            {"name": "batch_size", "label": "批大小", "type": "integer", "required": False, "default_value": 64, "description": "评估批次大小"},
         ],
     },
     # =========================================================================

@@ -1947,17 +1947,35 @@ Item {
                                             id: sampleThumb
                                             anchors.fill: parent
                                             anchors.margins: 2
-                                            source: root.localFileUrl(samplePath)
+                                            source: isImageFile ? root.localFileUrl(samplePath) : ""
                                             fillMode: Image.PreserveAspectCrop
                                             asynchronous: true
-                                            visible: samplePath !== "" && sampleThumb.status !== Image.Error
+                                            visible: isImageFile && samplePath !== ""
+                                        }
+                                        property bool isImageFile: {
+                                            var ext = String(samplePath).toLowerCase().split('.').pop()
+                                            return ["jpg","jpeg","png","bmp","gif","webp","tif","tiff"].indexOf(ext) >= 0
+                                        }
+                                        property string fileTypeIcon: {
+                                            var ext = String(samplePath).toLowerCase().split('.').pop()
+                                            if (ext === "csv") return "📊"
+                                            if (ext === "txt" || ext === "log") return "📄"
+                                            if (["wav","mp3","aac","flac"].indexOf(ext) >= 0) return "🎵"
+                                            return "📁"
+                                        }
+                                        Text {
+                                            anchors.centerIn: parent
+                                            text: fileTypeIcon
+                                            color: root.textColor
+                                            font.pixelSize: 22
+                                            visible: !isImageFile && samplePath !== ""
                                         }
                                         Text {
                                             anchors.centerIn: parent
                                             text: "图片"
                                             color: root.textMuted
                                             font.pixelSize: 12
-                                            visible: samplePath === "" || sampleThumb.status === Image.Error
+                                            visible: samplePath === ""
                                         }
                                     }
 
