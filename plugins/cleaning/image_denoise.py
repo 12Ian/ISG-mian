@@ -101,7 +101,7 @@ def _noise_score(path: Path) -> Optional[float]:
     except Exception:
         return None
     try:
-        gray = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+        gray = _read_image(path, cv2.IMREAD_GRAYSCALE)
         if gray is None:
             return None
         median = cv2.medianBlur(gray, 3)
@@ -116,17 +116,41 @@ def _denoise_and_save(path: Path, output_dir: Path, strength: int) -> str:
     except Exception:
         return ""
     try:
-        img = cv2.imread(str(path))
+        img = _read_image(path, cv2.IMREAD_COLOR)
         if img is None:
             return ""
         h = max(3, min(strength, 30))
         cleaned = cv2.fastNlMeansDenoisingColored(img, None, h, h, 7, 21)
         output_dir.mkdir(parents=True, exist_ok=True)
         out_path = output_dir / f"denoised_{path.name}"
-        cv2.imwrite(str(out_path), cleaned)
+        _write_image(out_path, cleaned)
         return str(out_path)
     except Exception:
         return ""
+
+
+def _read_image(path: Path, flags):
+    try:
+        import cv2
+        import numpy as np
+        data = np.fromfile(str(path), dtype=np.uint8)
+        if data.size == 0:
+            return None
+        return cv2.imdecode(data, flags)
+    except Exception:
+        return None
+
+
+def _write_image(path: Path, image) -> bool:
+    try:
+        import cv2
+        success, encoded = cv2.imencode(path.suffix or ".jpg", image)
+        if not success:
+            return False
+        path.write_bytes(encoded.tobytes())
+        return True
+    except Exception:
+        return False
 
 
 def _clamp(v: float) -> float:
