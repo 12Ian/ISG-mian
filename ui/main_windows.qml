@@ -3,6 +3,7 @@ import QtQuick.Window 2.15
 import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
 import "."
+import "views"
 
 ApplicationWindow {
     id: root
@@ -19,6 +20,25 @@ ApplicationWindow {
     property color textColor: Theme.text
     property color textMuted: Theme.muted
     property color borderColor: Theme.border
+
+    // ================= 全局跨页面状态管理器 =================
+    // 导航切换会销毁重建 Loader，通过这些属性保持评估/训练状态不丢失
+    QtObject {
+        id: appState
+
+        // 评估历史 (序列化为 JSON 数组)
+        property string evalHistoryJson: "[]"
+        // 训练任务队列 (序列化为 JSON 数组)
+        property string evalTaskQueueJson: "[]"
+        // 评估结果 (序列化为 JSON 数组)
+        property string evalResultJson: "[]"
+        // 评估指标表头
+        property string evalMetricHeadersJson: "[]"
+        // 训练中标记
+        property bool evalIsTraining: false
+        // 任务计数器
+        property int evalTaskCounter: 1
+    }
 
     color: bgDark
 
@@ -179,7 +199,7 @@ Component {
             hoverEnabled: true
             onClicked: {
                 navList.currentIndex = index
-                mainLoader.source = model.source
+                viewStack.currentIndex = index
             }
             onEntered: if(navList.currentIndex !== index) itemBg.color = Qt.rgba(255/255, 255/255, 255/255, 0.05)
             onExited: if(navList.currentIndex !== index) itemBg.color = "transparent"
@@ -190,7 +210,7 @@ Component {
         }
     }
 
-    // ================= 右侧主工作区 (动态加载器) =================
+    // ================= 右侧主工作区 (StackLayout: 所有页面常驻不销毁) =================
     Item {
         id: mainContentArea
         anchors.top: header.bottom
@@ -198,14 +218,18 @@ Component {
         anchors.left: sidebar.right
         anchors.right: parent.right
 
-        Loader {
-            id: mainLoader
+        StackLayout {
+            id: viewStack
             anchors.fill: parent
             anchors.margins: 20
-            source: "views/DataManageView.qml"
+            currentIndex: 0
 
-            Behavior on opacity { NumberAnimation { duration: 300 } }
-            onSourceChanged: { opacity = 0; opacity = 1 }
+            Item { DataManageView  { anchors.fill: parent } }
+            Item { DataCleanView  { anchors.fill: parent } }
+            Item { SampleGenView  { anchors.fill: parent } }
+            Item { EvaluateView  { anchors.fill: parent } }
+            Item { AlgoConfigView  { anchors.fill: parent } }
+            Item { SystemSettingsView  { anchors.fill: parent } }
         }
     }
 }

@@ -16,7 +16,7 @@ import random
 import json
 import warnings
 
-warnings.filterwarnings('ignore', message=r'.*pretrained.*deprecated.*weights.*',
+warnings.filterwarnings('ignore', message=r'.*deprecated.*(?:pretrained|weights).*',
                         module=r'torchvision.*')
 
 

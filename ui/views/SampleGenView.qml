@@ -501,7 +501,7 @@ Item {
                     anchors.fill: parent
                     anchors.margins: 12
                     visible: root.previewKind === "image" && root.previewSource !== ""
-                    source: root.previewSource
+                    source: root.previewKind === "image" ? root.previewSource : ""
                     fillMode: Image.PreserveAspectFit
                     asynchronous: true
                 }
@@ -612,6 +612,11 @@ Item {
     MediaPlayer {
         id: previewPlayer
         autoPlay: false
+        audioOutput: previewAudio
+    }
+
+    AudioOutput {
+        id: previewAudio
     }
 
     // ================= 任务进度轮询 =================
@@ -1908,14 +1913,18 @@ Item {
                                         color: root.panelBg
                                         border.color: root.borderColor
                                         clip: true
+                                        property bool isGenImage: {
+                                            var ext = String(generatedPath).toLowerCase().split('.').pop()
+                                            return ["jpg","jpeg","png","bmp","gif","webp","tif","tiff"].indexOf(ext) >= 0
+                                        }
                                         Image {
                                             id: generatedThumb
                                             anchors.fill: parent
                                             anchors.margins: 2
-                                            source: root.localFileUrl(generatedPath)
+                                            source: isGenImage ? root.localFileUrl(generatedPath) : ""
                                             fillMode: Image.PreserveAspectCrop
                                             asynchronous: true
-                                            visible: generatedPath !== "" && generatedThumb.status !== Image.Error
+                                            visible: isGenImage && generatedPath !== ""
                                         }
                                         Text {
                                             anchors.centerIn: parent

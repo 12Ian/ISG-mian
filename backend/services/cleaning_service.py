@@ -250,8 +250,11 @@ class CleaningService(ServiceBase):
                 .all()
             )
             suggestions_by_sample: dict[int, list[CleaningSuggestion]] = {}
+            output_sample_ids: set[int] = set()
             for suggestion in suggestions:
                 suggestions_by_sample.setdefault(suggestion.sample_id, []).append(suggestion)
+                if suggestion.output_sample_id:
+                    output_sample_ids.add(suggestion.output_sample_id)
 
             source_samples = (
                 session.query(Sample)
@@ -263,6 +266,8 @@ class CleaningService(ServiceBase):
             stored_count = 0
             skipped_count = 0
             for sample in source_samples:
+                if sample.id in output_sample_ids:
+                    continue
                 sample_suggestions = suggestions_by_sample.get(sample.id, [])
                 if self._should_skip_sample(sample_suggestions):
                     skipped_count += 1
@@ -392,12 +397,6 @@ class CleaningService(ServiceBase):
             sample_path = Path(sample.file_path)
             if sample_path.is_file():
                 sample_path.unlink(missing_ok=True)
-            session.query(CleaningSuggestion).filter(
-                CleaningSuggestion.sample_id == sample.id
-            ).delete(synchronize_session="fetch")
-            session.query(CleaningSuggestion).filter(
-                CleaningSuggestion.output_sample_id == sample.id
-            ).delete(synchronize_session="fetch")
             self.dataset_repository.delete_sample(session, sample)
             self._refresh_dataset_stats(session, dataset)
             return

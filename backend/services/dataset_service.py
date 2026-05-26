@@ -12,6 +12,29 @@ from ..storage import FileIndexer
 from .base import ServiceBase
 
 
+def _normalize_manifest_label(label) -> dict:
+    """将 manifest 中的 label 规范化为统一的 dict 格式，保留 bbox 等字段。"""
+    if isinstance(label, dict):
+        result = {
+            "type": label.get("type", "classification"),
+            "class_name": str(label.get("class_name", label.get("name", ""))),
+            "source": "manifest",
+        }
+        bbox = label.get("bbox")
+        if bbox and len(bbox) >= 4:
+            result["bbox"] = [float(v) for v in bbox[:4]]
+        class_id = label.get("class_id")
+        if class_id is not None:
+            result["class_id"] = int(class_id)
+        # 保留其他字段
+        for key in ("split", "confidence", "area"):
+            val = label.get(key)
+            if val is not None:
+                result[key] = val
+        return result
+    return {"type": "classification", "class_name": str(label), "source": "manifest"}
+
+
 @slots_dataclass
 class DatasetService(ServiceBase):
     dataset_repository: object
@@ -165,7 +188,7 @@ class DatasetService(ServiceBase):
                     modality=dataset.modality,
                     file_path=str(copied),
                     relative_path=Path(record["relative_path"]).as_posix(),
-                    sha256=self.file_indexer.compute_sha256(copied),
+                    sha256=None,  # 导入时跳过 SHA256，后续可后台批量计算
                     mime_type=self.file_indexer.detect_mime_type(copied),
                     extension=copied.suffix.lower(),
                     size_bytes=copied.stat().st_size,
@@ -247,7 +270,7 @@ class DatasetService(ServiceBase):
                     if isinstance(raw_labels, str):
                         raw_labels = [raw_labels]
                     if raw_labels:
-                        label_map[rel] = [{"type": "classification", "class_name": str(l), "source": "manifest"} for l in raw_labels]
+                        label_map[rel] = [_normalize_manifest_label(l) for l in raw_labels]
             except Exception:
                 import logging
                 logging.getLogger("isg").warning(f"Failed to parse manifest: {traceback.format_exc()}")
@@ -290,7 +313,7 @@ class DatasetService(ServiceBase):
                     modality=dataset.modality,
                     file_path=str(copied),
                     relative_path=rel_path,
-                    sha256=self.file_indexer.compute_sha256(copied),
+                    sha256=None,  # 导入时跳过 SHA256，后续可后台批量计算
                     mime_type=self.file_indexer.detect_mime_type(copied),
                     extension=copied.suffix.lower(),
                     size_bytes=copied.stat().st_size,
@@ -489,14 +512,14 @@ class DatasetService(ServiceBase):
             full_path = source_path / rel_path
             if not full_path.is_file():
                 continue
-            labels_json = [{"type": "classification", "class_name": str(l), "source": "manifest"} for l in labels]
+            labels_json = [_normalize_manifest_label(l) for l in labels]
             class_name = str(labels[0]) if labels else ""
             record = {
                 "source_path": full_path,
                 "relative_path": rel_path,
                 "class_name": class_name,
                 "labels": labels_json,
-                "metadata": {"source_path": str(full_path), "label_source": "manifest"},
+                "metadata": {"source_path": str(full_path), "label_source": "manifest", "split": split},
                 "split": split,
                 "sample_modality": self._guess_modality(full_path),
                 "import_format": "manifest",
@@ -594,7 +617,7 @@ class DatasetService(ServiceBase):
         dataset.storage_path = str(self._allocate_dataset_dir(dataset.id, dataset.name))
         class_distribution: dict[str, int] = {}
 
-        for record in records:
+        for idx, record in enumerate(records):
             source = record["source_path"]
             copied = self.file_indexer.copy_into_dataset(source, Path(dataset.storage_path) / "raw", record["relative_path"])
             labels = list(record.get("labels", []))
@@ -610,7 +633,7 @@ class DatasetService(ServiceBase):
                 modality=record.get("sample_modality") or modality,
                 file_path=str(copied),
                 relative_path=record["relative_path"],
-                sha256=self.file_indexer.compute_sha256(copied),
+                sha256=None,  # 导入时跳过 SHA256，后续可后台批量计算
                 mime_type=self.file_indexer.detect_mime_type(copied),
                 extension=copied.suffix.lower(),
                 size_bytes=copied.stat().st_size,
@@ -635,6 +658,11 @@ class DatasetService(ServiceBase):
                     "labels": labels,
                 },
             )
+
+            # 每 500 条 flush 一次，避免 session 内存膨胀
+            if (idx + 1) % 500 == 0:
+                session.flush()
+                session.expire_all()
 
         extra_json = dict(extra_json or {})
         extra_json["class_distribution"] = class_distribution
@@ -826,6 +854,41 @@ class DatasetService(ServiceBase):
 
     def preview_samples(self, dataset_id: int, limit: int, status: str) -> dict:
         return self.get_dataset_preview_samples(dataset_id=dataset_id, limit=limit, status=status)
+
+    def preview_file_by_path(self, file_path: str) -> dict:
+        """直接按文件路径预览文件内容，不依赖数据库样本记录。"""
+        path = Path(file_path)
+        if not path.is_file():
+            return {"ok": True, "data": {
+                "name": path.name,
+                "file_path": str(path),
+                "preview_kind": "text",
+                "text_content": "",
+                "error": f"文件不存在: {path}",
+            }}
+        ext = path.suffix.lower()
+        if ext in {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tif", ".tiff"}:
+            preview_kind = "image"
+        elif ext in {".wav", ".mp3", ".aac", ".flac", ".ogg", ".m4a"}:
+            preview_kind = "audio"
+        else:
+            preview_kind = "text"
+
+        payload = {
+            "name": path.name,
+            "file_path": str(path),
+            "preview_kind": preview_kind,
+            "text_content": "",
+            "error": "",
+        }
+        if preview_kind in ("text",):
+            try:
+                payload["text_content"] = path.read_bytes()[:200 * 1024].decode("utf-8")
+            except UnicodeDecodeError:
+                payload["error"] = "无法以文本方式预览此文件（非 UTF-8 编码或二进制文件）。"
+            except OSError as exc:
+                payload["error"] = str(exc)
+        return {"ok": True, "data": payload}
 
     def get_sample_preview(self, sample_id: int) -> dict:
         with self.session_factory() as session:
@@ -1178,7 +1241,7 @@ class DatasetService(ServiceBase):
                     modality="image",
                     file_path=str(copied),
                     relative_path=copied.relative_to(Path(dataset.storage_path) / "raw").as_posix(),
-                    sha256=self.file_indexer.compute_sha256(copied),
+                    sha256=None,  # 导入时跳过 SHA256，后续可后台批量计算
                     mime_type=self.file_indexer.detect_mime_type(copied),
                     extension=copied.suffix.lower(),
                     size_bytes=copied.stat().st_size,
