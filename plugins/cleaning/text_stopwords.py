@@ -45,7 +45,7 @@ def run(payload: dict, context) -> dict:
     output_dir = Path(payload.get("output", {}).get("output_dir", "."))
     apply_changes = bool(parameters.get("apply", True))
 
-    extra_words = set(parameters.get("stop_words") or [])
+    extra_words = _parse_stop_words(parameters.get("stop_words"))
     stop_words = DEFAULT_STOP_WORDS | {str(w).lower() for w in extra_words}
 
     if not samples:
@@ -67,8 +67,9 @@ def run(payload: dict, context) -> dict:
         if text is None:
             continue
 
-        tokens = re.findall(r"[一-鿿]|[A-Za-z0-9_]+", text)
-        filtered = [t for t in tokens if t.lower() not in stop_words]
+        tokens = _tokenize(text)
+        cleaned_source = _remove_stop_words(text, stop_words)
+        filtered = _tokenize(cleaned_source)
         removed = len(tokens) - len(filtered)
         if removed:
             confidence = _clamp(removed / max(len(tokens), 1))
@@ -108,6 +109,32 @@ def _read_text(path: Path) -> str | None:
             return path.read_text(encoding="latin-1")
         except Exception:
             return None
+
+
+def _parse_stop_words(value) -> set[str]:
+    if not value:
+        return set()
+    if isinstance(value, str):
+        return {word.strip() for word in re.split(r"[,，;\s]+", value) if word.strip()}
+    try:
+        return {str(word).strip() for word in value if str(word).strip()}
+    except TypeError:
+        word = str(value).strip()
+        return {word} if word else set()
+
+
+def _tokenize(text: str) -> list[str]:
+    return re.findall(r"[一-鿿]+|[A-Za-z0-9_]+", text)
+
+
+def _remove_stop_words(text: str, stop_words: set[str]) -> str:
+    cleaned = text
+    for word in sorted(stop_words, key=len, reverse=True):
+        if re.search(r"[A-Za-z0-9_]", word):
+            cleaned = re.sub(rf"\b{re.escape(word)}\b", " ", cleaned, flags=re.IGNORECASE)
+        else:
+            cleaned = cleaned.replace(word, " ")
+    return cleaned
 
 
 def _clamp(v: float) -> float:
