@@ -254,6 +254,16 @@ DEFAULT_ALGORITHMS = (
                 "max_value": 80,
                 "description": "低于此分贝值的片段视为静音",
             },
+            {
+                "name": "silence_ratio_threshold",
+                "label": "静音比例阈值",
+                "type": "number",
+                "required": False,
+                "default_value": 0.2,
+                "min_value": 0.0,
+                "max_value": 1.0,
+                "description": "静音片段占比超过此值时触发修剪，例: 0.05 表示超过 5%",
+            },
         ],
     },
     {
