@@ -224,12 +224,12 @@ Component {
             anchors.margins: 20
             currentIndex: 0
 
-            DataManageView {}
-            DataCleanView {}
-            SampleGenView {}
-            EvaluateView {}
-            AlgoConfigView {}
-            SystemSettingsView {}
+            Item { DataManageView  { anchors.fill: parent } }
+            Item { DataCleanView  { anchors.fill: parent } }
+            Item { SampleGenView  { anchors.fill: parent } }
+            Item { EvaluateView  { anchors.fill: parent } }
+            Item { AlgoConfigView  { anchors.fill: parent } }
+            Item { SystemSettingsView  { anchors.fill: parent } }
         }
     }
 }

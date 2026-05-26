@@ -259,27 +259,38 @@ Item {
         }
 
         function onEvaluationResultsUpdated(data) {
-            evalResultModel.clear()
-            evalMetricHeaders = []
+            // 不clear，多个评估任务的结果累加显示
+            if (!evalMetricHeaders || evalMetricHeaders.length === 0) {
+                evalMetricHeaders = []
+            }
             var items = data && data.data ? data.data.items || [] : (data && data.items ? data.items : [])
-            // 收集所有指标键
-            var allKeys = []
+            if (items.length === 0) return
+
+            // 合并新旧指标键
+            var existingKeys = evalMetricHeaders.length > 0 ? evalMetricHeaders.slice() : []
+            var newKeys = []
             for (var i = 0; i < items.length; i++) {
                 var mk = Object.keys(items[i].metrics || {})
                 for (var k = 0; k < mk.length; k++) {
-                    if (allKeys.indexOf(mk[k]) < 0) allKeys.push(mk[k])
+                    if (newKeys.indexOf(mk[k]) < 0 && existingKeys.indexOf(mk[k]) < 0) {
+                        newKeys.push(mk[k])
+                    }
                 }
             }
-            // 过滤掉内部字段和超大对象
             var skipKeys = ["num_classes", "class_names", "per_class_ap", "model_type", "num_test_sequences",
                            "label_distribution", "train_count", "val_count", "test_count", "feature_cols"]
-            for (var s = 0; s < skipKeys.length; s++) {
-                var idx = allKeys.indexOf(skipKeys[s])
-                if (idx >= 0) allKeys.splice(idx, 1)
+            function filterKeys(keys) {
+                var out = []
+                for (var fi = 0; fi < keys.length; fi++) {
+                    if (skipKeys.indexOf(keys[fi]) < 0) out.push(keys[fi])
+                }
+                return out
             }
+            var allKeys = filterKeys(existingKeys.concat(newKeys))
             if (allKeys.length === 0) allKeys = ["accuracy", "macro_f1"]
             evalMetricHeaders = allKeys
 
+            // 追加新结果行
             for (var i = 0; i < items.length; i++) {
                 var r = items[i]
                 var m = r.metrics || {}
@@ -304,7 +315,7 @@ Item {
             }
             root.isEvaluating = false
             root.saveToAppState()
-            if (evalResultModel.count > 0) root.showToast("✅ 评估比对完成，共 " + evalResultModel.count + " 条结果")
+            root.showToast("✅ 新增 " + items.length + " 条评估结果 (共 " + evalResultModel.count + " 条)")
         }
     }
 
@@ -444,10 +455,10 @@ Item {
         toastCloseTimer.restart()
     }
 
-    // ================= 保存工程弹窗 =================
+    // ================= 保存评估工程弹窗 =================
     Popup {
         id: saveProjectPopup
-        width: 400; height: 220
+        width: 460; height: 300
         modal: true; focus: true
         x: Math.round((root.width - width) / 2)
         y: Math.round((root.height - height) / 2)
@@ -456,10 +467,10 @@ Item {
 
         ColumnLayout {
             anchors.fill: parent; anchors.margins: 20; spacing: 15
-            Text { text: "💾 保存评估工程"; color: root.textColor; font.pixelSize: 16; font.bold: true }
+            Text { text: "💾 确认保存评估结果"; color: root.textColor; font.pixelSize: 16; font.bold: true }
             Rectangle { Layout.fillWidth: true; height: 1; color: root.borderColor }
             ColumnLayout { spacing: 5; Layout.fillWidth: true
-                Text { text: "工程名称:"; color: root.textMuted; font.pixelSize: 12 }
+                Text { text: "评估工程名称:"; color: root.textMuted; font.pixelSize: 12 }
                 Rectangle {
                     Layout.fillWidth: true; height: 36; color: root.bgDark; radius: 4; border.color: root.borderColor; border.width: 1
                     TextInput {
@@ -470,31 +481,45 @@ Item {
                     }
                 }
             }
+            Text {
+                text: "保存路径由系统自动管理 (data/datasets/...)"
+                color: root.textMuted; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap
+            }
+
             Item { Layout.fillHeight: true }
             RowLayout { Layout.fillWidth: true; spacing: 15
                 Item { Layout.fillWidth: true }
                 Button {
-                    text: "取消"; Layout.preferredWidth: 80; Layout.preferredHeight: 32
+                    text: "取消"; Layout.preferredWidth: 80; Layout.preferredHeight: 34
                     background: Rectangle { color: "transparent"; border.color: root.borderColor; border.width: 1; radius: 4 }
                     contentItem: Text { text: parent.text; color: root.textMuted; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                     onClicked: saveProjectPopup.close()
                 }
                 Button {
-                    text: "确认归档"; Layout.preferredWidth: 100; Layout.preferredHeight: 32
+                    text: "确认保存"; Layout.preferredWidth: 100; Layout.preferredHeight: 34
                     background: Rectangle { color: root.primaryColor; radius: 4 }
                     contentItem: Text { text: parent.text; color: "black"; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                     onClicked: {
                         var dsSet = {}; var algoSet = {}; var detailsArr = []; var scenarioName = ""
+                        var headers = root.evalMetricHeaders || []
                         for (var i = 0; i < taskQueueModel.count; i++) {
                             var t = taskQueueModel.get(i)
                             dsSet[t.dataset] = true; algoSet[t.algo] = true
                             if (!scenarioName) scenarioName = t.scenario || ""
-                            var c_acc = "-"; var c_osfm = "-"; var c_f1 = "-"; var c_gm = "-"; var c_nma = "-"
-                            for (var j = 0; j < evalResultModel.count; j++) {
-                                var r = evalResultModel.get(j)
-                                if (r.taskId === t.evalTaskId) { c_acc = r.accuracy; c_osfm = r.osfm; c_f1 = r.macroF1; c_gm = r.gmean; c_nma = r.nma; break }
+                            var detail = {dataset: t.dataset, algo: t.algo}
+                            for (var hj = 0; hj < evalResultModel.count; hj++) {
+                                var r = evalResultModel.get(hj)
+                                if (r.taskId === t.evalTaskId) {
+                                    try {
+                                        var vals = JSON.parse(r.metricValuesJson || "[]")
+                                        for (var vi = 0; vi < headers.length && vi < vals.length; vi++) {
+                                            detail[headers[vi]] = vals[vi]
+                                        }
+                                    } catch(e) {}
+                                    break
+                                }
                             }
-                            detailsArr.push({dataset: t.dataset, algo: t.algo, accuracy: c_acc, osfm: c_osfm, macroF1: c_f1, gmean: c_gm, nma: c_nma})
+                            detailsArr.push(detail)
                         }
                         var allDone = evalResultModel.count > 0
                         evalHistoryModel.insert(0, {
@@ -707,26 +732,32 @@ Item {
             ColumnLayout { anchors.fill: parent; spacing: 0
                 Rectangle { Layout.fillWidth: true; height: 45; color: Theme.rowAlt
                     RowLayout { anchors.fill: parent; anchors.leftMargin: 20; anchors.rightMargin: 20; spacing: 10
-                        Label { text: "使用数据集"; font.bold: true; color: "#A0AEC0"; Layout.fillWidth: true }
-                        Label { text: "匹配算法模型"; font.bold: true; color: "#A0AEC0"; Layout.preferredWidth: 160 }
-                        Label { text: "Acc(%)↑"; font.bold: true; color: "#A0AEC0"; Layout.preferredWidth: 75; horizontalAlignment: Text.AlignRight }
-                        Label { text: "OSFM↑"; font.bold: true; color: "#A0AEC0"; Layout.preferredWidth: 75; horizontalAlignment: Text.AlignRight }
-                        Label { text: "Macro-F1↑"; font.bold: true; color: "#A0AEC0"; Layout.preferredWidth: 85; horizontalAlignment: Text.AlignRight }
-                        Label { text: "G-Mean↑"; font.bold: true; color: "#A0AEC0"; Layout.preferredWidth: 85; horizontalAlignment: Text.AlignRight }
-                        Label { text: "NMA↑"; font.bold: true; color: "#A0AEC0"; Layout.preferredWidth: 75; horizontalAlignment: Text.AlignRight }
+                        Label { text: "使用数据集"; font.bold: true; color: "#A0AEC0"; Layout.preferredWidth: 160 }
+                        Label { text: "匹配算法模型"; font.bold: true; color: "#A0AEC0"; Layout.preferredWidth: 140 }
+                        Label { text: "评估指标"; font.bold: true; color: "#A0AEC0"; Layout.fillWidth: true }
                     }
                 }
                 ListView { id: detailListView; Layout.fillWidth: true; Layout.fillHeight: true; clip: true; spacing: 1; model: currentDetailModel
                     delegate: Rectangle { width: detailListView.width; height: 45; color: index % 2 === 0 ? Theme.panel : "transparent"
                         MouseArea { anchors.fill: parent; hoverEnabled: true; onEntered: parent.color = Theme.hover; onExited: parent.color = index % 2 === 0 ? Theme.panel : "transparent" }
                         RowLayout { anchors.fill: parent; anchors.leftMargin: 20; anchors.rightMargin: 20; spacing: 10
-                            Label { text: "📁 " + model.dataset; color: Theme.text; font.pixelSize: 13; Layout.fillWidth: true; elide: Text.ElideRight }
-                            Label { text: model.algo; color: root.primaryColor; font.pixelSize: 13; font.bold: true; Layout.preferredWidth: 160; elide: Text.ElideRight }
-                            Label { text: model.accuracy; color: root.textColor; font.pixelSize: 13; font.family: "Courier"; font.bold: true; Layout.preferredWidth: 75; horizontalAlignment: Text.AlignRight }
-                            Label { text: model.osfm; color: root.textColor; font.pixelSize: 13; font.family: "Courier"; font.bold: true; Layout.preferredWidth: 75; horizontalAlignment: Text.AlignRight }
-                            Label { text: model.macroF1; color: root.textColor; font.pixelSize: 13; font.family: "Courier"; font.bold: true; Layout.preferredWidth: 85; horizontalAlignment: Text.AlignRight }
-                            Label { text: model.gmean; color: root.textColor; font.pixelSize: 13; font.family: "Courier"; font.bold: true; Layout.preferredWidth: 85; horizontalAlignment: Text.AlignRight }
-                            Label { text: model.nma; color: root.textColor; font.pixelSize: 13; font.family: "Courier"; font.bold: true; Layout.preferredWidth: 75; horizontalAlignment: Text.AlignRight }
+                            Label { text: "📁 " + model.dataset; color: Theme.text; font.pixelSize: 13; Layout.preferredWidth: 160; elide: Text.ElideRight }
+                            Label { text: model.algo; color: root.primaryColor; font.pixelSize: 13; font.bold: true; Layout.preferredWidth: 140; elide: Text.ElideRight }
+                            Label {
+                                property var _detailObj: { try { return JSON.parse(model.detailsJson || "{}") } catch(e) { return {} } }
+                                property var _metricText: {
+                                    var str = "";
+                                    var keys = Object.keys(_detailObj);
+                                    for (var mi = 0; mi < keys.length; mi++) {
+                                        if (keys[mi] === "dataset" || keys[mi] === "algo") continue;
+                                        if (str !== "") str += " | ";
+                                        str += keys[mi] + ": " + _detailObj[keys[mi]];
+                                    }
+                                    return str || "暂无指标";
+                                }
+                                text: _metricText; color: root.textColor; font.pixelSize: 12; font.family: "Courier"; font.bold: true
+                                Layout.fillWidth: true; elide: Text.ElideRight
+                            }
                         }
                     }
                 }
