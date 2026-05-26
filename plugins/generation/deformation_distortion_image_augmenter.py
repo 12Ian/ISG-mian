@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from pathlib import Path
 
@@ -68,9 +68,9 @@ def run(payload: dict, context) -> dict:
 
     target_count = max(1, int(payload.get("target_count") or len(samples)))
     elastic_strength = float(parameters.get("elastic_strength", parameters.get("弹性强度", 0.0)) or 0.0)
-    elastic_sigma = float(parameters.get("elastic_gaussian_kernel", parameters.get("elastic_sigma", parameters.get("弹性高斯核", 10.0))) or 10.0)
-    k1 = float(parameters.get("distortion_k1", parameters.get("k1", parameters.get("畸变系数k1", 0.0))) or 0.0)
-    k2 = float(parameters.get("distortion_k2", parameters.get("k2", parameters.get("畸变系数k2", 0.0))) or 0.0)
+    elastic_sigma = float(parameters.get("elastic_sigma", parameters.get("弹性高斯核", 10.0)) or 10.0)
+    k1 = float(parameters.get("k1", parameters.get("畸变系数k1", 0.0)) or 0.0)
+    k2 = float(parameters.get("k2", parameters.get("畸变系数k2", 0.0)) or 0.0)
 
     outputs = []
     for index in range(target_count):

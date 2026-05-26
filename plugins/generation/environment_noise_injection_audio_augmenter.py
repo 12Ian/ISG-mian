@@ -1,7 +1,5 @@
 """Audio environment noise injection augmenter. Adds white/pink/brown/uniform noise at a target SNR."""
 
-from __future__ import annotations
-
 from pathlib import Path
 from typing import Optional
 
@@ -10,25 +8,25 @@ SUPPORTED_EXTENSIONS = {".wav", ".mp3", ".flac", ".ogg", ".m4a"}
 
 PARAMETERS = [
     {
-        "name": "noise_type",
-        "type": "select",
-        "label": "噪声类型",
-        "default": "white",
+        "name": 'noise_type',
+        "type": 'select',
+        "label": '噪声类型',
+        "default": 'white',
         "min": None,
         "max": None,
-        "options": ["white", "pink", "brown", "uniform"],
-        "description": "环境噪声频谱类型",
+        "options": ['white', 'pink', 'brown', 'uniform'],
+        "description": '环境噪声频谱类型',
         "required": False,
     },
     {
-        "name": "target_snr",
-        "type": "float",
-        "label": "目标SNR(dB)",
+        "name": 'target_snr',
+        "type": 'float',
+        "label": '目标SNR(dB)',
         "default": 10.0,
         "min": -20.0,
         "max": 40.0,
         "options": [],
-        "description": "目标信噪比",
+        "description": '目标信噪比',
         "required": False,
     },
 ]
@@ -46,37 +44,30 @@ def run(payload: dict, context) -> dict:
         return {"ok": True, "outputs": [], "logs": []}
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    target_count = max(1, int(payload.get("target_count") or len(samples)))
+    total = max(len(samples), 1)
     outputs = []
 
-    for idx in range(target_count):
+    for idx, sample in enumerate(samples):
         if context.is_cancel_requested():
             return {"ok": False, "error_code": "CANCELLED", "message": "任务已取消", "details": {}}
 
-        sample = samples[idx % len(samples)]
-        context.set_progress((idx + 1) * 100 / target_count, f"环境噪声注入 {idx + 1}/{target_count}")
+        context.set_progress((idx + 1) * 100 / total, f"环境噪声注入 {idx + 1}/{total}")
 
         sample_path = _resolve_path(sample)
         if not sample_path or not sample_path.is_file():
-            return {
-                "ok": False,
-                "error_code": "SOURCE_FILE_NOT_FOUND",
-                "message": f"Cannot read source sample: {sample_path}",
-            }
+            continue
 
-        result = _inject_environment_noise(sample_path, output_dir, idx, noise_type, target_snr)
+        result = _inject_environment_noise(sample_path, output_dir, idx,
+                                           noise_type, target_snr)
         if result:
-            outputs.append(
-                {
-                    "output_path": result["path"],
-                    "relative_path": Path(result["path"]).name,
-                    "metadata": {
-                        "original": str(sample_path),
-                        "noise_type": noise_type,
-                        "target_snr": target_snr,
-                    },
-                }
-            )
+            outputs.append({
+                "sample_path": result["path"],
+                "metadata": {
+                    "original": str(sample_path),
+                    "noise_type": noise_type,
+                    "target_snr": target_snr,
+                },
+            })
 
     return {"ok": True, "outputs": outputs, "logs": []}
 
@@ -91,7 +82,8 @@ def _resolve_path(sample: dict) -> Optional[Path]:
     return None
 
 
-def _inject_environment_noise(path: Path, output_dir: Path, idx: int, noise_type: str, snr_db: float) -> Optional[dict]:
+def _inject_environment_noise(path: Path, output_dir: Path, idx: int,
+                              noise_type: str, snr_db: float) -> Optional[dict]:
     try:
         import numpy as np
         import librosa
@@ -150,7 +142,6 @@ def _match_length(y: "np.ndarray", target_len: int) -> "np.ndarray":
 
 def _prepare_for_save(y: "np.ndarray") -> "np.ndarray":
     import numpy as np
-
     y = np.asarray(y)
     if y.ndim == 1:
         y_out = y

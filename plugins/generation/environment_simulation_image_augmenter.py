@@ -10,36 +10,36 @@ from ._image_io import read_image, write_image
 
 PARAMETERS = [
     {
-        "name": "fog_intensity",
-        "type": "float",
-        "label": "雾气浓度",
+        "name": 'fog_intensity',
+        "type": 'float',
+        "label": '雾气浓度',
         "default": 0.0,
         "min": 0.0,
         "max": 1.0,
         "options": [],
-        "description": "大气散射模拟强度",
+        "description": '大气散射模拟强度',
         "required": False,
     },
     {
-        "name": "snow_intensity",
-        "type": "float",
-        "label": "雪花强度",
+        "name": 'snow_intensity',
+        "type": 'float',
+        "label": '雪花强度',
         "default": 0.0,
         "min": 0.0,
         "max": 1.0,
         "options": [],
-        "description": "雪花叠加强度",
+        "description": '雪花叠加强度',
         "required": False,
     },
     {
-        "name": "shadow_intensity",
-        "type": "float",
-        "label": "阴影强度",
+        "name": 'shadow_intensity',
+        "type": 'float',
+        "label": '阴影强度',
         "default": 0.0,
         "min": 0.0,
         "max": 1.0,
         "options": [],
-        "description": "随机阴影块强度",
+        "description": '随机阴影块强度',
         "required": False,
     },
 ]
@@ -56,9 +56,9 @@ def run(payload: dict, context) -> dict:
         return {"ok": False, "error_code": "NO_INPUT_SAMPLES", "message": "未提供源样本。"}
 
     target_count = max(1, int(payload.get("target_count") or len(samples)))
-    fog_strength = float(parameters.get("fog_intensity", parameters.get("fog", parameters.get("雾气浓度", 0.0))) or 0.0)
-    snow_strength = float(parameters.get("snow_intensity", parameters.get("snow", parameters.get("雪强度", 0.0))) or 0.0)
-    shadow_strength = float(parameters.get("shadow_intensity", parameters.get("shadow", parameters.get("阴影强度", 0.0))) or 0.0)
+    fog_strength = float(parameters.get("fog", parameters.get("雾气浓度", 0.0)) or 0.0)
+    snow_strength = float(parameters.get("snow", parameters.get("雪强度", 0.0)) or 0.0)
+    shadow_strength = float(parameters.get("shadow", parameters.get("阴影强度", 0.0)) or 0.0)
 
     outputs = []
     for index in range(target_count):
@@ -77,6 +77,7 @@ def run(payload: dict, context) -> dict:
         h, w = img.shape[:2]
         out = img.astype(np.float32)
 
+        # 雾：基于随机深度图的透射率合成
         if fog_strength > 0:
             depth = np.random.rand(h, w).astype(np.float32)
             depth = cv2.GaussianBlur(depth, (51, 51), 0)
@@ -87,6 +88,7 @@ def run(payload: dict, context) -> dict:
             airlight = np.array([200, 200, 200], dtype=np.float32)
             out = out * trans + airlight * (1.0 - trans)
 
+        # 雪：随机白点叠加
         if snow_strength > 0:
             snow = np.zeros((h, w), dtype=np.uint8)
             n_snow = int((h * w) * 0.00005 * snow_strength + 30 * snow_strength)
@@ -99,6 +101,7 @@ def run(payload: dict, context) -> dict:
             snow_f = cv2.GaussianBlur(snow, (9, 9), 0).astype(np.float32) / 255.0
             out = out * (1.0 - 0.5 * snow_strength) + 255.0 * snow_f[..., None] * (0.5 * snow_strength)
 
+        # 阴影：随机椭圆暗化区域
         if shadow_strength > 0:
             mask = np.ones((h, w), dtype=np.float32)
             n_ell = 1 + int(shadow_strength > 0.2)
@@ -119,23 +122,17 @@ def run(payload: dict, context) -> dict:
         if not write_image(output_path, augmented):
             return {"ok": False, "error_code": "IMAGE_WRITE_ERROR", "message": f"Cannot write image: {output_path}"}
 
-        outputs.append(
-            {
-                "source_sample_id": sample.get("id"),
-                "output_path": str(output_path),
-                "relative_path": output_path.name,
-                "metadata": {
-                    "method": "environment_simulation",
-                    "algorithm_key": payload.get("algorithm_key", "generation.image.environment_simulation"),
-                    "parameters": {
-                        "fog": fog_strength,
-                        "snow": snow_strength,
-                        "shadow": shadow_strength,
-                    },
-                },
-                "status": "created",
-            }
-        )
+        outputs.append({
+            "source_sample_id": sample.get("id"),
+            "output_path": str(output_path),
+            "relative_path": output_path.name,
+            "metadata": {
+                "method": "environment_simulation",
+                "algorithm_key": payload.get("algorithm_key", "generation.image.environment_simulation"),
+                "parameters": {"fog": fog_strength, "snow": snow_strength, "shadow": shadow_strength},
+            },
+            "status": "created",
+        })
         context.set_progress((index + 1) * 100 / target_count, f"环境模拟 {index + 1}/{target_count}")
 
     return {"ok": True, "outputs": outputs, "logs": []}
