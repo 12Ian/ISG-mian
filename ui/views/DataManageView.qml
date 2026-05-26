@@ -201,6 +201,8 @@ Item {
         root.previewSample = file
         if (file && file.sampleId && file.sampleId > 0) {
             backendService.getSamplePreview(file.sampleId)
+        } else if (file && file.filePath) {
+            backendService.previewFileByPath(file.filePath)
         } else {
             root.previewKind = "file"
             root.previewTitle = file && file.name ? file.name : "样本预览"

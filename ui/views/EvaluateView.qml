@@ -41,10 +41,13 @@ Item {
 
     property var algorithmNameMap: ({})
     property var evalAlgorithmMap: ({})
+    property var algoParamsMap: ({})
+    property string pendingAlgoKey: ""
 
     // 训练算法 -> 评估算法 绑定表 (key -> key)
     property var trainingToEvalKey: ({
-        "training.image.sonar_oltr_classifier": "evaluation.multimodal.sonar_oltr_plud"
+        "training.image.sonar_oltr_classifier": "evaluation.multimodal.sonar_oltr_plud",
+        "training.image.yolov5_detector": "evaluation.image.yolov5_evaluator"
     })
 
     ListModel { id: scenarioModel }
@@ -120,9 +123,14 @@ Item {
             // Preserve previously loaded evaluation entries
             for (var ek in oldEvalMap) { if (oldEvalMap.hasOwnProperty(ek)) evalMap[ek] = oldEvalMap[ek] }
             algoModel.clear()
+            var paramsMap = {}
             for (var i = 0; i < algorithms.length; i++) {
                 var a = algorithms[i]
                 map[String(a.id)] = a.name || a.key || ""
+                if (a.parameters && a.parameters.length > 0) {
+                    paramsMap[a.key || ""] = a.parameters
+                    paramsMap[String(a.id)] = a.parameters
+                }
                 if (a.category === "evaluation") {
                     evalMap[a.key || a.name] = {id: a.id || 0, name: a.name || a.key || ""}
                 } else if (a.category === "training") {
@@ -131,6 +139,7 @@ Item {
             }
             root.algorithmNameMap = map
             root.evalAlgorithmMap = evalMap
+            root.algoParamsMap = paramsMap
             if (algoModel.count > 0) algoCombo.currentIndex = 0
         }
 
@@ -200,7 +209,7 @@ Item {
                 evalResultModel.append({
                     taskId: r.task_id || 0,
                     modelName: r.model_name || "",
-                    evalMethod: r.method || "PLUD",
+                    evalMethod: r.model_name || r.method || "评估算法",
                     accuracy: m.accuracy !== undefined ? Number(m.accuracy).toFixed(2) : "-",
                     osfm: m.osfm !== undefined ? Number(m.osfm).toFixed(4) : "-",
                     macroF1: m.macro_f1 !== undefined ? Number(m.macro_f1).toFixed(4) : "-",
@@ -601,28 +610,9 @@ Item {
                         cursorShape: (scenarioCombo.currentText && datasetCombo.currentIndex >= 0 && datasetCombo.currentText !== "无可用数据集 (请先导入)" && algoCombo.currentText) ? Qt.PointingHandCursor : Qt.ForbiddenCursor
                         enabled: scenarioCombo.currentText && datasetCombo.currentIndex >= 0 && datasetCombo.currentText !== "无可用数据集 (请先导入)" && algoCombo.currentText
                         onClicked: {
-                            var dsItem = datasetModel.get(datasetCombo.currentIndex)
                             var algoItem = algoModel.get(algoCombo.currentIndex)
-                            taskQueueModel.append({
-                                taskId: 0,
-                                evalTaskId: 0,
-                                scenario: scenarioCombo.currentText,
-                                dataset: dsItem ? dsItem.name : "",
-                                datasetId: dsItem ? (dsItem.id || 0) : 0,
-                                algo: algoItem ? algoItem.name : "",
-                                algoId: algoItem ? (algoItem.id || 0) : 0,
-                                algoKey: algoItem ? (algoItem.key || "") : "",
-                                isSelected: true,
-                                trainStatus: 0,
-                                trainProgress: 0.0,
-                                progressMessage: "",
-                                dbStatus: "",
-                                resultJson: ({}),
-                                outputDir: ""
-                            })
-                            root.taskCounter++
-                            root.checkStates()
-                            root.showToast("✅ 已追加训练任务至队列")
+                            root.pendingAlgoKey = algoItem ? (algoItem.key || "") : ""
+                            algoParamsPopup.open()
                         }
                     }
                 }
@@ -886,7 +876,7 @@ Item {
             var t = taskQueueModel.get(i)
             if (t.isSelected && t.trainStatus === 0 && t.datasetId > 0 && t.algoId > 0) {
                 var scId = root.findScenarioId(t.scenario)
-                var params = {}
+                var params = t.params || {}
                 var result = backendService.createTrainingTask(scId, t.datasetId, t.algoId, params)
                 if (!result || result.status !== "success") {
                     root.showToast("⚠️ " + (result && result.message ? result.message : "训练任务创建失败"))
@@ -907,6 +897,64 @@ Item {
             if (scenarioModel.get(i).name === name) return scenarioModel.get(i).id || 0
         }
         return 0
+    }
+
+    function collectEditedParams() {
+        var result = {}
+        for (var i = 0; i < paramEditModel.count; i++) {
+            var item = paramEditModel.get(i)
+            var val = item.value
+            if (val === "true") { result[item.name] = true }
+            else if (val === "false") { result[item.name] = false }
+            else if (!isNaN(val) && val.trim() !== "") { result[item.name] = Number(val) }
+            else { result[item.name] = val }
+        }
+        return result
+    }
+
+    function appendTaskToQueue(useDefaults) {
+        var dsItem = datasetModel.get(datasetCombo.currentIndex)
+        var algoItem = algoModel.get(algoCombo.currentIndex)
+
+        var taskParams = {}
+        if (useDefaults) {
+            var rawParams = root.algoParamsMap[root.pendingAlgoKey] || []
+            for (var i = 0; i < rawParams.length; i++) {
+                var rp = rawParams[i]
+                var v = rp.default_value
+                if (typeof v !== "string") v = JSON.stringify(v)
+                if (v === "true") { taskParams[rp.name] = true }
+                else if (v === "false") { taskParams[rp.name] = false }
+                else if (!isNaN(v) && v.trim() !== "") { taskParams[rp.name] = Number(v) }
+                else { taskParams[rp.name] = v }
+            }
+        } else {
+            taskParams = root.collectEditedParams()
+        }
+
+        taskQueueModel.append({
+            taskId: 0,
+            evalTaskId: 0,
+            scenario: scenarioCombo.currentText,
+            dataset: dsItem ? dsItem.name : "",
+            datasetId: dsItem ? (dsItem.id || 0) : 0,
+            algo: algoItem ? algoItem.name : "",
+            algoId: algoItem ? (algoItem.id || 0) : 0,
+            algoKey: algoItem ? (algoItem.key || "") : "",
+            params: taskParams,
+            isSelected: true,
+            trainStatus: 0,
+            trainProgress: 0.0,
+            progressMessage: "",
+            dbStatus: "",
+            resultJson: ({}),
+            outputDir: ""
+        })
+        root.taskCounter++
+        root.checkStates()
+        root.pendingAlgoKey = ""
+        algoParamsPopup.close()
+        root.showToast("✅ 已追加训练任务至队列")
     }
 
     function canRunEvaluation() {
@@ -955,6 +1003,110 @@ Item {
                     taskQueueModel.setProperty(i, "evalTaskId", evalResult.id || 0)
                     backendService.startEvaluationTask(evalResult.id)
                     root.currentEvalTaskId = evalResult.id || 0
+                }
+            }
+        }
+    }
+
+    // ================= 弹窗：算法参数配置 (追加任务前) =================
+    Popup {
+        id: algoParamsPopup
+        width: 500; height: 400
+        modal: true; focus: true
+        x: Math.round((root.width - width) / 2)
+        y: Math.round((root.height - height) / 2)
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        background: Rectangle { color: root.panelBg; radius: 8; border.color: root.primaryColor; border.width: 1 }
+
+        onOpened: {
+            var key = root.pendingAlgoKey
+            var rawParams = root.algoParamsMap[key] || []
+            var editable = []
+            for (var i = 0; i < rawParams.length; i++) {
+                var rp = rawParams[i]
+                var val = rp.default_value
+                if (typeof val !== "string") val = JSON.stringify(val)
+                editable.push({name: rp.name, label: rp.label || rp.name, value: val})
+            }
+            paramEditModel.clear()
+            for (var j = 0; j < editable.length; j++) {
+                paramEditModel.append(editable[j])
+            }
+        }
+
+        ColumnLayout {
+            anchors.fill: parent; anchors.margins: 20; spacing: 15
+            RowLayout {
+                Layout.fillWidth: true
+                Text { text: "算法参数配置"; color: root.primaryColor; font.pixelSize: 16; font.bold: true }
+                Item { Layout.fillWidth: true }
+                Rectangle {
+                    width: 28; height: 28; radius: 4; color: "transparent"
+                    Text { text: "x"; color: root.textMuted; font.pixelSize: 16; anchors.centerIn: parent }
+                    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; hoverEnabled: true
+                        onEntered: parent.color = root.tableHoverBg
+                        onExited: parent.color = "transparent"
+                        onClicked: algoParamsPopup.close()
+                    }
+                }
+            }
+            Rectangle { Layout.fillWidth: true; height: 1; color: root.borderColor }
+
+            Text { text: "以下参数将从算法默认值预填充，您可按需修改："; color: root.textMuted; font.pixelSize: 12 }
+
+            ListModel { id: paramEditModel }
+            Rectangle {
+                Layout.fillWidth: true; Layout.fillHeight: true
+                color: root.bgDark; border.color: root.borderColor; border.width: 1; radius: 6; clip: true
+
+                Rectangle { width: parent.width; height: 32; color: Theme.rowAlt
+                    RowLayout { anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12; spacing: 10
+                        Text { text: "参数名"; color: root.textMuted; font.pixelSize: 12; font.bold: true; Layout.fillWidth: true }
+                        Text { text: "值"; color: root.textMuted; font.pixelSize: 12; font.bold: true; Layout.preferredWidth: 200 }
+                    }
+                }
+
+                ListView {
+                    id: paramEditList
+                    anchors.fill: parent; anchors.topMargin: 32; clip: true
+                    model: paramEditModel
+                    delegate: Rectangle {
+                        width: paramEditList.width; height: 40
+                        color: index % 2 === 0 ? "transparent" : root.tableHoverBg
+                        RowLayout {
+                            anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12; spacing: 10
+                            Text {
+                                text: model.label; color: root.textColor; font.pixelSize: 13
+                                Layout.fillWidth: true; verticalAlignment: Text.AlignVCenter
+                            }
+                            Rectangle {
+                                Layout.preferredWidth: 200; height: 30
+                                color: "transparent"; border.color: root.borderColor; border.width: 1; radius: 4
+                                TextInput {
+                                    text: model.value
+                                    color: root.primaryColor; font.pixelSize: 13; font.family: "Courier"
+                                    anchors.fill: parent; leftPadding: 8; verticalAlignment: TextInput.AlignVCenter
+                                    onTextChanged: paramEditModel.setProperty(index, "value", text)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            RowLayout { Layout.fillWidth: true; spacing: 15
+                Item { Layout.fillWidth: true }
+                Button {
+                    text: "使用默认值"; Layout.preferredWidth: 100; Layout.preferredHeight: 32
+                    background: Rectangle { color: "transparent"; border.color: root.borderColor; border.width: 1; radius: 4 }
+                    contentItem: Text { text: parent.text; color: root.textMuted; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    onClicked: root.appendTaskToQueue(true)
+                }
+                Button {
+                    text: "确认追加"; Layout.preferredWidth: 100; Layout.preferredHeight: 32
+                    background: Rectangle { color: root.primaryColor; radius: 4 }
+                    contentItem: Text { text: parent.text; color: "black"; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    onClicked: root.appendTaskToQueue(false)
                 }
             }
         }

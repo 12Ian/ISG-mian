@@ -11,7 +11,7 @@ import os
 import random
 import warnings
 
-warnings.filterwarnings('ignore', message=r'.*pretrained.*deprecated.*weights.*',
+warnings.filterwarnings('ignore', message=r'.*deprecated.*(?:pretrained|weights).*',
                         module=r'torchvision.*')
 
 _IMAGE_EXTS = {'.png', '.jpg', '.jpeg', '.bmp', '.gif', '.tiff', '.tif', '.webp'}

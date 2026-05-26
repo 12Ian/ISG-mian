@@ -141,6 +141,11 @@ class BackendService(QObject):
         result = self._bridge.get_sample_preview(sampleId)
         self.samplePreviewUpdated.emit(result)
 
+    @Slot(str)
+    def previewFileByPath(self, filePath: str):
+        result = self._bridge.preview_file_by_path(filePath)
+        self.samplePreviewUpdated.emit(result)
+
     @Slot(int)
     def getDatasetStats(self, datasetId: int):
         result = self._bridge.get_dataset_stats(datasetId)

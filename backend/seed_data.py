@@ -2014,6 +2014,158 @@ DEFAULT_ALGORITHMS = (
         ],
     },
     # =========================================================================
+    # 目标检测训练 - YOLOv5
+    # =========================================================================
+    {
+        "key": "training.image.yolov5_detector",
+        "name": "YOLOv5 目标检测训练",
+        "category": "training",
+        "modality": "image",
+        "entry_type": "python_function",
+        "module_path": "plugins.training.yolov5_detector",
+        "callable_name": "run",
+        "description": "基于YOLOv5进行目标检测模型训练，从数据集样本的bbox标注生成YOLO格式数据，调用内嵌YOLOv5引擎训练。",
+        "input_contract": {
+            "dataset_required": True,
+            "sample_required": True,
+            "fields": ["dataset_path", "samples"],
+        },
+        "output_contract": {
+            "produces": ["model_checkpoint"],
+            "artifact_types": ["checkpoint"],
+        },
+        "parameters": [
+            {
+                "name": "weights",
+                "label": "预训练权重",
+                "type": "string",
+                "required": False,
+                "default_value": "yolov5n.pt",
+                "description": "预训练权重文件 (yolov5n/s/m/l/x.pt)",
+            },
+            {
+                "name": "model_yaml",
+                "label": "模型配置",
+                "type": "string",
+                "required": False,
+                "default_value": "models/yolov5n.yaml",
+                "description": "YOLOv5 模型配置文件",
+            },
+            {
+                "name": "epochs",
+                "label": "训练轮次",
+                "type": "integer",
+                "required": False,
+                "default_value": 100,
+                "description": "训练 epoch 数量",
+            },
+            {
+                "name": "batch_size",
+                "label": "批大小",
+                "type": "integer",
+                "required": False,
+                "default_value": 16,
+                "description": "批次大小",
+            },
+            {
+                "name": "img_size",
+                "label": "图像尺寸",
+                "type": "integer",
+                "required": False,
+                "default_value": 640,
+                "description": "训练输入图像尺寸",
+            },
+            {
+                "name": "train_ratio",
+                "label": "训练集比例",
+                "type": "number",
+                "required": False,
+                "default_value": 0.7,
+                "description": "数据集划分中训练集占比",
+            },
+            {
+                "name": "val_ratio",
+                "label": "验证集比例",
+                "type": "number",
+                "required": False,
+                "default_value": 0.15,
+                "description": "数据集划分中验证集占比 (测试集=1-train_ratio-val_ratio)",
+            },
+            {
+                "name": "device",
+                "label": "训练设备",
+                "type": "string",
+                "required": False,
+                "default_value": "",
+                "description": "GPU设备号，空=自动选择",
+            },
+        ],
+    },
+    # =========================================================================
+    # 目标检测评估 - YOLOv5
+    # =========================================================================
+    {
+        "key": "evaluation.image.yolov5_evaluator",
+        "name": "YOLOv5 目标检测评估",
+        "category": "evaluation",
+        "modality": "image",
+        "entry_type": "python_function",
+        "module_path": "plugins.evaluation.yolov5_evaluator",
+        "callable_name": "run",
+        "description": "加载YOLOv5训练产出的best.pt，在验证集上评估mAP/P/R/F1等指标并生成混淆矩阵。",
+        "input_contract": {
+            "dataset_required": True,
+            "sample_required": True,
+            "fields": ["checkpoint_path", "target_dataset"],
+        },
+        "output_contract": {
+            "produces": ["metrics", "artifacts"],
+            "artifact_types": ["report", "confusion_matrix"],
+        },
+        "parameters": [
+            {
+                "name": "conf_thres",
+                "label": "置信度阈值",
+                "type": "number",
+                "required": False,
+                "default_value": 0.001,
+                "description": "检测置信度阈值",
+            },
+            {
+                "name": "iou_thres",
+                "label": "IoU 阈值",
+                "type": "number",
+                "required": False,
+                "default_value": 0.6,
+                "description": "NMS IoU 阈值",
+            },
+            {
+                "name": "img_size",
+                "label": "图像尺寸",
+                "type": "integer",
+                "required": False,
+                "default_value": 640,
+                "description": "评估输入图像尺寸",
+            },
+            {
+                "name": "batch_size",
+                "label": "批大小",
+                "type": "integer",
+                "required": False,
+                "default_value": 32,
+                "description": "批次大小",
+            },
+            {
+                "name": "device",
+                "label": "评估设备",
+                "type": "string",
+                "required": False,
+                "default_value": "",
+                "description": "GPU设备号",
+            },
+        ],
+    },
+    # =========================================================================
     # 模型评估 - PLUD 开放集识别 (1)
     # =========================================================================
     {

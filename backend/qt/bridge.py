@@ -82,6 +82,12 @@ class BackendBridge:
         except Exception as exc:
             return _normalize_error(exc)
 
+    def preview_file_by_path(self, file_path: str) -> dict:
+        try:
+            return self.facade.dataset_service.preview_file_by_path(file_path)
+        except Exception as exc:
+            return _normalize_error(exc)
+
     def get_dataset_stats(self, dataset_id: int) -> dict:
         try:
             return self.facade.dataset_service.get_dataset_stats(dataset_id)
@@ -398,9 +404,12 @@ class BackendBridge:
     def seed_default_algorithms(self) -> None:
         from ..seed_data import DEFAULT_ALGORITHMS
         existing = self.facade.algorithm_service.get_algorithms("", "")
-        existing_keys = {a["key"] for a in existing}
+        existing_map = {a["key"]: a for a in existing}
         for algo in DEFAULT_ALGORITHMS:
-            if algo["key"] not in existing_keys:
+            if algo["key"] in existing_map:
+                existing_id = existing_map[algo["key"]]["id"]
+                self.facade.algorithm_service.update_algorithm(existing_id, {"parameters": algo.get("parameters", [])})
+            else:
                 self.facade.algorithm_service.create_algorithm(dict(algo))
 
     def reflect_parameters(self, script_path: str) -> dict:
