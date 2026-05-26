@@ -9,7 +9,10 @@ from __future__ import annotations
 from pathlib import Path
 import os
 import random
+import warnings
 
+warnings.filterwarnings('ignore', message=r'.*pretrained.*deprecated.*weights.*',
+                        module=r'torchvision.*')
 
 _IMAGE_EXTS = {'.png', '.jpg', '.jpeg', '.bmp', '.gif', '.tiff', '.tif', '.webp'}
 
