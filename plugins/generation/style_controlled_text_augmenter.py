@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from pathlib import Path
 
@@ -41,8 +41,8 @@ def run(payload: dict, context) -> dict:
         return {"ok": False, "error_code": "NO_INPUT_SAMPLES"}
 
     target_count = max(1, int(payload.get("target_count") or len(samples)))
-    style = str(parameters.get("style", parameters.get("风格标签", "正式")) or "正式").strip()
-    concise = max(0.0, min(float(parameters.get("concise", parameters.get("简洁强度", 0.5)) or 0.5), 1.0))
+    style = str(parameters.get("style_label", parameters.get("style", parameters.get("风格标签", "formal"))) or "formal").strip().lower()
+    concise = max(0.0, min(float(parameters.get("conciseness_strength", parameters.get("concise", parameters.get("简洁强度", 0.5))) or 0.5), 1.0))
 
     outputs = []
     for index in range(target_count):
@@ -56,13 +56,17 @@ def run(payload: dict, context) -> dict:
             continue
 
         out = text
-        if style in ("正式", "学术"):
+        if style in ("formal", "academic"):
             rep = {"搞": "进行", "挺": "相当", "很": "较为", "非常": "十分",
                    "特别": "尤其", "可能": "或许", "感觉": "认为"}
             for a, b in rep.items():
                 if a in out and np.random.rand() < 0.8:
                     out = out.replace(a, b)
-        elif style in ("口语", "随意"):
+            out = out.replace("，", "，")
+            out = out.replace("但是", "然而").replace("不过", "然而").replace("所以", "因此")
+            if "。" in out and np.random.rand() < 0.8:
+                out = "总体而言，" + out
+        elif style in ("casual", "colloquial"):
             rep = {"进行": "搞", "相当": "挺", "较为": "挺", "十分": "很",
                    "尤其": "特别", "或许": "可能", "认为": "觉得"}
             for a, b in rep.items():
@@ -70,12 +74,17 @@ def run(payload: dict, context) -> dict:
                     out = out.replace(a, b)
             if np.random.rand() < 0.5:
                 out = out.replace("，", "，真的，")
-        elif style in ("简洁", "精简"):
+            if "。" in out and np.random.rand() < 0.8:
+                out = out.replace("。", "。挺自然的。", 1)
+        elif style in ("concise", "succinct"):
             drop = ["其实", "可能", "感觉", "大概", "大致", "非常", "真的", "挺"]
             for p in drop:
                 if p in out and np.random.rand() < concise:
                     out = out.replace(p, "")
             out = out.replace("并且", "且").replace("同时", "且")
+            parts = [s.strip() for s in out.split("。") if s.strip()]
+            if len(parts) > 2 and np.random.rand() < concise:
+                out = "。".join(parts[: max(1, len(parts) // 2)]) + "。"
 
         of = output_dir / f"{sp.stem}_style_{index:04d}{sp.suffix or '.txt'}"
         of.write_text(out, encoding="utf-8")
