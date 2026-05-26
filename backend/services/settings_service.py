@@ -53,6 +53,11 @@ class SettingsService(ServiceBase):
                 },
             }
 
+    def get_setting(self, key: str):
+        with self.session_factory() as session:
+            item = self.settings_repository.get_setting(session, key)
+            return item.value_json if item else None
+
     def update_setting(self, key: str, value) -> dict:
         with self.session_factory() as session:
             setting = self.settings_repository.upsert_setting(session, key, value)

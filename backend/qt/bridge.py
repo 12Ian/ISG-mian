@@ -398,6 +398,12 @@ class BackendBridge:
         except Exception as exc:
             return _normalize_error(exc)
 
+    def get_setting(self, key: str):
+        try:
+            return self.facade.settings_service.get_setting(key)
+        except Exception:
+            return None
+
     def ensure_default_settings(self) -> None:
         self.facade.settings_service.ensure_defaults()
 

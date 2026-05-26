@@ -1913,18 +1913,21 @@ Item {
                                         color: root.panelBg
                                         border.color: root.borderColor
                                         clip: true
-                                        property bool isGenImage: {
-                                            var ext = String(generatedPath).toLowerCase().split('.').pop()
-                                            return ["jpg","jpeg","png","bmp","gif","webp","tif","tiff"].indexOf(ext) >= 0
-                                        }
                                         Image {
                                             id: generatedThumb
                                             anchors.fill: parent
                                             anchors.margins: 2
-                                            source: isGenImage ? root.localFileUrl(generatedPath) : ""
+                                            source: {
+                                                var ext = String(generatedPath).toLowerCase().split('.').pop()
+                                                var isImg = ["jpg","jpeg","png","bmp","gif","webp","tif","tiff"].indexOf(ext) >= 0
+                                                return isImg ? root.localFileUrl(generatedPath) : ""
+                                            }
                                             fillMode: Image.PreserveAspectCrop
                                             asynchronous: true
-                                            visible: isGenImage && generatedPath !== ""
+                                            visible: {
+                                                var ext = String(generatedPath).toLowerCase().split('.').pop()
+                                                return ["jpg","jpeg","png","bmp","gif","webp","tif","tiff"].indexOf(ext) >= 0 && generatedPath !== ""
+                                            }
                                         }
                                         Text {
                                             anchors.centerIn: parent

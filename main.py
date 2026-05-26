@@ -57,6 +57,7 @@ class BackendService(QObject):
     evaluationTasksUpdated = Signal(dict)
     evaluationResultsUpdated = Signal(dict)
     evaluationStatusUpdated = Signal(str, bool)
+    settingValueLoaded = Signal(str, "QVariant")
 
     trainingTasksUpdated = Signal(dict)
     trainingStatusUpdated = Signal(str, bool, float)
@@ -422,6 +423,11 @@ class BackendService(QObject):
     @Slot(str, "QVariant", result=dict)
     def updateSetting(self, key: str, value):
         return self._bridge.update_setting(key, value)
+
+    @Slot(str)
+    def getSetting(self, key: str):
+        val = self._bridge.get_setting(key)
+        self.settingValueLoaded.emit(key, val if val is not None else "")
 
     @Slot(int, int, str)
     def getOperationLogs(self, page: int, pageSize: int, resourceType: str):

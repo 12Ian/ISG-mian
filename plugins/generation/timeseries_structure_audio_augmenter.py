@@ -91,7 +91,7 @@ def run(payload: dict, context) -> dict:
         if context.is_cancel_requested():
             return {"ok": False, "error_code": "CANCELLED"}
         sample = samples[index % len(samples)]
-        sp = Path(sample.get("sample_path") or sample.get("path") or "")
+        sp = Path(sample.get("sample_path") or sample.get("path") or sample.get("file_path") or "")
         try:
             y, sr = librosa.load(str(sp), sr=None, mono=True)
         except Exception:

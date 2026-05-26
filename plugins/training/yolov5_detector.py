@@ -228,6 +228,7 @@ def _run_training(payload: dict, context) -> dict:
             name="train",
             exist_ok=True,
             nosave=False,
+            noval=True,
             workers=0,
             cache=False,
             callbacks=callbacks,

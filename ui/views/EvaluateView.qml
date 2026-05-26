@@ -132,6 +132,30 @@ Item {
     Connections {
         target: backendService
 
+        function onSettingValueLoaded(key, value) {
+            if (key !== "eval_state" || !value) return
+            try {
+                var state = JSON.parse(value)
+                root.isTraining = state.isTraining || false
+                root.taskCounter = state.taskCounter || 1
+                root.evalMetricHeaders = state.metricHeaders || []
+
+                var h = state.evalHistory || []
+                for (var hi = 0; hi < h.length; hi++) evalHistoryModel.append(h[hi])
+
+                // 恢复任务队列：关闭时运行中的任务不保存，重开后都是已完成/待处理
+                var q = state.taskQueue || []
+                for (var qi = 0; qi < q.length; qi++) {
+                    if (q[qi].trainStatus === 1) q[qi].trainStatus = 4  // 标记为中断
+                    taskQueueModel.append(q[qi])
+                    root.checkStates()
+                }
+
+                var r = state.evalResults || []
+                for (var ri = 0; ri < r.length; ri++) evalResultModel.append(r[ri])
+            } catch(e) {}
+        }
+
         function onEvaluationScenariosUpdated(scenarios) {
             scenarioModel.clear()
             for (var i = 0; i < scenarios.length; i++) {
@@ -151,15 +175,17 @@ Item {
                 var n = item.name || ""
                 var idx = n.indexOf("|Status:")
                 var s = idx !== -1 ? n.substring(idx + 8) : (item.status || "")
-                if (s !== "扩增文件" && s !== "扩展文件" && s !== "generated") {
+                if (s !== "扩展文件") {
                     datasetModel.append({
                         id: item.id || 0,
                         name: (item.name || "未命名").split("|Status:")[0],
-                        modality: item.modality || ""
+                        modality: item.modality || "",
+                        parentId: item.parent_dataset_id || 0,
+                        status: item.status || ""
                     })
                 }
             }
-            if (datasetModel.count === 0) datasetModel.append({id: 0, name: "无可用数据集 (请先导入)", modality: ""})
+            if (datasetModel.count === 0) datasetModel.append({id: 0, name: "无可用数据集 (请先导入)", modality: "", parentId: 0, status: ""})
         }
 
         function onAlgorithmsUpdated(algorithms) {
@@ -339,8 +365,7 @@ Item {
     }
 
     Component.onCompleted: {
-        // 从全局状态恢复评估历史和训练队列
-        root.restoreFromAppState()
+        backendService.getSetting("eval_state")
         backendService.getScenarios()
         backendService.getDatasets(1, 100, "")
         backendService.getAlgorithms("", "")
@@ -353,8 +378,7 @@ Item {
 
     // ================= 全局状态保存/恢复 =================
     function saveToAppState() {
-        if (!root.appState) return
-        // 把 ListModel 序列化为 JSON 数组保存
+        // 把 ListModel 序列化为 JSON 持久化到后端数据库
         var histArr = []
         for (var hi = 0; hi < evalHistoryModel.count; hi++) {
             var h = evalHistoryModel.get(hi)
@@ -362,11 +386,12 @@ Item {
                           algos: h.algos, trainStatus: h.trainStatus, evalReport: h.evalReport,
                           time: h.time, detailsJson: h.detailsJson})
         }
-        root.appState.evalHistoryJson = JSON.stringify(histArr)
 
         var queueArr = []
         for (var qi = 0; qi < taskQueueModel.count; qi++) {
             var q = taskQueueModel.get(qi)
+            // 不保存正在运行的任务（trainStatus===1），关闭后这些任务会被中断
+            if (q.trainStatus === 1) continue
             queueArr.push({taskId: q.taskId, evalTaskId: q.evalTaskId, scenario: q.scenario,
                            dataset: q.dataset, datasetId: q.datasetId, algo: q.algo,
                            algoId: q.algoId, algoKey: q.algoKey, params: q.params,
@@ -374,7 +399,6 @@ Item {
                            trainProgress: q.trainProgress, progressMessage: q.progressMessage,
                            dbStatus: q.dbStatus, resultJson: q.resultJson, outputDir: q.outputDir})
         }
-        root.appState.evalTaskQueueJson = JSON.stringify(queueArr)
 
         var resArr = []
         for (var ri = 0; ri < evalResultModel.count; ri++) {
@@ -382,45 +406,21 @@ Item {
             resArr.push({taskId: r.taskId, modelName: r.modelName, evalMethod: r.evalMethod,
                          metricValues: r.metricValues, metricValuesJson: r.metricValuesJson, summary: r.summary})
         }
-        root.appState.evalResultJson = JSON.stringify(resArr)
-        root.appState.evalMetricHeadersJson = JSON.stringify(root.evalMetricHeaders)
-        root.appState.evalIsTraining = root.isTraining
-        root.appState.evalTaskCounter = root.taskCounter
+
+        var state = {
+            evalHistory: histArr,
+            taskQueue: queueArr,
+            evalResults: resArr,
+            metricHeaders: root.evalMetricHeaders,
+            isTraining: root.isTraining,
+            taskCounter: root.taskCounter
+        }
+        backendService.updateSetting("eval_state", JSON.stringify(state))
     }
 
     function restoreFromAppState() {
-        if (!root.appState) return
-        root.isTraining = root.appState.evalIsTraining || false
-        root.taskCounter = root.appState.evalTaskCounter || 1
-
-        // 恢复评估历史
-        try {
-            var histArr = JSON.parse(root.appState.evalHistoryJson || "[]")
-            for (var hi = 0; hi < histArr.length; hi++) {
-                evalHistoryModel.append(histArr[hi])
-            }
-        } catch(e) {}
-
-        // 恢复训练任务队列
-        try {
-            var queueArr = JSON.parse(root.appState.evalTaskQueueJson || "[]")
-            for (var qi = 0; qi < queueArr.length; qi++) {
-                taskQueueModel.append(queueArr[qi])
-            }
-        } catch(e) {}
-
-        // 恢复评估结果
-        try {
-            var resArr = JSON.parse(root.appState.evalResultJson || "[]")
-            for (var ri = 0; ri < resArr.length; ri++) {
-                evalResultModel.append(resArr[ri])
-            }
-        } catch(e) {}
-
-        // 恢复评估指标表头
-        try {
-            root.evalMetricHeaders = JSON.parse(root.appState.evalMetricHeadersJson || "[]")
-        } catch(e) {}
+        // 从后端数据库加载持久化状态
+        backendService.getSetting("eval_state")
     }
 
     function restoreTrainingTasksFromBackend() {

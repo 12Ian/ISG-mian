@@ -86,9 +86,13 @@ def _compute_openmax_prob(scores, scores_u):
     import numpy as np
     prob_scores, prob_unknowns = [], []
     for s, su in zip(scores, scores_u):
-        ch_scores = np.exp(s)
-        ch_unknown = np.exp(np.sum(su))
+        s_clipped = np.clip(s, -100, 100)
+        su_clipped = np.clip(np.sum(su), -100, 100)
+        ch_scores = np.exp(s_clipped)
+        ch_unknown = np.exp(su_clipped)
         total_denom = np.sum(ch_scores) + ch_unknown
+        if total_denom < 1e-300:
+            total_denom = 1.0
         prob_scores.append(ch_scores / total_denom)
         prob_unknowns.append(ch_unknown / total_denom)
     scores = np.mean(prob_scores, axis=0)
@@ -105,13 +109,21 @@ def _softmax(x):
 def _calc_distance(query_score, mcv, eu_weight, distance_type="eucos"):
     """计算查询样本到 MAV 的距离。"""
     import scipy.spatial.distance as spd
-    if distance_type == "eucos":
+    import numpy as np
+    if np.any(np.isnan(query_score)) or np.any(np.isinf(query_score)):
+        return 1e10
+    if np.any(np.isnan(mcv)) or np.any(np.isinf(mcv)):
+        return 1e10
+    try:
+        if distance_type == "eucos":
+            return spd.euclidean(mcv, query_score) * eu_weight + spd.cosine(mcv, query_score)
+        elif distance_type == "euclidean":
+            return spd.euclidean(mcv, query_score)
+        elif distance_type == "cosine":
+            return spd.cosine(mcv, query_score)
         return spd.euclidean(mcv, query_score) * eu_weight + spd.cosine(mcv, query_score)
-    elif distance_type == "euclidean":
-        return spd.euclidean(mcv, query_score)
-    elif distance_type == "cosine":
-        return spd.cosine(mcv, query_score)
-    return spd.euclidean(mcv, query_score) * eu_weight + spd.cosine(mcv, query_score)
+    except ValueError:
+        return 1e10
 
 
 def _query_weibull(cat_name, wb_model, distance_type="eucos"):
@@ -146,6 +158,9 @@ def _openmax(wb_model, categories, input_score, eu_weight, alpha=10,
 
     scores = np.asarray(scores)
     scores_u = np.asarray(scores_u)
+    if np.any(np.isnan(scores)) or np.any(np.isinf(scores)):
+        softmax_prob = _softmax(np.array(input_score.ravel()))
+        return softmax_prob, softmax_prob
     openmax_prob = np.array(_compute_openmax_prob(scores, scores_u))
     softmax_prob = _softmax(np.array(input_score.ravel()))
 
@@ -560,21 +575,24 @@ def _run_plud(payload: dict, context) -> dict:
                             score.unsqueeze(0).unsqueeze(0).cpu().numpy()
                         )
 
-    scores_by_class = [
-        np.concatenate(x) if x else np.zeros((0, 1, train_class_num))
-        for x in scores_by_class
-    ]
-    mavs = np.array([np.mean(x, axis=0) for x in scores_by_class])
+    # 过滤掉空类(0样本)，避免 np.mean 空数组产生 NaN
+    valid_mask = [len(x) > 0 for x in scores_by_class]
+    valid_scores = [x for x, ok in zip(scores_by_class, valid_mask) if ok]
+    if not valid_scores:
+        return {"ok": False, "error_code": "NO_MAV_DATA",
+                "message": "All known classes have 0 correctly classified training samples"}
+    valid_scores = [np.concatenate(x) for x in valid_scores]
+    mavs = np.array([np.mean(x, axis=0) for x in valid_scores])
     dists = [
         _compute_channel_distances(mav, score)
-        for mav, score in zip(mavs, scores_by_class)
+        for mav, score in zip(mavs, valid_scores)
     ]
+    valid_categories = [i for i, ok in enumerate(valid_mask) if ok]
     context.set_progress(30.0, f"MAVs computed for {train_class_num} known classes")
 
     # ---- Weibull 分布拟合 ----
     context.set_progress(32.0, "Fitting Weibull distributions...")
-    categories = list(range(0, train_class_num))
-    wb_model = _fit_weibull(mavs, dists, categories, weibull_tail, "euclidean")
+    wb_model = _fit_weibull(mavs, dists, valid_categories, weibull_tail, "euclidean")
     context.set_progress(45.0, "Weibull model fitted")
 
     # ---- PLUD: OpenMax 评估 ----
@@ -593,7 +611,7 @@ def _run_plud(payload: dict, context) -> dict:
     for score in all_scores:
         score_exp = score[np.newaxis, :]
         om_prob, _ = _openmax(
-            wb_model, categories, score_exp, 0.5,
+            wb_model, valid_categories, score_exp, 0.5,
             weibull_alpha, "euclidean",
         )
         om_label = np.argmax(om_prob)

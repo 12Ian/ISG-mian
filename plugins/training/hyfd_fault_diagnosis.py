@@ -8,6 +8,7 @@ from __future__ import annotations
 from pathlib import Path
 import os, sys, json, logging
 import numpy as np
+os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
 
 _FAULT_ROOT = Path(__file__).resolve().parent.parent / "fault_diagnosis"
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

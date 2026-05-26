@@ -42,7 +42,7 @@ def run(payload: dict, context) -> dict:
             return {"ok": False, "error_code": "CANCELLED", "message": "任务已取消"}
 
         sample = samples[index % len(samples)]
-        source_path = Path(sample.get("sample_path") or sample.get("path") or "")
+        source_path = Path(sample.get("sample_path") or sample.get("path") or sample.get("file_path") or "")
         image = read_image(source_path)
         if image is None:
             continue

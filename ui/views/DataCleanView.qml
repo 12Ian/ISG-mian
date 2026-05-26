@@ -1947,28 +1947,34 @@ Item {
                                             id: sampleThumb
                                             anchors.fill: parent
                                             anchors.margins: 2
-                                            source: isImageFile ? root.localFileUrl(samplePath) : ""
+                                            source: {
+                                                var ext = String(samplePath).toLowerCase().split('.').pop()
+                                                var isImg = ["jpg","jpeg","png","bmp","gif","webp","tif","tiff"].indexOf(ext) >= 0
+                                                return isImg ? root.localFileUrl(samplePath) : ""
+                                            }
                                             fillMode: Image.PreserveAspectCrop
                                             asynchronous: true
-                                            visible: isImageFile && samplePath !== ""
-                                        }
-                                        property bool isImageFile: {
-                                            var ext = String(samplePath).toLowerCase().split('.').pop()
-                                            return ["jpg","jpeg","png","bmp","gif","webp","tif","tiff"].indexOf(ext) >= 0
-                                        }
-                                        property string fileTypeIcon: {
-                                            var ext = String(samplePath).toLowerCase().split('.').pop()
-                                            if (ext === "csv") return "📊"
-                                            if (ext === "txt" || ext === "log") return "📄"
-                                            if (["wav","mp3","aac","flac"].indexOf(ext) >= 0) return "🎵"
-                                            return "📁"
+                                            visible: {
+                                                var ext = String(samplePath).toLowerCase().split('.').pop()
+                                                return ["jpg","jpeg","png","bmp","gif","webp","tif","tiff"].indexOf(ext) >= 0 && samplePath !== ""
+                                            }
                                         }
                                         Text {
                                             anchors.centerIn: parent
-                                            text: fileTypeIcon
+                                            text: {
+                                                var ext = String(samplePath).toLowerCase().split('.').pop()
+                                                if (ext === "csv") return "📊"
+                                                if (ext === "txt" || ext === "log") return "📄"
+                                                if (["wav","mp3","aac","flac"].indexOf(ext) >= 0) return "🎵"
+                                                return "📁"
+                                            }
                                             color: root.textColor
                                             font.pixelSize: 22
-                                            visible: !isImageFile && samplePath !== ""
+                                            visible: {
+                                                var ext = String(samplePath).toLowerCase().split('.').pop()
+                                                var isImg = ["jpg","jpeg","png","bmp","gif","webp","tif","tiff"].indexOf(ext) >= 0
+                                                return !isImg && samplePath !== ""
+                                            }
                                         }
                                         Text {
                                             anchors.centerIn: parent

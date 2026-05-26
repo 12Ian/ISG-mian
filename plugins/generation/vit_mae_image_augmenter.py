@@ -109,6 +109,9 @@ def run(payload: dict, context) -> dict:
         loss.backward()
         opt.step()
         context.set_progress(step * 50 / steps, f"ViT-MAE train {step+1}/{steps}")
+    labeled_samples = [s for s in samples if (s.get("labels") or s.get("labels_json") or [])]
+    if not labeled_samples:
+        labeled_samples = samples
     outputs = []
     for index in range(target_count):
         if context.is_cancel_requested():
@@ -131,7 +134,7 @@ def run(payload: dict, context) -> dict:
         if not write_image(out_f, img):
             return {"ok": False, "error_code": "IMAGE_WRITE_ERROR", "message": f"Cannot write image: {out_f}"}
         outputs.append({
-            "source_sample_id": samples[0].get("id"),
+            "source_sample_id": labeled_samples[index % len(labeled_samples)].get("id"),
             "output_path": str(out_f),
             "relative_path": out_f.name,
             "metadata": {"method": "vit_mae"},
