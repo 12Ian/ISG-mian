@@ -612,6 +612,11 @@ Item {
     MediaPlayer {
         id: previewPlayer
         autoPlay: false
+        audioOutput: previewAudio
+    }
+
+    AudioOutput {
+        id: previewAudio
     }
 
     // ================= 任务进度轮询 =================
