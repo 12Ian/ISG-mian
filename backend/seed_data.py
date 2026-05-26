@@ -82,6 +82,16 @@ DEFAULT_ALGORITHMS = (
                 "max_value": 1000,
                 "description": "Laplacian方差低于此值时判定为模糊",
             },
+            {
+                "name": "sharpen_amount",
+                "label": "锐化强度",
+                "type": "number",
+                "required": False,
+                "default_value": 1.2,
+                "min_value": 0.1,
+                "max_value": 3.0,
+                "description": "反锐化掩模强度，值越大边缘增强越明显",
+            },
         ],
     },
     {
@@ -142,7 +152,16 @@ DEFAULT_ALGORITHMS = (
         "description": "移除文本中的常见中英文停用词，支持自定义停用词列表",
         "input_contract": {"dataset_required": True, "sample_required": True},
         "output_contract": {"produces": ["suggestions"], "artifact_types": ["text"]},
-        "parameters": [],
+        "parameters": [
+            {
+                "name": "stop_words",
+                "label": "额外停用词",
+                "type": "string",
+                "required": False,
+                "default_value": "",
+                "description": "用户自定义的额外停用词，支持逗号、空格或换行分隔",
+            },
+        ],
     },
     {
         "key": "cleaning.text_stemming",
