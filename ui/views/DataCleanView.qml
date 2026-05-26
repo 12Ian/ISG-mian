@@ -544,7 +544,7 @@ Item {
                     anchors.fill: parent
                     anchors.margins: 12
                     visible: root.previewKind === "image" && root.previewSource !== "" && previewImage.status !== Image.Error
-                    source: root.previewSource
+                    source: root.previewKind === "image" ? root.previewSource : ""
                     fillMode: Image.PreserveAspectFit
                     asynchronous: true
                     onStatusChanged: {

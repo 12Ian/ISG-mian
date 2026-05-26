@@ -35,6 +35,7 @@ Item {
     property int taskCounter: 1
     property int currentTrainingTaskId: 0
     property int currentEvalTaskId: 0
+    property var pendingEvalTaskIds: []
     property var currentHistoryItem: null
     property int pendingDeleteIndex: -1
     property int pendingEditIndex: -1
@@ -44,7 +45,6 @@ Item {
     property var algoParamsMap: ({})
     property string pendingAlgoKey: ""
     property var evalMetricHeaders: []
-
     // 访问主窗口的全局状态管理器 (跨页面切换保持数据)
     property var appState: typeof window !== "undefined" && window ? window.appState : null
 
@@ -234,32 +234,38 @@ Item {
 
         function onEvaluationStatusUpdated(message, success) {
             root.showToast(success ? "✅ " + message : "⚠️ " + message)
-            root.isEvaluating = false
-            if (success && root.currentEvalTaskId > 0) {
-                backendService.getEvaluationResults(root.currentEvalTaskId)
+            if (!success) {
+                root.pendingEvalTaskIds = []
+                root.isEvaluating = false
             }
+            // success时由 evalPollTimer 轮询拉取结果
         }
 
         function onEvaluationTasksUpdated(data) {
-            if (root.isEvaluating) {
+            if (root.isEvaluating && root.pendingEvalTaskIds.length > 0) {
                 var items = data.items || []
-                for (var i = 0; i < items.length; i++) {
-                    var it = items[i]
-                    if ((it.id || 0) === root.currentEvalTaskId) {
+                for (var ti = 0; ti < items.length; ti++) {
+                    var it = items[ti]
+                    var taskId = it.id || 0
+                    var idx = root.pendingEvalTaskIds.indexOf(taskId)
+                    if (idx >= 0) {
                         if (it.status === "completed") {
-                            backendService.getEvaluationResults(root.currentEvalTaskId)
+                            backendService.getEvaluationResults(taskId)
+                            var newIds = root.pendingEvalTaskIds.slice()
+                            newIds.splice(idx, 1)
+                            root.pendingEvalTaskIds = newIds
                         } else if (it.status === "failed") {
                             root.isEvaluating = false
+                            root.pendingEvalTaskIds = []
                             root.showToast("⚠️ 评估失败: " + (it.error_message || it.progress_message || "未知错误"))
                         }
-                        break
                     }
                 }
+                if (root.pendingEvalTaskIds.length === 0) root.isEvaluating = false
             }
         }
 
         function onEvaluationResultsUpdated(data) {
-            // 不clear，多个评估任务的结果累加显示
             if (!evalMetricHeaders || evalMetricHeaders.length === 0) {
                 evalMetricHeaders = []
             }
@@ -290,7 +296,8 @@ Item {
             if (allKeys.length === 0) allKeys = ["accuracy", "macro_f1"]
             evalMetricHeaders = allKeys
 
-            // 追加新结果行
+            // 追加新结果行，同时记录已完成的任务ID
+            var completedTaskIds = []
             for (var i = 0; i < items.length; i++) {
                 var r = items[i]
                 var m = r.metrics || {}
@@ -312,10 +319,22 @@ Item {
                     metricValuesJson: JSON.stringify(vals),
                     summary: r.summary || ""
                 })
+                if (r.task_id > 0 && completedTaskIds.indexOf(r.task_id) < 0) {
+                    completedTaskIds.push(r.task_id)
+                }
             }
-            root.isEvaluating = false
+            // 从pending列表中移除已完成的评估任务
+            var remainingIds = root.pendingEvalTaskIds.slice()
+            for (var ci = 0; ci < completedTaskIds.length; ci++) {
+                var idx = remainingIds.indexOf(completedTaskIds[ci])
+                if (idx >= 0) remainingIds.splice(idx, 1)
+            }
+            root.pendingEvalTaskIds = remainingIds
             root.saveToAppState()
-            root.showToast("✅ 新增 " + items.length + " 条评估结果 (共 " + evalResultModel.count + " 条)")
+            if (root.pendingEvalTaskIds.length === 0) {
+                root.isEvaluating = false
+                root.showToast("✅ 评估比对完成，共 " + evalResultModel.count + " 条结果")
+            }
         }
     }
 
@@ -684,7 +703,11 @@ Item {
                                     currentDetailModel.clear()
                                     if (model.detailsJson && model.detailsJson !== "") {
                                         var arr = JSON.parse(model.detailsJson)
-                                        for (var i = 0; i < arr.length; i++) currentDetailModel.append(arr[i])
+                                        for (var i = 0; i < arr.length; i++) {
+                                            var item = arr[i]
+                                            item.detailsJson = JSON.stringify(item)
+                                            currentDetailModel.append(item)
+                                        }
                                     }
                                     root.viewMode = "detail"
                                 }
@@ -1084,6 +1107,19 @@ Item {
         onTriggered: backendService.getTrainingTasks(0, "")
     }
 
+    // 评估结果轮询定时器 (后台任务完成后自动拉取结果)
+    Timer {
+        id: evalPollTimer
+        interval: 1500; repeat: true
+        running: root.pendingEvalTaskIds.length > 0
+        onTriggered: {
+            var ids = root.pendingEvalTaskIds.slice()
+            for (var ei = 0; ei < ids.length; ei++) {
+                backendService.getEvaluationResults(ids[ei])
+            }
+        }
+    }
+
     // ================= 状态判断函数 =================
     function canStartTraining() {
         for (var i = 0; i < taskQueueModel.count; i++) {
@@ -1176,6 +1212,7 @@ Item {
 
     function startEvaluation() {
         evalResultModel.clear()
+        root.pendingEvalTaskIds = []
 
         var totalTasks = taskQueueModel.count
         var selectedDone = 0
@@ -1218,7 +1255,7 @@ Item {
             if (evalResult && evalResult.status === "success") {
                 taskQueueModel.setProperty(i, "evalTaskId", evalResult.id || 0)
                 backendService.startEvaluationTask(evalResult.id)
-                root.currentEvalTaskId = evalResult.id || 0
+                root.pendingEvalTaskIds = root.pendingEvalTaskIds.concat([evalResult.id || 0])
                 startedCount++
             } else {
                 root.showToast("⚠️ 创建评估任务失败: " + (evalResult ? (evalResult.message || "未知") : "无响应"))
