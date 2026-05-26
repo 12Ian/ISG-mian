@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import shutil
 from pathlib import Path
@@ -398,10 +398,23 @@ class BackendBridge:
     def seed_default_algorithms(self) -> None:
         from ..seed_data import DEFAULT_ALGORITHMS
         existing = self.facade.algorithm_service.get_algorithms("", "")
-        existing_keys = {a["key"] for a in existing}
+        existing_by_key = {a["key"]: a for a in existing}
         for algo in DEFAULT_ALGORITHMS:
-            if algo["key"] not in existing_keys:
+            existing_algo = existing_by_key.get(algo["key"])
+            if existing_algo is None:
                 self.facade.algorithm_service.create_algorithm(dict(algo))
+            elif self._has_missing_default_parameters(existing_algo, algo):
+                self.facade.algorithm_service.update_algorithm(
+                    existing_algo["id"],
+                    {"parameters": algo.get("parameters", [])},
+                )
+
+    def _has_missing_default_parameters(self, existing_algo: dict, default_algo: dict) -> bool:
+        default_params = default_algo.get("parameters", []) or []
+        if not default_params:
+            return False
+        existing_param_names = {item.get("name") for item in existing_algo.get("parameters", []) or []}
+        return any(item.get("name") not in existing_param_names for item in default_params)
 
     def reflect_parameters(self, script_path: str) -> dict:
         """从 .py 脚本反射参数列表。"""
