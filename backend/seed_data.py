@@ -349,6 +349,22 @@ DEFAULT_ALGORITHMS = (
         "parameters": [],
     },
     {
+        "key": "generation.image.crop",
+        "name": "图像剪切增强",
+        "category": "generation",
+        "modality": "image",
+        "entry_type": "python_function",
+        "module_path": "plugins.generation.crop_image_augmenter",
+        "callable_name": "run",
+        "description": "随机或中心裁剪图像区域，保留指定比例的内容",
+        "input_contract": {"dataset_required": True, "sample_required": True},
+        "output_contract": {"produces": ["generated_samples"], "artifact_types": []},
+        "parameters": [
+            {"name": "crop_ratio", "label": "剪切比例", "type": "number", "required": False, "default_value": 0.8, "description": "保留原图的面积比例"},
+            {"name": "crop_mode", "label": "剪切模式", "type": "string", "required": False, "default_value": "random", "options": ["random", "center"], "description": "random=随机位置, center=中心剪切"},
+        ],
+    },
+    {
         "key": "generation.image.geometric_transform",
         "name": "图像几何变换增强",
         "category": "generation",
@@ -693,6 +709,7 @@ DEFAULT_ALGORITHMS = (
                 "name": "occlusion_type",
                 "label": "遮挡类型",
                 "type": "string",
+                "options": ["random_erase", "cutout", "gridmask"],
                 "required": False,
                 "default_value": "random_erase",
                 "options_json": ["random_erase", "cutout", "gridmask"],
@@ -1100,7 +1117,7 @@ DEFAULT_ALGORITHMS = (
         },
         "parameters": [
             {
-                "name": "noise_type",
+                "name": "noise_type", "options": ["white", "pink"],
                 "label": "噪声类型",
                 "type": "string",
                 "required": False,
@@ -1269,7 +1286,7 @@ DEFAULT_ALGORITHMS = (
         },
         "parameters": [
             {
-                "name": "operation",
+                "name": "operation", "options": ["mix", "shift", "crop", "concat", "reverse"],
                 "label": "操作类型",
                 "type": "string",
                 "required": False,
@@ -1332,7 +1349,7 @@ DEFAULT_ALGORITHMS = (
         },
         "parameters": [
             {
-                "name": "target_channel",
+                "name": "target_channel", "options": ["auto", "mono", "stereo"],
                 "label": "目标声道",
                 "type": "string",
                 "required": False,
@@ -1341,7 +1358,7 @@ DEFAULT_ALGORITHMS = (
                 "description": "目标声道配置",
             },
             {
-                "name": "mix_strategy",
+                "name": "mix_strategy", "options": ["avg", "max", "min"],
                 "label": "混合策略",
                 "type": "string",
                 "required": False,
@@ -1458,7 +1475,7 @@ DEFAULT_ALGORITHMS = (
         },
         "parameters": [
             {
-                "name": "filter_type",
+                "name": "filter_type", "options": ["bandpass", "lowpass", "highpass", "bandstop"],
                 "label": "滤波类型",
                 "type": "string",
                 "required": False,
@@ -1505,7 +1522,7 @@ DEFAULT_ALGORITHMS = (
         },
         "parameters": [
             {
-                "name": "noise_type",
+                "name": "noise_type", "options": ["white", "pink", "brown", "uniform"],
                 "label": "噪声类型",
                 "type": "string",
                 "required": False,
@@ -1547,6 +1564,7 @@ DEFAULT_ALGORITHMS = (
                 "name": "effect_type",
                 "label": "效果类型",
                 "type": "string",
+                "options": ["echo", "reverb", "both"],
                 "required": False,
                 "default_value": "echo",
                 "options_json": ["echo", "reverb", "both"],
@@ -1745,6 +1763,7 @@ DEFAULT_ALGORITHMS = (
                 "type": "string",
                 "required": False,
                 "default_value": "en",
+                "options": ["en", "ja", "ko"],
                 "options_json": ["en", "ja", "ko"],
                 "description": "回译的中间语言代码",
             },
@@ -1906,7 +1925,7 @@ DEFAULT_ALGORITHMS = (
                 "type": "string",
                 "required": False,
                 "default_value": "formal",
-                "options_json": ["formal", "casual", "concise"],
+                "options": ["formal", "casual", "concise"],
                 "description": "目标文本风格: formal(正式), casual(口语化), concise(简洁)",
             },
             {
@@ -1945,7 +1964,7 @@ DEFAULT_ALGORITHMS = (
                 "type": "string",
                 "required": False,
                 "default_value": "sentence",
-                "options_json": ["sentence", "paragraph"],
+                "options": ["sentence", "paragraph"],
                 "description": "重排粒度: sentence(句子级), paragraph(段落级)",
             },
             {

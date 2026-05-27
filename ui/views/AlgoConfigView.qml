@@ -44,9 +44,11 @@ Item {
     property bool cleaningExpanded: true
     property bool generationExpanded: true
     property bool evaluationExpanded: true
+    property bool trainingExpanded: true
     property int cleaningCount: 0
     property int generationCount: 0
     property int evaluationCount: 0
+    property int trainingCount: 0
     property int totalAlgoCount: 0
 
     function findAlgoIndexById(algoId) {
@@ -95,6 +97,7 @@ Item {
     ListModel { id: cleaningAlgoModel }
     ListModel { id: generationAlgoModel }
     ListModel { id: evaluationAlgoModel }
+    ListModel { id: trainingAlgoModel }
 
     ListModel {
         id: editingParamsModel
@@ -296,15 +299,18 @@ Item {
     }
 
     Component.onCompleted: root.loadAlgorithms()
+    onVisibleChanged: { if (visible) root.loadAlgorithms() }
 
     Connections {
         target: backendService
         function onAlgorithmsUpdated(items) {
+            if (!root.visible) return  // 只在当前页面可见时处理
             algoListModel.clear()
             cleaningAlgoModel.clear()
             generationAlgoModel.clear()
             evaluationAlgoModel.clear()
-            var cCount = 0, gCount = 0, eCount = 0
+            trainingAlgoModel.clear()
+            var cCount = 0, gCount = 0, eCount = 0, tCount = 0
             for (var i = 0; i < items.length; i++) {
                 var item = items[i]
                 var params = []
@@ -345,13 +351,14 @@ Item {
                     evaluationAlgoModel.append(entry)
                     eCount++
                 } else {
-                    generationAlgoModel.append(entry)
-                    gCount++
+                    trainingAlgoModel.append(entry)
+                    tCount++
                 }
             }
             root.cleaningCount = cCount
             root.generationCount = gCount
             root.evaluationCount = eCount
+            root.trainingCount = tCount
             root.totalAlgoCount = items.length
             if (items.length > 0 && root.selectedAlgoId === -1) {
                 root.selectedAlgoId = items[0].id
@@ -984,7 +991,7 @@ Item {
 
                 Flickable {
                     anchors.fill: parent
-                    contentHeight: sectionColumn.implicitHeight
+                    contentHeight: Math.max(sectionColumn.implicitHeight, 52 + root.totalAlgoCount * 68 + 200)
                     clip: true
                     boundsBehavior: Flickable.StopAtBounds
                     visible: algoListModel.count > 0
@@ -1025,6 +1032,12 @@ Item {
                                     Layout.preferredHeight: 18; radius: 9
                                     color: Qt.rgba(29/255, 78/255, 216/255, 0.15)
                                     Text { id: evalStatText; anchors.centerIn: parent; text: "评 " + root.evaluationCount; color: root.devAccentColor; font.pixelSize: 10; font.bold: true }
+                                }
+                                Rectangle {
+                                    Layout.preferredWidth: Math.max(22, trainStatText.implicitWidth + 10)
+                                    Layout.preferredHeight: 18; radius: 9
+                                    color: Qt.rgba(180/255, 83/255, 9/255, 0.15)
+                                    Text { id: trainStatText; anchors.centerIn: parent; text: "训 " + root.trainingCount; color: root.genTagColor; font.pixelSize: 10; font.bold: true }
                                 }
                             }
                         }
@@ -1131,6 +1144,41 @@ Item {
                             Layout.fillWidth: true
                             Repeater {
                                 model: evaluationAlgoModel
+                                delegate: algoItemDelegate
+                            }
+                        }
+                        Rectangle { Layout.fillWidth: true; height: 1; color: root.borderColor }
+
+                        // ===== 训练算法 =====
+                        Rectangle {
+                            Layout.fillWidth: true; height: 38
+                            color: root.trainingExpanded ? Qt.rgba(180/255, 83/255, 9/255, 0.04) : "transparent"
+                            MouseArea {
+                                anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                                onClicked: root.trainingExpanded = !root.trainingExpanded
+                            }
+                            RowLayout {
+                                anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12; spacing: 8
+                                Text {
+                                    text: root.trainingExpanded ? "▼" : "▶"
+                                    color: root.genTagColor; font.pixelSize: 10; Layout.preferredWidth: 14
+                                }
+                                Text {
+                                    text: "训练算法"; color: root.textColor; font.pixelSize: 13; font.bold: true
+                                }
+                                Rectangle {
+                                    Layout.preferredWidth: Math.max(22, s4cnt.implicitWidth + 10)
+                                    Layout.preferredHeight: 18; radius: 9
+                                    color: Qt.rgba(180/255, 83/255, 9/255, 0.15)
+                                    Text { id: s4cnt; anchors.centerIn: parent; text: root.trainingCount; color: root.genTagColor; font.pixelSize: 10; font.bold: true }
+                                }
+                            }
+                        }
+                        Column {
+                            visible: root.trainingExpanded
+                            Layout.fillWidth: true
+                            Repeater {
+                                model: trainingAlgoModel
                                 delegate: algoItemDelegate
                             }
                         }
