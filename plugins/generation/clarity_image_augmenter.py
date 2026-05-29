@@ -69,8 +69,20 @@ def run(payload: dict, context) -> dict:
     target_count = max(1, int(payload.get("target_count") or len(samples)))
     blur_strength = float(parameters.get("blur_strength", parameters.get("模糊强度", 0.0)) or 0.0)
     blur_kernel = int(parameters.get("blur_kernel", parameters.get("模糊核大小", 5)) or 5)
-    sharp_strength = float(parameters.get("sharp_strength", parameters.get("锐化强度", 0.0)) or 0.0)
-    sharp_amount = float(parameters.get("sharp_amount", parameters.get("锐化量", 0.5)) or 0.5)
+    sharp_strength = float(
+        parameters.get(
+            "sharpen_strength",
+            parameters.get("sharp_strength", parameters.get("锐化强度", 0.0)),
+        )
+        or 0.0
+    )
+    sharp_amount = float(
+        parameters.get(
+            "sharpen_amount",
+            parameters.get("sharp_amount", parameters.get("锐化量", 0.5)),
+        )
+        or 0.5
+    )
 
     outputs = []
     for index in range(target_count):
@@ -117,7 +129,7 @@ def run(payload: dict, context) -> dict:
                 "algorithm_key": payload.get("algorithm_key", "generation.image.clarity"),
                 "parameters": {
                     "blur_strength": blur_strength, "blur_kernel": blur_kernel,
-                    "sharp_strength": sharp_strength, "sharp_amount": sharp_amount,
+                    "sharpen_strength": sharp_strength, "sharpen_amount": sharp_amount,
                 },
             },
             "status": "created",

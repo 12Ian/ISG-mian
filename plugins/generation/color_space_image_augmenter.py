@@ -82,7 +82,13 @@ def run(payload: dict, context) -> dict:
     contrast_alpha = float(parameters.get("contrast", parameters.get("对比度缩放", 1.0)) or 1.0)
     sat_scale = float(parameters.get("saturation", parameters.get("饱和度缩放", 1.0)) or 1.0)
     hue_delta = float(parameters.get("hue", parameters.get("色相偏移", 0.0)) or 0.0)
-    pca_strength = float(parameters.get("pca_strength", parameters.get("PCA抖动强度", 0.0)) or 0.0)
+    pca_strength = float(
+        parameters.get(
+            "pca_strength",
+            parameters.get("pca_jitter", parameters.get("PCA抖动强度", 0.0)),
+        )
+        or 0.0
+    )
 
     outputs = []
     for index in range(target_count):

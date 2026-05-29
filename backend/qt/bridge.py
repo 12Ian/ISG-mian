@@ -414,7 +414,19 @@ class BackendBridge:
         for algo in DEFAULT_ALGORITHMS:
             if algo["key"] in existing_map:
                 existing_id = existing_map[algo["key"]]["id"]
-                self.facade.algorithm_service.update_algorithm(existing_id, {"parameters": algo.get("parameters", [])})
+                self.facade.algorithm_service.update_algorithm(existing_id, {
+                    "name": algo.get("name"),
+                    "category": algo.get("category"),
+                    "modality": algo.get("modality"),
+                    "entry_type": algo.get("entry_type"),
+                    "module_path": algo.get("module_path"),
+                    "callable_name": algo.get("callable_name"),
+                    "script_path": algo.get("script_path"),
+                    "executable_path": algo.get("executable_path"),
+                    "input_contract": algo.get("input_contract", {}),
+                    "output_contract": algo.get("output_contract", {}),
+                    "parameters": algo.get("parameters", []),
+                })
             else:
                 self.facade.algorithm_service.create_algorithm(dict(algo))
 
