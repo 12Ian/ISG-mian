@@ -206,6 +206,20 @@ class BackendBridge:
         except Exception as exc:
             return _normalize_error(exc)
 
+    def update_task_title(self, task_id: int, title: str) -> dict:
+        try:
+            clean_title = (title or "").strip()
+            if not clean_title:
+                raise ValidationError("Task title cannot be empty.")
+            with self.facade.session_factory() as session:
+                task = self.facade.task_repository.update_task_title(session, task_id, clean_title)
+                if task is None:
+                    return {"ok": False, "error_code": "NOT_FOUND", "message": f"Task {task_id} not found."}
+                session.commit()
+                return {"ok": True, "data": self.facade.task_repository._serialize_task(task, session=session)}
+        except Exception as exc:
+            return _normalize_error(exc)
+
     def cancel_task(self, task_id: int) -> dict:
         try:
             return self.facade.task_manager.cancel(task_id)

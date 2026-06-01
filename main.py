@@ -319,6 +319,13 @@ class BackendService(QObject):
         result = self._bridge.delete_task(taskId)
         return {"status": "success" if result.get("ok") else "error", "message": result.get("message", "")}
 
+    @Slot(int, str, result=dict)
+    def updateTaskTitle(self, taskId: int, title: str) -> dict:
+        result = self._bridge.update_task_title(taskId, title)
+        if result.get("ok"):
+            return {"status": "success", "data": result.get("data", {})}
+        return {"status": "error", "message": result.get("message", "Unknown error")}
+
     @Slot(int, result=dict)
     def cancelTask(self, taskId: int) -> dict:
         return self._bridge.cancel_task(taskId)
