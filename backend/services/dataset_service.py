@@ -704,7 +704,15 @@ class DatasetService(ServiceBase):
             relative_parent = path.parent.relative_to(folder).as_posix()
             class_path = "" if relative_parent == "." else relative_parent
             class_name = path.parent.name if path.parent != folder else folder.name
-            labels: list[dict] = []
+            labels: list[dict] = [
+                {
+                    "type": "classification",
+                    "class_name": class_name,
+                    "class_path": class_path or class_name,
+                    "source": "folder_structure",
+                    "split": split,
+                }
+            ]
             records.append(
                 {
                     "source_path": path,
@@ -849,8 +857,11 @@ class DatasetService(ServiceBase):
 
             if preview_kind in ("text", "file"):
                 try:
-                    payload["text_content"] = path.read_bytes()[: 200 * 1024].decode("utf-8")
-                    if preview_kind == "file":
+                    content = path.read_bytes()[: 200 * 1024]
+                    if preview_kind == "text":
+                        payload["text_content"] = content.decode("utf-8")
+                    elif self._looks_like_text(content):
+                        payload["text_content"] = content.decode("utf-8")
                         payload["preview_kind"] = "text"
                 except UnicodeDecodeError:
                     payload["error"] = "无法以文本方式预览此文件（非 UTF-8 编码或二进制文件）。"
@@ -1240,13 +1251,24 @@ class DatasetService(ServiceBase):
     def _serialize_dataset(self, dataset) -> dict:
         status = (dataset.status or "").lower()
         tags = list(dataset.tags_json or [])
+        tag_set = {str(tag).lower() for tag in tags}
+        if status == "deleted" or "deleted" in tag_set:
+            stage = "deleted"
+        elif status == "generated" or "generated" in tag_set:
+            stage = "generated"
+        elif status == "cleaned" or "cleaned" in tag_set:
+            stage = "cleaned"
+        elif status == "test" or "test" in tag_set:
+            stage = "test"
+        else:
+            stage = "raw"
         return {
             "id": dataset.id,
             "name": dataset.name,
             "modality": dataset.modality,
             "description": dataset.description,
             "status": dataset.status,
-            "stage": "generated" if status == "generated" or "generated" in {str(tag).lower() for tag in tags} else ("cleaned" if status == "cleaned" or "cleaned" in {str(tag).lower() for tag in tags} else "raw"),
+            "stage": stage,
             "parent_dataset_id": dataset.parent_dataset_id,
             "storage_path": dataset.storage_path,
             "total_samples": dataset.total_samples,
@@ -1290,3 +1312,19 @@ class DatasetService(ServiceBase):
         if sample.modality == "text":
             return "text"
         return "file"
+
+    def _looks_like_text(self, content: bytes) -> bool:
+        if not content:
+            return True
+        if b"\x00" in content:
+            return False
+        try:
+            decoded = content.decode("utf-8")
+        except UnicodeDecodeError:
+            return False
+        control_chars = sum(
+            1
+            for char in decoded
+            if ord(char) < 32 and char not in ("\n", "\r", "\t", "\f", "\b")
+        )
+        return control_chars == 0
