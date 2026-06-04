@@ -42,6 +42,8 @@ Item {
     property bool importing: false
     property var pendingImportArgs: null
     property var previewSample: null
+    property bool samplePreviewVisible: false
+    property string pendingPreviewKey: ""
     property string previewKind: ""
     property string previewText: ""
     property string previewSource: ""
@@ -86,6 +88,9 @@ Item {
         function onSamplePreviewUpdated(data) {
             var payload = data && data.data ? data.data : data
             if (!payload) return
+            var incomingKey = String(payload.sample_id || payload.id || payload.file_path || payload.relative_path || payload.name || "")
+            if (root.pendingPreviewKey !== "" && incomingKey !== "" && incomingKey !== root.pendingPreviewKey) return
+            if (root.samplePreviewVisible && root.previewSource !== "" && payload.file_path && root.previewSource === root.localFileUrl(payload.file_path)) return
             root.previewKind = payload.preview_kind || "file"
             root.previewText = payload.text_content || payload.error || ""
             root.previewTitle = payload.name || payload.relative_path || "样本预览"
@@ -93,7 +98,8 @@ Item {
             if (root.previewKind === "audio" && root.previewSource !== "") {
                 previewPlayer.source = root.previewSource
             }
-            samplePreviewDialog.open()
+            root.samplePreviewVisible = true
+            fileDetailPopup.forceActiveFocus()
         }
 
         function onImportStatusUpdated(message, success) {
@@ -199,6 +205,9 @@ Item {
 
     function previewFile(file) {
         root.previewSample = file
+        var previewKey = String(file ? (file.sampleId > 0 ? file.sampleId : (file.filePath || file.name || "")) : "")
+        if (root.samplePreviewVisible && root.pendingPreviewKey === previewKey) return
+        root.pendingPreviewKey = previewKey
         if (file && file.sampleId && file.sampleId > 0) {
             backendService.getSamplePreview(file.sampleId)
         } else if (file && file.filePath) {
@@ -208,8 +217,15 @@ Item {
             root.previewTitle = file && file.name ? file.name : "样本预览"
             root.previewText = "该文件没有后端样本记录，无法读取真实文件内容。"
             root.previewSource = ""
-            samplePreviewDialog.open()
+            root.samplePreviewVisible = true
+            fileDetailPopup.forceActiveFocus()
         }
+    }
+
+    function closeSamplePreview() {
+        root.samplePreviewVisible = false
+        root.pendingPreviewKey = ""
+        previewPlayer.stop()
     }
 
     function openSamplePreview(sample) {
@@ -223,6 +239,8 @@ Item {
         currentDirPath = ""
         currentDirDirs = []
         currentDirFiles = []
+        samplePreviewVisible = false
+        pendingPreviewKey = ""
         if (dataset.id) {
             backendService.getDatasetDirectory(dataset.id, "")
         }
@@ -607,7 +625,10 @@ Item {
                             anchors.fill: parent; hoverEnabled: true
                             onEntered: parent.color = "#4C1D28"
                             onExited: parent.color = "transparent"
-                            onClicked: fileDetailPopup.close()
+                            onClicked: {
+                                root.closeSamplePreview()
+                                fileDetailPopup.close()
+                            }
                         }
                     }
                 }
@@ -672,6 +693,7 @@ Item {
             ScrollView {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
+                visible: !root.samplePreviewVisible
                 clip: true
                 ScrollBar.vertical.policy: ScrollBar.AsNeeded
 
@@ -751,6 +773,141 @@ Item {
                     }
                 }
             }
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                visible: root.samplePreviewVisible
+                color: Theme.panel
+                border.color: Theme.border
+                radius: 6
+                clip: true
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: 16
+                    spacing: 12
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 10
+
+                        Label {
+                            text: root.previewTitle
+                            color: Theme.text
+                            font.pixelSize: 15
+                            font.bold: true
+                            Layout.fillWidth: true
+                            elide: Text.ElideRight
+                        }
+
+                        Button {
+                            text: "返回列表"
+                            Layout.preferredWidth: 88
+                            Layout.preferredHeight: 30
+                            background: Rectangle { color: parent.hovered ? Theme.hover : Theme.control; radius: 4; border.color: Theme.border }
+                            contentItem: Text { text: parent.text; color: Theme.text; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                            onClicked: root.closeSamplePreview()
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        color: Theme.row
+                        border.color: Theme.border
+                        radius: 6
+                        clip: true
+
+                        Image {
+                            anchors.fill: parent
+                            anchors.margins: 12
+                            visible: root.previewKind === "image" && root.previewSource !== ""
+                            source: root.previewKind === "image" ? root.previewSource : ""
+                            fillMode: Image.PreserveAspectFit
+                            asynchronous: true
+                        }
+
+                        ScrollView {
+                            anchors.fill: parent
+                            anchors.margins: 12
+                            visible: root.previewKind === "text"
+
+                            TextArea {
+                                text: root.previewText
+                                readOnly: true
+                                wrapMode: TextEdit.Wrap
+                                color: Theme.text
+                                selectByMouse: true
+                                background: Rectangle { color: "transparent" }
+                            }
+                        }
+
+                        ColumnLayout {
+                            anchors.centerIn: parent
+                            width: Math.min(parent.width - 60, 520)
+                            spacing: 14
+                            visible: root.previewKind === "audio"
+
+                            Text {
+                                text: root.previewTitle
+                                color: Theme.text
+                                font.pixelSize: 15
+                                font.bold: true
+                                Layout.fillWidth: true
+                                horizontalAlignment: Text.AlignHCenter
+                                elide: Text.ElideRight
+                            }
+
+                            Text {
+                                text: root.previewSource !== "" ? root.previewSource : "暂无音频路径"
+                                color: Theme.muted
+                                font.pixelSize: 12
+                                Layout.fillWidth: true
+                                horizontalAlignment: Text.AlignHCenter
+                                elide: Text.ElideMiddle
+                            }
+
+                            RowLayout {
+                                Layout.alignment: Qt.AlignHCenter
+                                spacing: 10
+
+                                Button {
+                                    text: previewPlayer.playbackState === MediaPlayer.PlayingState ? "暂停" : "播放"
+                                    Layout.preferredWidth: 90
+                                    Layout.preferredHeight: 34
+                                    background: Rectangle { color: parent.hovered ? "#0288D1" : "#039BE5"; radius: 4 }
+                                    contentItem: Text { text: parent.text; color: "black"; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                    onClicked: {
+                                        if (previewPlayer.playbackState === MediaPlayer.PlayingState) previewPlayer.pause()
+                                        else previewPlayer.play()
+                                    }
+                                }
+
+                                Button {
+                                    text: "停止"
+                                    Layout.preferredWidth: 90
+                                    Layout.preferredHeight: 34
+                                    background: Rectangle { color: parent.hovered ? Theme.hover : Theme.control; radius: 4; border.color: Theme.border }
+                                    contentItem: Text { text: parent.text; color: Theme.text; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                    onClicked: previewPlayer.stop()
+                                }
+                            }
+                        }
+
+                        Text {
+                            anchors.centerIn: parent
+                            width: parent.width - 40
+                            visible: root.previewKind !== "image" && root.previewKind !== "text" && root.previewKind !== "audio"
+                            text: root.previewText !== "" ? root.previewText : (root.previewSource !== "" ? root.previewSource : "暂无可预览内容")
+                            color: Theme.muted
+                            font.pixelSize: 14
+                            wrapMode: Text.WordWrap
+                            horizontalAlignment: Text.AlignHCenter
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -789,159 +946,13 @@ Item {
         }
     }
 
-    Popup {
-        id: samplePreviewDialog
-        width: Math.min(root.width * 0.9, 760)
-        height: Math.min(root.height * 0.9, 560)
-        x: (root.width - width) / 2
-        y: (root.height - height) / 2
-        modal: true
-        focus: true
-        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+    MediaPlayer {
+        id: previewPlayer
+        audioOutput: previewAudio
+    }
 
-        onClosed: previewPlayer.stop()
-
-        background: Rectangle {
-            color: Theme.row
-            border.color: Theme.border
-            border.width: 1
-            radius: 8
-            clip: true
-        }
-
-        ColumnLayout {
-            anchors.fill: parent
-            anchors.margins: 18
-            spacing: 12
-
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: 10
-
-                Text {
-                    text: root.previewTitle
-                    color: Theme.text
-                    font.pixelSize: 16
-                    font.bold: true
-                    Layout.fillWidth: true
-                    elide: Text.ElideRight
-                }
-
-                Button {
-                    text: "关闭"
-                    Layout.preferredWidth: 72
-                    Layout.preferredHeight: 30
-                    background: Rectangle { color: parent.hovered ? Theme.hover : Theme.control; radius: 4; border.color: Theme.border }
-                    contentItem: Text { text: parent.text; color: Theme.text; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                    onClicked: samplePreviewDialog.close()
-                }
-            }
-
-            Rectangle {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                color: Theme.panel
-                border.color: Theme.border
-                radius: 6
-                clip: true
-
-                Image {
-                    anchors.fill: parent
-                    anchors.margins: 12
-                    visible: root.previewKind === "image" && root.previewSource !== ""
-                    source: root.previewKind === "image" ? root.previewSource : ""
-                    fillMode: Image.PreserveAspectFit
-                    asynchronous: true
-                }
-
-                ScrollView {
-                    anchors.fill: parent
-                    anchors.margins: 12
-                    visible: root.previewKind === "text"
-
-                    TextArea {
-                        text: root.previewText
-                        readOnly: true
-                        wrapMode: TextEdit.Wrap
-                        color: Theme.text
-                        selectByMouse: true
-                        background: Rectangle { color: "transparent" }
-                    }
-                }
-
-                ColumnLayout {
-                    anchors.centerIn: parent
-                    width: Math.min(parent.width - 60, 520)
-                    spacing: 14
-                    visible: root.previewKind === "audio"
-
-                    Text {
-                        text: root.previewTitle
-                        color: Theme.text
-                        font.pixelSize: 15
-                        font.bold: true
-                        Layout.fillWidth: true
-                        horizontalAlignment: Text.AlignHCenter
-                        elide: Text.ElideRight
-                    }
-
-                    Text {
-                        text: root.previewSource !== "" ? root.previewSource : "暂无音频路径"
-                        color: Theme.muted
-                        font.pixelSize: 12
-                        Layout.fillWidth: true
-                        horizontalAlignment: Text.AlignHCenter
-                        elide: Text.ElideMiddle
-                    }
-
-                    RowLayout {
-                        Layout.alignment: Qt.AlignHCenter
-                        spacing: 10
-
-                        Button {
-                            text: previewPlayer.playbackState === MediaPlayer.PlayingState ? "暂停" : "播放"
-                            Layout.preferredWidth: 90
-                            Layout.preferredHeight: 34
-                            background: Rectangle { color: parent.hovered ? "#0288D1" : "#039BE5"; radius: 4 }
-                            contentItem: Text { text: parent.text; color: "black"; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                            onClicked: {
-                                if (previewPlayer.playbackState === MediaPlayer.PlayingState) previewPlayer.pause()
-                                else previewPlayer.play()
-                            }
-                        }
-
-                        Button {
-                            text: "停止"
-                            Layout.preferredWidth: 90
-                            Layout.preferredHeight: 34
-                            background: Rectangle { color: parent.hovered ? Theme.hover : Theme.control; radius: 4; border.color: Theme.border }
-                            contentItem: Text { text: parent.text; color: Theme.text; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                            onClicked: previewPlayer.stop()
-                        }
-                    }
-                }
-
-                Text {
-                    anchors.centerIn: parent
-                    width: parent.width - 40
-                    visible: root.previewKind !== "image" && root.previewKind !== "text" && root.previewKind !== "audio"
-                    text: root.previewText !== "" ? root.previewText : (root.previewSource !== "" ? root.previewSource : "暂无可预览内容")
-                    color: Theme.muted
-                    font.pixelSize: 14
-                    wrapMode: Text.WordWrap
-                    horizontalAlignment: Text.AlignHCenter
-                }
-            }
-        }
-
-        MediaPlayer {
-            id: previewPlayer
-            audioOutput: previewAudio
-        }
-
-        AudioOutput {
-            id: previewAudio
-        }
+    AudioOutput {
+        id: previewAudio
     }
 
 
