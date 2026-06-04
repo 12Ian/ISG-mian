@@ -111,7 +111,7 @@ def run(payload: dict, context) -> dict:
             return {"ok": False, "error_code": "CANCELLED", "message": "Generation cancelled."}
 
         sample = samples[index % len(samples)]
-        source_path = Path(sample.get("sample_path") or sample.get("path") or "")
+        source_path = Path(sample.get("sample_path") or sample.get("path") or sample.get("file_path") or "")
         image = _read_image(source_path)
         if image is None:
             return {"ok": False, "error_code": "IMAGE_READ_ERROR", "message": f"Cannot read image: {source_path}"}

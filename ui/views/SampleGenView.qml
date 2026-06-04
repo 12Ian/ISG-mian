@@ -136,11 +136,14 @@ Item {
             var rawParams = algo.parameters || []
             for (var p = 0; p < rawParams.length; p++) {
                 var param = rawParams[p]
+                var opts = param.options || param.options_json || []
                 params.push({
                     n: param.name || "",
                     label: param.label || param.name || "",
                     v: param.default_value !== undefined && param.default_value !== null ? String(param.default_value) : "",
-                    type: param.type || "string"
+                    type: param.type || "string",
+                    options: opts,
+                    optionsJson: JSON.stringify(opts)
                 })
             }
             map[String(algo.id)] = params
@@ -501,7 +504,7 @@ Item {
                     anchors.fill: parent
                     anchors.margins: 12
                     visible: root.previewKind === "image" && root.previewSource !== ""
-                    source: root.previewSource
+                    source: root.previewKind === "image" ? root.previewSource : ""
                     fillMode: Image.PreserveAspectFit
                     asynchronous: true
                 }
@@ -612,6 +615,11 @@ Item {
     MediaPlayer {
         id: previewPlayer
         autoPlay: false
+        audioOutput: previewAudio
+    }
+
+    AudioOutput {
+        id: previewAudio
     }
 
     // ================= 任务进度轮询 =================
@@ -1333,7 +1341,35 @@ Item {
                                                 delegate: Column {
                                                     width: parent.width; spacing: 6
                                                     Text { text: modelData.label || modelData.n; color: root.textMuted; font.pixelSize: 12 }
+                                                    // 有options → 下拉框
+                                                    ComboBox {
+                                                        visible: modelData.options && modelData.options.length > 0
+                                                        width: parent.width; height: 36
+                                                        model: modelData.options || []
+                                                        currentIndex: {
+                                                            var cv = modelData.v !== undefined ? String(modelData.v) : ""
+                                                            var opts = modelData.options || []
+                                                            for (var oi = 0; oi < opts.length; oi++) {
+                                                                if (String(opts[oi]) === cv) return oi
+                                                            }
+                                                            return 0
+                                                        }
+                                                        onCurrentIndexChanged: {
+                                                            var opts = modelData.options || []
+                                                            if (currentIndex >= 0 && currentIndex < opts.length) {
+                                                                var paramList = root.paramsDataMap[String(selectedAlgoDelegate.selectedAlgoId)]
+                                                                for (var pi = 0; pi < paramList.length; pi++) {
+                                                                    if (paramList[pi].n === modelData.n) {
+                                                                        paramList[pi].v = opts[currentIndex]
+                                                                        break
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                    // 无options → 文本输入
                                                     Rectangle {
+                                                        visible: !modelData.options || modelData.options.length === 0
                                                         width: parent.width; height: 36; color: root.bgDark; radius: 4; border.color: root.borderColor; border.width: 1
                                                         TextInput {
                                                             text: modelData.v
@@ -1912,10 +1948,17 @@ Item {
                                             id: generatedThumb
                                             anchors.fill: parent
                                             anchors.margins: 2
-                                            source: root.localFileUrl(generatedPath)
+                                            source: {
+                                                var ext = String(generatedPath).toLowerCase().split('.').pop()
+                                                var isImg = ["jpg","jpeg","png","bmp","gif","webp","tif","tiff"].indexOf(ext) >= 0
+                                                return isImg ? root.localFileUrl(generatedPath) : ""
+                                            }
                                             fillMode: Image.PreserveAspectCrop
                                             asynchronous: true
-                                            visible: generatedPath !== "" && generatedThumb.status !== Image.Error
+                                            visible: {
+                                                var ext = String(generatedPath).toLowerCase().split('.').pop()
+                                                return ["jpg","jpeg","png","bmp","gif","webp","tif","tiff"].indexOf(ext) >= 0 && generatedPath !== ""
+                                            }
                                         }
                                         Text {
                                             anchors.centerIn: parent

@@ -57,6 +57,7 @@ class BackendService(QObject):
     evaluationTasksUpdated = Signal(dict)
     evaluationResultsUpdated = Signal(dict)
     evaluationStatusUpdated = Signal(str, bool)
+    settingValueLoaded = Signal(str, "QVariant")
 
     trainingTasksUpdated = Signal(dict)
     trainingStatusUpdated = Signal(str, bool, float)
@@ -139,6 +140,11 @@ class BackendService(QObject):
     @Slot(int)
     def getSamplePreview(self, sampleId: int):
         result = self._bridge.get_sample_preview(sampleId)
+        self.samplePreviewUpdated.emit(result)
+
+    @Slot(str)
+    def previewFileByPath(self, filePath: str):
+        result = self._bridge.preview_file_by_path(filePath)
         self.samplePreviewUpdated.emit(result)
 
     @Slot(int)
@@ -313,6 +319,13 @@ class BackendService(QObject):
         result = self._bridge.delete_task(taskId)
         return {"status": "success" if result.get("ok") else "error", "message": result.get("message", "")}
 
+    @Slot(int, str, result=dict)
+    def updateTaskTitle(self, taskId: int, title: str) -> dict:
+        result = self._bridge.update_task_title(taskId, title)
+        if result.get("ok"):
+            return {"status": "success", "data": result.get("data", {})}
+        return {"status": "error", "message": result.get("message", "Unknown error")}
+
     @Slot(int, result=dict)
     def cancelTask(self, taskId: int) -> dict:
         return self._bridge.cancel_task(taskId)
@@ -417,6 +430,11 @@ class BackendService(QObject):
     @Slot(str, "QVariant", result=dict)
     def updateSetting(self, key: str, value):
         return self._bridge.update_setting(key, value)
+
+    @Slot(str)
+    def getSetting(self, key: str):
+        val = self._bridge.get_setting(key)
+        self.settingValueLoaded.emit(key, val if val is not None else "")
 
     @Slot(int, int, str)
     def getOperationLogs(self, page: int, pageSize: int, resourceType: str):

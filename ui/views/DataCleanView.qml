@@ -48,6 +48,8 @@ Item {
     property var allSourceDatasets: []
     property string datasetTypeFilter: "raw"
     property var currentHistoryItem: null
+    property string currentHistoryTitle: ""
+    property int currentHistoryIndex: -1
     property var currentFileList: []
     property var detailAlgorithmIds: []
     property var detailAlgorithmItems: []
@@ -235,9 +237,10 @@ Item {
     }
 
     function cleaningTaskTitle(task, sourceName) {
-        var datasetName = sourceName || ("数据集#" + (task.source_dataset_id || ""))
+        if (task && task.title && String(task.title).trim() !== "") return task.title
+        var datasetName = sourceName || ("鏁版嵁闆?" + (task.source_dataset_id || ""))
         var taskId = task.id || task.taskId || ""
-        return "清洗任务_" + datasetName + "_#" + taskId
+        return "娓呮礂浠诲姟_" + datasetName + "_#" + taskId
     }
 
     function showCleaningFailure(message) {
@@ -544,7 +547,7 @@ Item {
                     anchors.fill: parent
                     anchors.margins: 12
                     visible: root.previewKind === "image" && root.previewSource !== "" && previewImage.status !== Image.Error
-                    source: root.previewSource
+                    source: root.previewKind === "image" ? root.previewSource : ""
                     fillMode: Image.PreserveAspectFit
                     asynchronous: true
                     onStatusChanged: {
@@ -1555,8 +1558,23 @@ Item {
             Layout.fillWidth: true
             spacing: 15
             Label { text: "数据清洗流转历史"; font.pixelSize: 18; font.bold: true; color: root.textColor }
-            Item { Layout.fillWidth: true }
+            Button {
+                text: "修改任务名称"
+                font.bold: true; font.pixelSize: 14
+                Layout.preferredHeight: 30
+                background: Rectangle { color: "transparent"; border.color: root.primaryColor; border.width: 1; radius: 4 }
+                contentItem: Text { text: parent.text; color: root.primaryColor; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                onClicked: {
+                    if (!root.currentHistoryItem || root.currentHistoryItem.taskId <= 0) {
+                        root.showToast("❌ 没有可修改的任务")
+                        return
+                    }
+                    renameTaskNameInput.text = root.currentHistoryTitle || root.currentHistoryItem.projectName || ""
+                    renameTaskPopup.open()
+                }
+            }
 
+            Item { Layout.fillWidth: true }
             Button {
                 text: root.selectedExportCount > 0 ? "📥 导出选中项 (" + root.selectedExportCount + ")" : "📥 导出选中项"
                 font.bold: true; font.pixelSize: 14
@@ -1715,6 +1733,7 @@ Item {
                                     var detailParams = root.parseJsonObject(model.parametersJsonText || model.parameters || {})
                                     root.currentHistoryItem = {
                                         taskId: model.taskId || 0,
+                                        title: model.projectName,
                                         projectName: model.projectName,
                                         sourceDataset: model.sourceDataset,
                                         cleanedDataset: model.cleanedDataset,
@@ -1723,6 +1742,8 @@ Item {
                                         parameters: detailParams,
                                         time: model.time
                                     }
+                                    root.currentHistoryTitle = model.projectName || ""
+                                    root.currentHistoryIndex = index
                                     root.detailAlgorithmIds = detailIds
                                     var algoItems = []
                                     for (var ai = 0; ai < root.detailAlgorithmIds.length; ai++) {
@@ -1947,17 +1968,41 @@ Item {
                                             id: sampleThumb
                                             anchors.fill: parent
                                             anchors.margins: 2
-                                            source: root.localFileUrl(samplePath)
+                                            source: {
+                                                var ext = String(samplePath).toLowerCase().split('.').pop()
+                                                var isImg = ["jpg","jpeg","png","bmp","gif","webp","tif","tiff"].indexOf(ext) >= 0
+                                                return isImg ? root.localFileUrl(samplePath) : ""
+                                            }
                                             fillMode: Image.PreserveAspectCrop
                                             asynchronous: true
-                                            visible: samplePath !== "" && sampleThumb.status !== Image.Error
+                                            visible: {
+                                                var ext = String(samplePath).toLowerCase().split('.').pop()
+                                                return ["jpg","jpeg","png","bmp","gif","webp","tif","tiff"].indexOf(ext) >= 0 && samplePath !== ""
+                                            }
+                                        }
+                                        Text {
+                                            anchors.centerIn: parent
+                                            text: {
+                                                var ext = String(samplePath).toLowerCase().split('.').pop()
+                                                if (ext === "csv") return "📊"
+                                                if (ext === "txt" || ext === "log") return "📄"
+                                                if (["wav","mp3","aac","flac"].indexOf(ext) >= 0) return "🎵"
+                                                return "📁"
+                                            }
+                                            color: root.textColor
+                                            font.pixelSize: 22
+                                            visible: {
+                                                var ext = String(samplePath).toLowerCase().split('.').pop()
+                                                var isImg = ["jpg","jpeg","png","bmp","gif","webp","tif","tiff"].indexOf(ext) >= 0
+                                                return !isImg && samplePath !== ""
+                                            }
                                         }
                                         Text {
                                             anchors.centerIn: parent
                                             text: "图片"
                                             color: root.textMuted
                                             font.pixelSize: 12
-                                            visible: samplePath === "" || sampleThumb.status === Image.Error
+                                            visible: samplePath === ""
                                         }
                                     }
 
@@ -1993,6 +2038,80 @@ Item {
                                 }
                             }
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    Popup {
+        id: renameTaskPopup
+        width: 360
+        height: 180
+        modal: true
+        focus: true
+        x: Math.round((root.width - width) / 2)
+        y: Math.round((root.height - height) / 2)
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        background: Rectangle { color: root.panelBg; radius: 8; border.color: root.borderColor; border.width: 1 }
+
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 20
+            spacing: 15
+            Text { text: "修改任务名称"; color: root.textColor; font.pixelSize: 16; font.bold: true }
+            Rectangle {
+                Layout.fillWidth: true; height: 36; color: root.bgDark; radius: 4; border.color: root.borderColor; border.width: 1
+                TextInput {
+                    id: renameTaskNameInput
+                    color: root.primaryColor; font.pixelSize: 13; font.bold: true
+                    anchors.fill: parent; leftPadding: 10; verticalAlignment: TextInput.AlignVCenter; selectByMouse: true
+                }
+            }
+            Item { Layout.fillHeight: true }
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 15
+                Item { Layout.fillWidth: true }
+                Button {
+                    text: "取消"
+                    Layout.preferredWidth: 80; Layout.preferredHeight: 32
+                    background: Rectangle { color: "transparent"; border.color: root.borderColor; border.width: 1; radius: 4 }
+                    contentItem: Text { text: parent.text; color: root.textMuted; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    onClicked: renameTaskPopup.close()
+                }
+                Button {
+                    text: "保存"
+                    Layout.preferredWidth: 80; Layout.preferredHeight: 32
+                    background: Rectangle { color: root.primaryColor; radius: 4 }
+                    contentItem: Text { text: parent.text; color: "black"; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    onClicked: {
+                        var newTitle = renameTaskNameInput.text.trim()
+                        if (!root.currentHistoryItem || root.currentHistoryItem.taskId <= 0) {
+                            root.showToast("❌ 没有可修改的任务")
+                        } else if (newTitle === "") {
+                            root.showToast("❌ 任务名称不能为空")
+                        } else {
+                            var result = backendService.updateTaskTitle(root.currentHistoryItem.taskId, newTitle)
+                            if (result.status === "success") {
+                                var updated = result.data || {}
+                                var finalTitle = updated.title || newTitle
+                                var index = root.currentHistoryIndex
+                                if (index >= 0) {
+                                    cleaningHistoryModel.setProperty(index, "projectName", finalTitle)
+                                }
+                                root.currentHistoryTitle = finalTitle
+                                if (root.currentHistoryItem) {
+                                    root.currentHistoryItem.projectName = finalTitle
+                                    root.currentHistoryItem.title = finalTitle
+                                }
+                                root.showToast("✅ 任务名称已更新为 " + finalTitle)
+                                backendService.getCleaningTasks(0, "")
+                            } else {
+                                root.showToast("❌ " + (result.message || "修改失败"))
+                            }
+                        }
+                        renameTaskPopup.close()
                     }
                 }
             }

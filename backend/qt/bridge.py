@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import shutil
 from pathlib import Path
@@ -79,6 +79,12 @@ class BackendBridge:
             if result.get("ok") and "data" in result:
                 result["data"] = self.to_qml_sample(result["data"])
             return result
+        except Exception as exc:
+            return _normalize_error(exc)
+
+    def preview_file_by_path(self, file_path: str) -> dict:
+        try:
+            return self.facade.dataset_service.preview_file_by_path(file_path)
         except Exception as exc:
             return _normalize_error(exc)
 
@@ -197,6 +203,20 @@ class BackendBridge:
                     return {"ok": False, "error_code": "NOT_FOUND", "message": f"Task {task_id} not found."}
                 session.commit()
                 return {"ok": True, "data": result}
+        except Exception as exc:
+            return _normalize_error(exc)
+
+    def update_task_title(self, task_id: int, title: str) -> dict:
+        try:
+            clean_title = (title or "").strip()
+            if not clean_title:
+                raise ValidationError("Task title cannot be empty.")
+            with self.facade.session_factory() as session:
+                task = self.facade.task_repository.update_task_title(session, task_id, clean_title)
+                if task is None:
+                    return {"ok": False, "error_code": "NOT_FOUND", "message": f"Task {task_id} not found."}
+                session.commit()
+                return {"ok": True, "data": self.facade.task_repository._serialize_task(task, session=session)}
         except Exception as exc:
             return _normalize_error(exc)
 
@@ -392,15 +412,36 @@ class BackendBridge:
         except Exception as exc:
             return _normalize_error(exc)
 
+    def get_setting(self, key: str):
+        try:
+            return self.facade.settings_service.get_setting(key)
+        except Exception:
+            return None
+
     def ensure_default_settings(self) -> None:
         self.facade.settings_service.ensure_defaults()
 
     def seed_default_algorithms(self) -> None:
         from ..seed_data import DEFAULT_ALGORITHMS
         existing = self.facade.algorithm_service.get_algorithms("", "")
-        existing_keys = {a["key"] for a in existing}
+        existing_map = {a["key"]: a for a in existing}
         for algo in DEFAULT_ALGORITHMS:
-            if algo["key"] not in existing_keys:
+            if algo["key"] in existing_map:
+                existing_id = existing_map[algo["key"]]["id"]
+                self.facade.algorithm_service.update_algorithm(existing_id, {
+                    "name": algo.get("name"),
+                    "category": algo.get("category"),
+                    "modality": algo.get("modality"),
+                    "entry_type": algo.get("entry_type"),
+                    "module_path": algo.get("module_path"),
+                    "callable_name": algo.get("callable_name"),
+                    "script_path": algo.get("script_path"),
+                    "executable_path": algo.get("executable_path"),
+                    "input_contract": algo.get("input_contract", {}),
+                    "output_contract": algo.get("output_contract", {}),
+                    "parameters": algo.get("parameters", []),
+                })
+            else:
                 self.facade.algorithm_service.create_algorithm(dict(algo))
 
     def reflect_parameters(self, script_path: str) -> dict:

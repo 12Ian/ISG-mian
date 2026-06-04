@@ -27,6 +27,18 @@ class FileIndexer:
                 digest.update(chunk)
         return digest.hexdigest()
 
+    def compute_sha256_fast(self, file_path: Path) -> str:
+        """快速去重指纹：首尾各 4KB + 文件大小。适合大量文件导入时使用。"""
+        file_size = file_path.stat().st_size
+        digest = hashlib.sha256()
+        digest.update(str(file_size).encode())
+        with file_path.open("rb") as handle:
+            digest.update(handle.read(4096))
+            if file_size > 8192:
+                handle.seek(-4096, 2)
+            digest.update(handle.read(4096))
+        return digest.hexdigest()
+
     def detect_mime_type(self, file_path: Path) -> str:
         mime_type, _ = mimetypes.guess_type(file_path.name)
         return mime_type or "application/octet-stream"

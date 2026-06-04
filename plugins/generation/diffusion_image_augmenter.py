@@ -94,6 +94,9 @@ def run(payload: dict, context) -> dict:
 
     inference_steps = max(1, min(inference_steps, 50, T))
     model.eval()
+    labeled_samples = [s for s in samples if (s.get("labels") or s.get("labels_json") or [])]
+    if not labeled_samples:
+        labeled_samples = samples
     outputs = []
     for index in range(target_count):
         if context.is_cancel_requested():
@@ -115,7 +118,7 @@ def run(payload: dict, context) -> dict:
         if not write_image(out, img):
             return {"ok": False, "error_code": "IMAGE_WRITE_ERROR", "message": f"Cannot write image: {out}"}
         outputs.append({
-            "source_sample_id": samples[0].get("id"),
+            "source_sample_id": labeled_samples[index % len(labeled_samples)].get("id"),
             "output_path": str(out),
             "relative_path": out.name,
             "metadata": {"method": "diffusion", "algorithm_key": payload.get("algorithm_key", "generation.image.diffusion")},
@@ -132,7 +135,7 @@ def _fallback(payload, context, output_dir, samples, target_count, method, param
         if context.is_cancel_requested():
             return {"ok": False, "error_code": "CANCELLED"}
         sample = samples[index % len(samples)]
-        p = Path(sample.get("sample_path") or sample.get("path") or "")
+        p = Path(sample.get("sample_path") or sample.get("path") or sample.get("file_path") or "")
         img = read_image(p)
         if img is None:
             continue
@@ -204,7 +207,7 @@ def _build_model(device):
             h1 = torch.relu(self.c1(xt))
             h2 = torch.relu(self.c2(h1))
             h2 = self.c3(h2)
-            temb = _temb(t, time_dim).unsqueeze(-1).unsqueeze(-1)
-            h2 = h2 + self.tmlp(temb)
+            temb = _temb(t, time_dim)
+            h2 = h2 + self.tmlp(temb).unsqueeze(-1).unsqueeze(-1)
             return self.cout(torch.relu(self.up(h2)))
     return NoisePredictor()

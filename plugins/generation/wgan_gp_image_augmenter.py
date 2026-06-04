@@ -109,6 +109,10 @@ def run(payload: dict, context) -> dict:
         context.set_progress(step * 50 / steps, f"WGAN-GP train {step + 1}/{steps}")
 
     g.eval()
+    # 过滤掉无标签的样本，只从有标签的源样本中循环选取
+    labeled_samples = [s for s in samples if (s.get("labels") or s.get("labels_json") or [])]
+    if not labeled_samples:
+        labeled_samples = samples
     outputs = []
     for index in range(target_count):
         if context.is_cancel_requested():
@@ -120,8 +124,9 @@ def run(payload: dict, context) -> dict:
         output_path = output_dir / f"wgan_gp_{index:04d}.jpg"
         if not write_image(output_path, img_bgr):
             return {"ok": False, "error_code": "IMAGE_WRITE_ERROR", "message": f"Cannot write image: {output_path}"}
+        src = labeled_samples[index % len(labeled_samples)]
         outputs.append({
-            "source_sample_id": samples[0].get("id"),
+            "source_sample_id": src.get("id"),
             "output_path": str(output_path),
             "relative_path": output_path.name,
             "metadata": {"method": "wgan_gp", "algorithm_key": payload.get("algorithm_key", "generation.image.wgan_gp")},
@@ -138,7 +143,7 @@ def _fallback_run(payload, context, output_dir, samples, target_count, method):
         if context.is_cancel_requested():
             return {"ok": False, "error_code": "CANCELLED", "message": "Cancelled"}
         sample = samples[index % len(samples)]
-        source_path = Path(sample.get("sample_path") or sample.get("path") or "")
+        source_path = Path(sample.get("sample_path") or sample.get("path") or sample.get("file_path") or "")
         img = read_image(source_path)
         if img is None:
             continue

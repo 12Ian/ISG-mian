@@ -112,6 +112,14 @@ class TaskRepository(RepositoryBase):
 
         return task_info
 
+    def update_task_title(self, session, task_id: int, title: str) -> Task | None:
+        task = self.get_task_model(session, task_id)
+        if task is None:
+            return None
+        task.title = title
+        session.flush()
+        return task
+
     def get_running_task_ids(self) -> list[int]:
         with self.session_factory() as session:
             rows = session.query(Task.id).filter(Task.status == "running").all()

@@ -75,22 +75,32 @@ class DatasetRepository(RepositoryBase):
         rows = (
             session.query(Sample.modality, func.count(Sample.id))
             .join(Dataset, Dataset.id == Sample.dataset_id)
-            .filter(Dataset.is_deleted.is_(False))
+            .filter(Dataset.is_deleted.is_(False), Sample.status != "deleted")
             .group_by(Sample.modality)
             .all()
         )
         return {modality: count for modality, count in rows}
 
     def dataset_sample_count(self, session, dataset_id: int) -> int:
-        return session.query(func.count(Sample.id)).filter(Sample.dataset_id == dataset_id).scalar() or 0
+        return (
+            session.query(func.count(Sample.id))
+            .filter(Sample.dataset_id == dataset_id, Sample.status != "deleted")
+            .scalar()
+            or 0
+        )
 
     def dataset_total_size(self, session, dataset_id: int) -> int:
-        return session.query(func.coalesce(func.sum(Sample.size_bytes), 0)).filter(Sample.dataset_id == dataset_id).scalar() or 0
+        return (
+            session.query(func.coalesce(func.sum(Sample.size_bytes), 0))
+            .filter(Sample.dataset_id == dataset_id, Sample.status != "deleted")
+            .scalar()
+            or 0
+        )
 
     def dataset_modality_breakdown(self, session, dataset_id: int) -> dict[str, int]:
         rows = (
             session.query(Sample.modality, func.count(Sample.id))
-            .filter(Sample.dataset_id == dataset_id)
+            .filter(Sample.dataset_id == dataset_id, Sample.status != "deleted")
             .group_by(Sample.modality)
             .all()
         )
@@ -103,13 +113,13 @@ class DatasetRepository(RepositoryBase):
         return (
             session.query(func.count(Sample.id))
             .join(Dataset, Dataset.id == Sample.dataset_id)
-            .filter(Dataset.is_deleted.is_(False))
+            .filter(Dataset.is_deleted.is_(False), Sample.status != "deleted")
             .scalar()
             or 0
         )
 
     def delete_sample(self, session, sample: Sample) -> None:
-        session.delete(sample)
+        sample.status = "deleted"
 
     def soft_delete(self, dataset: Dataset) -> None:
         dataset.is_deleted = True

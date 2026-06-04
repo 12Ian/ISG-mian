@@ -192,9 +192,11 @@ class GenerationService(ServiceBase):
                 self.task_manager.set_progress(task_id, progress_pct, f"Produced {produced_count}/{target_count}")
 
             if produced_count < target_count:
-                error_message = f"Generation task produced {produced_count} outputs, below requested target_count {target_count}."
-                self.task_manager.fail(task_id, error_code="INSUFFICIENT_OUTPUTS", error_message=error_message)
-                return {"ok": False, "error_code": "INSUFFICIENT_OUTPUTS", "message": error_message}
+                import logging
+                logging.getLogger("isg").warning(
+                    f"Generation task {task_id}: produced {produced_count}/{target_count}, "
+                    f"{target_count - produced_count} samples skipped. Continuing with available outputs."
+                )
 
             created_outputs: list[dict] = []
             for algorithm_id, outputs in pending_outputs:
@@ -206,10 +208,49 @@ class GenerationService(ServiceBase):
                 )
                 created_outputs.extend(persisted_outputs)
 
+            # 把原始样本也复制进扩增数据集，实现"叠加"
+            with self.session_factory() as session:
+                source_samples = session.query(Sample).filter(
+                    Sample.dataset_id == source_dataset.id,
+                    Sample.status != "deleted"
+                ).all()
+                copied_count = 0
+                for ss in source_samples:
+                    src_path = Path(ss.file_path)
+                    if not src_path.is_file():
+                        continue
+                    dest = self.file_indexer.copy_into_dataset(
+                        src_path,
+                        Path(target_dataset.storage_path) / "raw",
+                        ss.relative_path or src_path.name
+                    )
+                    self.dataset_repository.create_sample(
+                        session,
+                        dataset_id=target_dataset.id,
+                        source_sample_id=ss.id,
+                        name=dest.name,
+                        modality=target_dataset.modality,
+                        file_path=str(dest),
+                        relative_path=dest.relative_to(Path(target_dataset.storage_path) / "raw").as_posix(),
+                        sha256=None,
+                        mime_type=self.file_indexer.detect_mime_type(dest),
+                        extension=dest.suffix.lower(),
+                        size_bytes=dest.stat().st_size,
+                        status="raw",
+                        metadata_json={"inherited_from_source": True, "source_sample_id": ss.id},
+                        labels_json=list(ss.labels_json or []),
+                    )
+                    copied_count += 1
+                session.commit()
+                created_outputs.append({"type": "source_copy", "count": copied_count})
+
+            total_count = produced_count + copied_count
             self.task_manager.complete(
                 task_id,
                 result_json={
-                    "generated_count": len(created_outputs),
+                    "generated_count": produced_count,
+                    "source_copied_count": copied_count,
+                    "total_count": total_count,
                     "target_dataset_id": target_dataset.id,
                 },
             )
@@ -217,7 +258,9 @@ class GenerationService(ServiceBase):
                 "ok": True,
                 "data": {
                     "task_id": task_id,
-                    "generated_count": len(created_outputs),
+                    "generated_count": produced_count,
+                    "source_copied_count": copied_count,
+                    "total_count": total_count,
                     "target_dataset_id": target_dataset.id,
                 },
             }
