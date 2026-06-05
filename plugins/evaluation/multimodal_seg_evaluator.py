@@ -6,6 +6,21 @@ import numpy as np
 
 logging.basicConfig(level=logging.INFO)
 
+
+def _resolve_device(torch):
+    if getattr(torch, "cuda", None) and torch.cuda.is_available():
+        torch.cuda.set_device(0)
+        return torch.device("cuda:0")
+    try:
+        import torch_npu  # noqa: F401
+
+        if getattr(torch, "npu", None) and torch.npu.is_available():
+            torch_npu.npu.set_device(0)
+            return torch.device("npu:0")
+    except Exception:
+        pass
+    return torch.device("cpu")
+
 PARAMETERS = [{"name": "batch_size", "type": "int", "label": "批大小", "default": 8, "min": 2, "max": 32, "options": [], "description": "评估批次", "required": False}]
 
 
@@ -42,7 +57,7 @@ def _run_evaluation(payload: dict, context) -> dict:
     ckpt = torch.load(cp, map_location="cpu")
     nc = ckpt["num_classes"]; img_size = ckpt["img_size"]
     palette_to_class = ckpt.get("palette_to_class", None)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = _resolve_device(torch)
 
     # 重建模型
     class ConvBlock(nn.Module):

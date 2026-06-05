@@ -64,6 +64,7 @@ def run(payload: dict, context) -> dict:
     except ImportError:
         return {"ok": False, "error_code": "MISSING_DEPENDENCY"}
     parameters = payload.get("parameters", {}) or {}
+    device = _resolve_device(torch)
     output_dir = Path(payload.get("output", {}).get("output_dir") or ".")
     output_dir.mkdir(parents=True, exist_ok=True)
     samples = payload.get("input", {}).get("samples", []) or []
@@ -74,7 +75,6 @@ def run(payload: dict, context) -> dict:
     train_cap = max(5, min(int(parameters.get("train_cap", 100) or 100), 300))
     ps = int(parameters.get("ps", 4) or 4)
     lr = float(parameters.get("lr", 0.0001) or 0.0001)
-    device = torch.device("cpu")
     image_size = 32
     if image_size % ps != 0:
         return {"ok": False, "error_code": "INVALID_PATCH_SIZE"}
@@ -215,6 +215,7 @@ def _unpatch(patches, ps, nps, sz):
 
 
 def _fwd(x, mask, pe, mt, pos, encoder, hd, ps, nps, sz):
+    import torch
     patches = _patch(x, ps, nps)
     tokens = pe(patches)
     tokens = torch.where(mask.unsqueeze(-1), mt.expand(tokens.size(0), tokens.size(1), -1), tokens)
@@ -222,3 +223,18 @@ def _fwd(x, mask, pe, mt, pos, encoder, hd, ps, nps, sz):
     h = encoder(tokens)
     pred = hd(h)
     return pred, patches
+
+
+def _resolve_device(torch):
+    if getattr(torch, "cuda", None) and torch.cuda.is_available():
+        torch.cuda.set_device(0)
+        return torch.device("cuda:0")
+    try:
+        import torch_npu  # noqa: F401
+
+        if torch.npu.is_available():
+            torch_npu.npu.set_device(0)
+            return torch.device("npu:0")
+    except ImportError:
+        pass
+    return torch.device("cpu")

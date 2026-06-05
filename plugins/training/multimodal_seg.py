@@ -11,6 +11,21 @@ import numpy as np
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+
+def _resolve_device(torch):
+    if getattr(torch, "cuda", None) and torch.cuda.is_available():
+        torch.cuda.set_device(0)
+        return torch.device("cuda:0")
+    try:
+        import torch_npu  # noqa: F401
+
+        if getattr(torch, "npu", None) and torch.npu.is_available():
+            torch_npu.npu.set_device(0)
+            return torch.device("npu:0")
+    except Exception:
+        pass
+    return torch.device("cpu")
+
 PARAMETERS = [
     {"name": "epochs", "type": "int", "label": "训练轮次", "default": 30, "min": 5, "max": 200, "options": [], "description": "训练epoch", "required": False},
     {"name": "batch_size", "type": "int", "label": "批大小", "default": 8, "min": 2, "max": 32, "options": [], "description": "批次大小", "required": False},
@@ -154,7 +169,7 @@ def _run_training(payload: dict, context) -> dict:
             d1 = self.dec1(torch.cat([d1, e1], dim=1))
             return self.final(d1)
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = _resolve_device(torch)
     model = MultiModalUNet(nc).to(device)
     context.set_progress(5.0, f"模型参数: {sum(p.numel() for p in model.parameters()):,}")
 

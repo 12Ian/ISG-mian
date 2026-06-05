@@ -279,7 +279,11 @@ Item {
                 paramDef.max_value = p.max !== undefined && p.max !== "" ? parseFloat(p.max) : null
             }
             if (ptype === "select" && p.options) {
-                paramDef.options = p.options.split(",").map(function(s) { return s.trim() }).filter(function(s) { return s !== "" })
+                if (Array.isArray(p.options)) {
+                    paramDef.options = p.options
+                } else {
+                    paramDef.options = String(p.options).split(",").map(function(s) { return s.trim() }).filter(function(s) { return s !== "" })
+                }
             }
             params.push(paramDef)
         }
@@ -324,7 +328,7 @@ Item {
                         "type": sp.type || "string",
                         "min": String(sp.min_value !== undefined && sp.min_value !== null ? sp.min_value : ""),
                         "max": String(sp.max_value !== undefined && sp.max_value !== null ? sp.max_value : ""),
-                        "options": (sp.options || []).join(", "),
+                        "options": sp.options || [],
                         "desc": sp.description || ""
                     })
                 }
@@ -398,7 +402,7 @@ Item {
                         "type": p.type || "string",
                         "min": String(p.min !== undefined && p.min !== null ? p.min : ""),
                         "max": String(p.max !== undefined && p.max !== null ? p.max : ""),
-                        "options": (p.options || []).join(", "),
+                        "options": p.options || [],
                         "desc": p.description || ""
                     })
                 }
@@ -781,7 +785,7 @@ Item {
                                                 Layout.fillWidth: true; height: 24; color: "transparent"; border.color: root.borderColor; border.width: 1; radius: 3
                                                 TextInput {
                                                     text: model.options; color: root.textMuted; font.pixelSize: 10; anchors.fill: parent; leftPadding: 4; verticalAlignment: TextInput.AlignVCenter
-                                                    onTextChanged: editingParamsModel.setProperty(index, "options", text)
+                                                    onTextChanged: editingParamsModel.setProperty(index, "options", text.split(",").map(function(s) { return s.trim() }).filter(function(s) { return s !== "" }))
                                                 }
                                             }
                                         }

@@ -5,6 +5,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from ._device_utils import resolve_torch_device
 from ._image_io import read_image, write_image
 
 
@@ -42,6 +43,17 @@ PARAMETERS = [
         "description": '优化器学习率',
         "required": False,
     },
+    {
+        "name": "device",
+        "type": "select",
+        "label": "Device",
+        "default": "auto",
+        "min": None,
+        "max": None,
+        "options": ["auto", "cpu", "npu"],
+        "description": "auto prefers NPU when available, otherwise CPU",
+        "required": False,
+    },
 ]
 
 
@@ -54,7 +66,10 @@ def run(payload: dict, context) -> dict:
         return {"ok": False, "error_code": "MISSING_DEPENDENCY", "message": "Missing PyTorch"}
 
     parameters = payload.get("parameters", {}) or {}
-    device = _resolve_device(torch)
+    try:
+        device = resolve_torch_device(torch, payload, parameters)
+    except RuntimeError as exc:
+        return {"ok": False, "error_code": "UNSUPPORTED_DEVICE", "message": str(exc)}
     output_dir = Path(payload.get("output", {}).get("output_dir") or ".")
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -251,18 +266,3 @@ def _gradient_penalty(d_model, x_real, x_fake, device):
     grad = grad.view(b, -1)
     norm = grad.norm(2, dim=1)
     return ((norm - 1.0) ** 2).mean()
-
-
-def _resolve_device(torch):
-    if getattr(torch, "cuda", None) and torch.cuda.is_available():
-        torch.cuda.set_device(0)
-        return torch.device("cuda:0")
-    try:
-        import torch_npu  # noqa: F401
-
-        if torch.npu.is_available():
-            torch_npu.npu.set_device(0)
-            return torch.device("npu:0")
-    except ImportError:
-        pass
-    return torch.device("cpu")

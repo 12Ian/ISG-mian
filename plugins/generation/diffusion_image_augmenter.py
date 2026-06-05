@@ -43,6 +43,7 @@ def run(payload: dict, context) -> dict:
         return {"ok": False, "error_code": "MISSING_DEPENDENCY", "message": "Missing PyTorch"}
 
     parameters = payload.get("parameters", {}) or {}
+    device = _resolve_device(torch)
     output_dir = Path(payload.get("output", {}).get("output_dir") or ".")
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -54,8 +55,6 @@ def run(payload: dict, context) -> dict:
     cfg_scale = float(parameters.get("cfg_scale", parameters.get("CFG引导阶数", 1.0)) or 1.0)
     inference_steps = int(parameters.get("inference_steps", parameters.get("扩散步数上限", 50)) or 50)
     lr = float(parameters.get("lr", parameters.get("学习率", 0.0001)) or 0.0001)
-
-    device = torch.device("cpu")
     image_size = 32
     max_images = int(parameters.get("max_images", 32))
     max_images = max(2, min(max_images, 64))
@@ -211,3 +210,18 @@ def _build_model(device):
             h2 = h2 + self.tmlp(temb).unsqueeze(-1).unsqueeze(-1)
             return self.cout(torch.relu(self.up(h2)))
     return NoisePredictor()
+
+
+def _resolve_device(torch):
+    if getattr(torch, "cuda", None) and torch.cuda.is_available():
+        torch.cuda.set_device(0)
+        return torch.device("cuda:0")
+    try:
+        import torch_npu  # noqa: F401
+
+        if torch.npu.is_available():
+            torch_npu.npu.set_device(0)
+            return torch.device("npu:0")
+    except ImportError:
+        pass
+    return torch.device("cpu")

@@ -124,7 +124,7 @@ def _run_training(payload: dict, context) -> dict:
         import torch, torch.nn as nn, torch.optim as optim
         from torch.optim import lr_scheduler
         import torchvision.transforms as transforms
-        import pretrainedmodels as ptm
+        import torchvision.models as models
         import numpy as np
         from PIL import Image
     except ImportError as e:
@@ -205,20 +205,20 @@ def _run_training(payload: dict, context) -> dict:
 
     context.set_progress(8.0, f'loading {backbone}')
     try:
-        net = ptm.__dict__[backbone](num_classes=1000, pretrained='imagenet')
+        net = _build_backbone(models, backbone)
     except Exception:
         return {'ok': False, 'error_code': 'MODEL_LOAD_ERROR',
                 'message': f'cannot load {backbone}'}
-    df = net.last_linear.in_features
-    net.last_linear = nn.Linear(df, nc)
+    df = net.fc.in_features
+    net.fc = nn.Linear(df, nc)
     net = net.to(device)
 
     crit = nn.CrossEntropyLoss()
-    op_ids = list(map(id, net.last_linear.parameters()))
+    op_ids = list(map(id, net.fc.parameters()))
     fp_params = filter(lambda p: id(p) not in op_ids, net.parameters())
     opt = optim.SGD([
         {'params': fp_params},
-        {'params': net.last_linear.parameters(), 'lr': lr * 10},
+        {'params': net.fc.parameters(), 'lr': lr * 10},
     ], lr=lr, weight_decay=0.001)
     sched = lr_scheduler.MultiStepLR(opt, [35, 75], gamma=0.7)
 
@@ -270,3 +270,13 @@ def _run_training(payload: dict, context) -> dict:
         'metadata': {'best_val_acc': best_va, 'backbone': backbone,
                      'num_classes': nc, 'class_names': cnames, 'device': device},
     }], 'logs': logs}
+
+
+def _build_backbone(models, backbone: str):
+    if backbone != 'resnet18':
+        raise ValueError(f'unsupported backbone: {backbone}')
+    try:
+        from torchvision.models import ResNet18_Weights
+        return models.resnet18(weights=ResNet18_Weights.DEFAULT)
+    except Exception:
+        return models.resnet18(weights=None)

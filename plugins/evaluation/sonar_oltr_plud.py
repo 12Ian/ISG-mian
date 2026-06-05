@@ -345,7 +345,7 @@ def _run_plud(payload: dict, context) -> dict:
         import torch
         import torch.nn as nn
         import torchvision.transforms as transforms
-        import pretrainedmodels as ptm
+        import torchvision.models as models
         import numpy as np
         import libmr  # noqa: F401
         import scipy.spatial.distance  # noqa: F401
@@ -528,30 +528,36 @@ def _run_plud(payload: dict, context) -> dict:
 
     # ---- 构建模型, 仅取已知类权重 ----
     try:
-        net = ptm.__dict__[ckpt_backbone](num_classes=1000, pretrained=None)
+        net = _build_backbone(models, ckpt_backbone)
     except Exception:
         return {
             "ok": False,
             "error_code": "MODEL_LOAD_ERROR",
             "message": f"cannot build backbone {ckpt_backbone}",
         }
-    df = net.last_linear.in_features
-    net.last_linear = nn.Linear(df, train_class_num)
+    df = net.fc.in_features
+    net.fc = nn.Linear(df, train_class_num)
     net = net.to(device)
 
-    # 从 checkpoint 中提取已知类对应的 last_linear 权重行
+    # 从 checkpoint 中提取已知类对应的分类头权重行
     sorted_known_indices = sorted(train_classes)
-    ckpt_weight = ckpt_state["last_linear.weight"]  # [ckpt_num_classes, df]
-    ckpt_bias = ckpt_state["last_linear.bias"]       # [ckpt_num_classes]
+    ckpt_weight = ckpt_state.get("fc.weight") or ckpt_state.get("last_linear.weight")  # [ckpt_num_classes, df]
+    ckpt_bias = ckpt_state.get("fc.bias") or ckpt_state.get("last_linear.bias")       # [ckpt_num_classes]
+    if ckpt_weight is None or ckpt_bias is None:
+        return {
+            "ok": False,
+            "error_code": "INVALID_CHECKPOINT",
+            "message": "checkpoint missing classification head weights",
+        }
 
     selected_weight = ckpt_weight[torch.tensor(sorted_known_indices, device="cpu")]
     selected_bias = ckpt_bias[torch.tensor(sorted_known_indices, device="cpu")]
 
     new_state = {}
     for k, v in ckpt_state.items():
-        if k == "last_linear.weight":
+        if k in {"fc.weight", "last_linear.weight"}:
             new_state[k] = selected_weight
-        elif k == "last_linear.bias":
+        elif k in {"fc.bias", "last_linear.bias"}:
             new_state[k] = selected_bias
         else:
             new_state[k] = v
@@ -705,3 +711,13 @@ def _run_plud(payload: dict, context) -> dict:
             ],
         }],
     }
+
+
+def _build_backbone(models, backbone: str):
+    if backbone != "resnet18":
+        raise ValueError(f"unsupported backbone: {backbone}")
+    try:
+        from torchvision.models import ResNet18_Weights
+        return models.resnet18(weights=ResNet18_Weights.DEFAULT)
+    except Exception:
+        return models.resnet18(weights=None)

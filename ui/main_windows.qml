@@ -95,7 +95,7 @@ ApplicationWindow {
         ListModel {
                 id: navModel
                 // 核心功能
-                ListElement { isHeader: false; name: "数据管理"; source: "views/DataManageView.qml"; icon: "📁" }
+                ListElement { isHeader: false; name: "数据管理"; source: "views/DataManageView.qml"; icon: "🗄️" }
                 ListElement { isHeader: false; name: "数据清洗"; source: "views/DataCleanView.qml"; icon: "🧹" }
                 ListElement { isHeader: false; name: "数据生成"; source: "views/SampleGenView.qml"; icon: "⚡" }
                 ListElement { isHeader: false; name: "多专业智能应用仿真模型"; source: "views/EvaluateView.qml"; icon: "📈" }
