@@ -194,6 +194,22 @@ Item {
         return "file:///" + clean
     }
 
+    function localPathFromUrl(url) {
+        var value = String(url || "")
+        if (value.indexOf("file:///") === 0) {
+            value = value.slice("file:///".length)
+            if (!/^[A-Za-z]:\//.test(value)) {
+                value = "/" + value
+            }
+        } else if (value.indexOf("file://") === 0) {
+            value = value.slice("file://".length)
+            if (!/^[A-Za-z]:\//.test(value) && value.charAt(0) !== "/") {
+                value = "/" + value
+            }
+        }
+        return decodeURIComponent(value)
+    }
+
     function datasetNameFromPath(path) {
         var clean = String(path || "").replace(/\\/g, "/")
         while (clean.length > 1 && clean.charAt(clean.length - 1) === "/") {
@@ -960,8 +976,7 @@ Item {
         id: fileDialog
         title: "选择导入的文件"
         onAccepted: {
-            var path = selectedFile.toString()
-            selectedPathInput.text = decodeURIComponent(path.replace(/^(file:\/{2,3})/, ""))
+            selectedPathInput.text = root.localPathFromUrl(selectedFile)
         }
     }
 
@@ -969,8 +984,7 @@ Item {
         id: folderDialog
         title: "选择导入的文件夹"
         onAccepted: {
-            var path = selectedFolder.toString()
-            selectedPathInput.text = decodeURIComponent(path.replace(/^(file:\/{2,3})/, ""))
+            selectedPathInput.text = root.localPathFromUrl(selectedFolder)
         }
     }
 
