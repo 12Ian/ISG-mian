@@ -11,3 +11,11 @@ psutil
 pillow
 mutagen
 python-multipart
+PyYAML
+scipy
+scikit-learn
+torch
+torchvision
+ultralytics
+pretrainedmodels
+tensorboard
