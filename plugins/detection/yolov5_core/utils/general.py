@@ -401,8 +401,10 @@ def check_git_status(repo="ultralytics/yolov5", branch="master"):
 @WorkingDirectory(ROOT)
 def check_git_info(path="."):
     """Checks YOLOv5 git info, returning a dict with remote URL, branch name, and commit hash."""
-    check_requirements("gitpython")
-    import git
+    try:
+        import git
+    except ImportError:
+        return {"remote": None, "branch": None, "commit": None}
 
     try:
         repo = git.Repo(path)

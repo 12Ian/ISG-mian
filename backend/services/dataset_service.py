@@ -276,7 +276,10 @@ class DatasetService(ServiceBase):
                 logging.getLogger("isg").warning(f"Failed to parse manifest: {traceback.format_exc()}")
 
         records = []
-        if include_subfolders:
+        yolo_records = [] if label_map else self._collect_yolo_detection_records(folder)
+        if yolo_records:
+            records = yolo_records
+        elif include_subfolders:
             for path in folder.rglob("*"):
                 if path.is_file() and path.name != "dataset_manifest.json":
                     rel = path.relative_to(folder).as_posix()
@@ -300,9 +303,9 @@ class DatasetService(ServiceBase):
                     continue
                 copied = self.file_indexer.copy_into_dataset(source, Path(dataset.storage_path) / "raw", record["relative_path"])
                 rel_path = Path(record["relative_path"]).as_posix()
-                labels = label_map.get(rel_path, [])
+                labels = list(record.get("labels", [])) or label_map.get(rel_path, [])
                 # 无manifest标签时，从子文件夹名推断标签
-                if not labels and "/" in rel_path:
+                if not labels and not yolo_records and "/" in rel_path:
                     inferred = rel_path.split("/")[0]
                     labels = [{"type": "classification", "class_name": inferred, "source": "folder_name"}]
                 sample = self.dataset_repository.create_sample(
@@ -695,10 +698,116 @@ class DatasetService(ServiceBase):
             if list_file:
                 records = self._parse_path_label_file(list_file, data_path, split)
                 return records, "path_label_file"
+            yolo_records = self._collect_yolo_detection_records(data_path, default_split=split)
+            if yolo_records:
+                return yolo_records, "yolo_detection"
             records = self._infer_folder_tree_records(data_path, split=split)
             return records, "folder_tree"
 
         raise ValidationError("Import path does not exist.")
+
+    def _collect_yolo_detection_records(self, folder: Path, default_split: str = "train") -> list[dict]:
+        name_map = self._load_yolo_class_names(folder)
+        pairs: list[tuple[Path, Path, str]] = []
+
+        direct_images = folder / "images"
+        direct_labels = folder / "labels"
+        if direct_images.is_dir() and direct_labels.is_dir():
+            pairs.append((direct_images, direct_labels, default_split))
+
+        split_aliases = {
+            "train": "train",
+            "valid": "test",
+            "val": "test",
+            "test": "test",
+        }
+        for dirname, split in split_aliases.items():
+            images_dir = folder / dirname / "images"
+            labels_dir = folder / dirname / "labels"
+            if images_dir.is_dir() and labels_dir.is_dir():
+                pairs.append((images_dir, labels_dir, split))
+
+        records: list[dict] = []
+        seen_relative_paths: set[str] = set()
+        found_label_file = False
+        for images_dir, labels_dir, split in pairs:
+            for source in sorted(path for path in images_dir.rglob("*") if path.is_file() and path.suffix.lower() in self._IMAGE_EXTENSIONS):
+                rel_to_images = source.relative_to(images_dir)
+                label_file = labels_dir / rel_to_images.with_suffix(".txt")
+                labels = self._parse_yolo_label_file(label_file, split=split, name_map=name_map)
+                if label_file.is_file():
+                    found_label_file = True
+                relative_path = source.relative_to(folder).as_posix()
+                if relative_path in seen_relative_paths:
+                    continue
+                seen_relative_paths.add(relative_path)
+                records.append(
+                    {
+                        "source_path": source,
+                        "relative_path": relative_path,
+                        "labels": labels,
+                        "metadata": {
+                            "source_path": str(source),
+                            "label_source": str(label_file) if label_file.is_file() else "",
+                        },
+                        "split": split,
+                        "sample_modality": "image",
+                        "import_format": "yolo_detection",
+                    }
+                )
+        return records if found_label_file else []
+
+    def _parse_yolo_label_file(self, label_file: Path, *, split: str, name_map: dict[int, str]) -> list[dict]:
+        if not label_file.is_file():
+            return []
+        labels: list[dict] = []
+        for line_number, line in enumerate(label_file.read_text(encoding="utf-8").splitlines(), start=1):
+            parts = line.strip().split()
+            if len(parts) < 5:
+                continue
+            try:
+                class_id = int(parts[0])
+                bbox = [float(parts[1]), float(parts[2]), float(parts[3]), float(parts[4])]
+            except (TypeError, ValueError):
+                continue
+            class_name = name_map.get(class_id, f"class_{class_id}")
+            labels.append(
+                {
+                    "type": "detection",
+                    "class_id": class_id,
+                    "class_name": class_name,
+                    "bbox": bbox,
+                    "source": str(label_file),
+                    "split": split,
+                    "line_number": line_number,
+                }
+            )
+        return labels
+
+    def _load_yolo_class_names(self, folder: Path) -> dict[int, str]:
+        data_yaml = self._find_first_existing(folder, ["data.yaml", "data.yml"])
+        if not data_yaml:
+            return {}
+        try:
+            import yaml
+        except Exception:
+            return {}
+        try:
+            payload = yaml.safe_load(data_yaml.read_text(encoding="utf-8")) or {}
+        except Exception:
+            return {}
+        names = payload.get("names")
+        if isinstance(names, dict):
+            result = {}
+            for key, value in names.items():
+                try:
+                    result[int(key)] = str(value)
+                except (TypeError, ValueError):
+                    continue
+            return result
+        if isinstance(names, list):
+            return {idx: str(value) for idx, value in enumerate(names)}
+        return {}
 
     def _build_file_record(self, path: Path, *, split: str, label_path: Path | None) -> dict:
         labels: list[dict] = []

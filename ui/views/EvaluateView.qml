@@ -128,6 +128,154 @@ Item {
         return root.algorithmNameMap[String(algoId)] || ("算法#" + algoId)
     }
 
+    function algorithmKeyById(algoId) {
+        var id = Number(algoId)
+        for (var i = 0; i < root.allTrainingAlgos.length; i++) {
+            var algo = root.allTrainingAlgos[i]
+            if ((algo.id || 0) === id) return algo.key || ""
+        }
+        return ""
+    }
+
+    function scenarioNameById(scenarioId) {
+        var id = Number(scenarioId)
+        for (var i = 0; i < scenarioModel.count; i++) {
+            var scenario = scenarioModel.get(i)
+            if ((scenario.id || 0) === id) return scenario.name || ""
+        }
+        return ""
+    }
+
+    function trainingStatusCode(status) {
+        if (status === "completed") return 2
+        if (status === "running") return 1
+        if (status === "failed") return 3
+        if (status === "interrupted" || status === "cancelled") return 4
+        return 0
+    }
+
+    function trainingStatusLabel(status) {
+        if (status === "completed") return "已完成"
+        if (status === "failed") return "失败"
+        if (status === "interrupted" || status === "cancelled") return "中断"
+        if (status === "running") return "训练中"
+        return "待训练"
+    }
+
+    function historyHasTask(taskId) {
+        var id = Number(taskId || 0)
+        if (id <= 0) return false
+        for (var i = 0; i < evalHistoryModel.count; i++) {
+            var item = evalHistoryModel.get(i)
+            var ids = []
+            try {
+                ids = JSON.parse(item.taskIdsJson || "[]")
+            } catch(e) {
+                ids = []
+            }
+            for (var j = 0; j < ids.length; j++) {
+                if (Number(ids[j]) === id) return true
+            }
+        }
+        return false
+    }
+
+    function buildAutoHistoryEntry(task) {
+        var payload = task.payload || {}
+        var taskId = task.id || 0
+        var status = task.status || ""
+        var resultJson = task.result || {}
+        var artifactCount = resultJson.artifacts ? resultJson.artifacts.length : 0
+        var details = {
+            taskId: taskId,
+            status: trainingStatusLabel(status),
+            dataset: task.source_dataset_name || ("数据集#" + (task.source_dataset_id || 0)),
+            algo: algorithmName(task.algorithm_id || 0),
+            outputDir: task.output_dir || "",
+            artifactPath: artifactCount > 0 ? (resultJson.artifacts[0] || "") : "",
+            summary: resultJson.summary || "",
+            progressMessage: task.progress_message || ""
+        }
+        return {
+            projectName: "训练任务 #" + taskId,
+            scenario: scenarioNameById(payload.scenario_id || 0),
+            datasets: details.dataset,
+            algos: details.algo,
+            trainStatus: trainingStatusLabel(status),
+            evalReport: status === "completed" ? ("训练完成，模型产物 " + artifactCount + " 个") : ("训练" + trainingStatusLabel(status)),
+            time: root.getCurrentTime(),
+            detailsJson: JSON.stringify([details]),
+            taskIdsJson: JSON.stringify([taskId])
+        }
+    }
+
+    function syncHistoryFromTrainingTask(task) {
+        if (!task) return
+        var status = task.status || ""
+        if (status !== "completed" && status !== "failed" && status !== "interrupted" && status !== "cancelled") return
+        if (historyHasTask(task.id || 0)) return
+        evalHistoryModel.insert(0, buildAutoHistoryEntry(task))
+    }
+
+    function upsertTrainingTask(task) {
+        if (!task) return
+        var taskId = task.id || 0
+        var payload = task.payload || {}
+        var matchedIndex = -1
+        for (var i = 0; i < taskQueueModel.count; i++) {
+            if ((taskQueueModel.get(i).taskId || 0) === taskId) {
+                matchedIndex = i
+                break
+            }
+        }
+
+        var scenarioName = scenarioNameById(payload.scenario_id || 0)
+        var datasetName = task.source_dataset_name || ("数据集#" + (task.source_dataset_id || 0))
+        var algoId = task.algorithm_id || 0
+        var algoName = algorithmName(algoId)
+        var algoKey = algorithmKeyById(algoId)
+        var trainStatus = trainingStatusCode(task.status || "")
+        var trainProgress = (task.progress || 0) / 100.0
+        var progressMessage = task.progress_message || ""
+        var resultJson = task.result || {}
+        var outputDir = task.output_dir || ""
+
+        if (matchedIndex >= 0) {
+            taskQueueModel.setProperty(matchedIndex, "scenario", scenarioName || taskQueueModel.get(matchedIndex).scenario || "")
+            taskQueueModel.setProperty(matchedIndex, "dataset", datasetName)
+            taskQueueModel.setProperty(matchedIndex, "datasetId", task.source_dataset_id || 0)
+            taskQueueModel.setProperty(matchedIndex, "algo", algoName)
+            taskQueueModel.setProperty(matchedIndex, "algoId", algoId)
+            taskQueueModel.setProperty(matchedIndex, "algoKey", algoKey || taskQueueModel.get(matchedIndex).algoKey || "")
+            taskQueueModel.setProperty(matchedIndex, "trainStatus", trainStatus)
+            taskQueueModel.setProperty(matchedIndex, "dbStatus", task.status || "")
+            taskQueueModel.setProperty(matchedIndex, "trainProgress", trainProgress)
+            taskQueueModel.setProperty(matchedIndex, "progressMessage", progressMessage)
+            taskQueueModel.setProperty(matchedIndex, "resultJson", resultJson)
+            taskQueueModel.setProperty(matchedIndex, "outputDir", outputDir)
+            return
+        }
+
+        taskQueueModel.append({
+            taskId: taskId,
+            evalTaskId: 0,
+            scenario: scenarioName,
+            dataset: datasetName,
+            datasetId: task.source_dataset_id || 0,
+            algo: algoName,
+            algoId: algoId,
+            algoKey: algoKey,
+            params: task.parameters || {},
+            isSelected: false,
+            trainStatus: trainStatus,
+            trainProgress: trainProgress,
+            progressMessage: progressMessage,
+            dbStatus: task.status || "",
+            resultJson: resultJson,
+            outputDir: outputDir
+        })
+    }
+
     // ================= 后端信号 =================
     Connections {
         target: backendService
@@ -153,6 +301,7 @@ Item {
 
                 var r = state.evalResults || []
                 for (var ri = 0; ri < r.length; ri++) evalResultModel.append(r[ri])
+                backendService.getTrainingTasks(0, "")
             } catch(e) {}
         }
 
@@ -224,23 +373,9 @@ Item {
             if (data && data.items) items = data.items
             for (var i = 0; i < items.length; i++) {
                 var task = items[i]
-                var found = false
-                for (var j = 0; j < taskQueueModel.count; j++) {
-                    var t = taskQueueModel.get(j)
-                    if (t.taskId === (task.id || 0)) {
-                        taskQueueModel.setProperty(j, "trainStatus", task.status === "completed" ? 2 : (task.status === "running" ? 1 : (task.status === "failed" ? 3 : (task.status === "interrupted" ? 4 : 0))))
-                        taskQueueModel.setProperty(j, "dbStatus", task.status || "")
-                        taskQueueModel.setProperty(j, "trainProgress", (task.progress || 0) / 100.0)
-                        taskQueueModel.setProperty(j, "progressMessage", task.progress_message || "")
-                        taskQueueModel.setProperty(j, "resultJson", task.result || {})
-                        taskQueueModel.setProperty(j, "outputDir", task.output_dir || "")
-                        found = true
-                        break
-                    }
-                }
-                if (!found && task.status === "running") {
-                    root.isTraining = true
-                }
+                root.upsertTrainingTask(task)
+                root.syncHistoryFromTrainingTask(task)
+                if (task.status === "running") root.isTraining = true
             }
             if (root.isTraining) {
                 var allDone = true
@@ -384,7 +519,7 @@ Item {
             var h = evalHistoryModel.get(hi)
             histArr.push({projectName: h.projectName, scenario: h.scenario, datasets: h.datasets,
                           algos: h.algos, trainStatus: h.trainStatus, evalReport: h.evalReport,
-                          time: h.time, detailsJson: h.detailsJson})
+                          time: h.time, detailsJson: h.detailsJson, taskIdsJson: h.taskIdsJson || "[]"})
         }
 
         var queueArr = []
@@ -424,9 +559,8 @@ Item {
     }
 
     function restoreTrainingTasksFromBackend() {
-        // 当场景下拉框有数据且没有本地队列时，查后端补充正在训练/已完成的任务
+        // 场景加载完成后，以数据库状态同步训练队列
         if (scenarioModel.count === 0) return
-        if (taskQueueModel.count > 0) return  // 已有队列不重复查询
         backendService.getTrainingTasks(0, "")
     }
 
@@ -549,7 +683,8 @@ Item {
                             trainStatus: allDone ? "已完成" : "包含未完成",
                             evalReport: allDone ? ("共 " + evalResultModel.count + " 条评估结果") : "暂无报告",
                             time: root.getCurrentTime(),
-                            detailsJson: JSON.stringify(detailsArr)
+                            detailsJson: JSON.stringify(detailsArr),
+                            taskIdsJson: JSON.stringify([])
                         })
                         root.saveToAppState()
                         saveProjectPopup.close()
@@ -934,7 +1069,14 @@ Item {
                                     }
                                 }
                             }
-                            Text { text: "T" + (index + 1); color: root.primaryColor; font.pixelSize: 13; font.bold: true; font.family: "Courier"; Layout.preferredWidth: 60 }
+                            Text {
+                                text: taskId > 0 ? ("#" + taskId) : ("T" + (index + 1))
+                                color: root.primaryColor
+                                font.pixelSize: 13
+                                font.bold: true
+                                font.family: "Courier"
+                                Layout.preferredWidth: 60
+                            }
                             Text { text: scenario; color: root.textColor; font.pixelSize: 13; Layout.preferredWidth: 160; elide: Text.ElideRight }
                             Text { text: dataset; color: root.textColor; font.pixelSize: 13; Layout.fillWidth: true; elide: Text.ElideRight }
                             Text { text: algo; color: "#4DD0E1"; font.pixelSize: 13; font.bold: true; Layout.preferredWidth: 160; elide: Text.ElideRight }

@@ -137,6 +137,30 @@ def test_dataset_service_import_folder_keeps_relative_paths(tmp_path):
     assert "raw/part-a/sample.txt" in samples["items"][0]["file_path"].replace("\\", "/")
 
 
+def test_dataset_service_import_folder_parses_yolo_bbox_labels(tmp_path):
+    service, _paths = build_dataset_service(tmp_path)
+    folder = tmp_path / "yolo"
+    (folder / "train" / "images").mkdir(parents=True)
+    (folder / "train" / "labels").mkdir(parents=True)
+    (folder / "data.yaml").write_text("names:\n  0: ship\n", encoding="utf-8")
+    (folder / "train" / "images" / "sample.jpg").write_bytes(b"image")
+    (folder / "train" / "labels" / "sample.txt").write_text("0 0.5 0.5 0.2 0.3\n", encoding="utf-8")
+
+    created = service.create_dataset("yolo-folder", "image", "")
+    dataset_id = created["data"]["id"]
+    imported = service.import_folder(dataset_id, str(folder), include_subfolders=True)
+    samples = service.get_dataset_samples(dataset_id, page=1, page_size=20, status="")
+
+    assert imported["ok"] is True
+    assert imported["data"]["imported_count"] == 1
+    assert samples["total"] == 1
+    assert samples["items"][0]["relative_path"] == "train/images/sample.jpg"
+    assert samples["items"][0]["labels"][0]["type"] == "detection"
+    assert samples["items"][0]["labels"][0]["class_id"] == 0
+    assert samples["items"][0]["labels"][0]["class_name"] == "ship"
+    assert samples["items"][0]["labels"][0]["bbox"] == [0.5, 0.5, 0.2, 0.3]
+
+
 def test_dataset_service_import_dataset_bundle_supports_labels_and_optional_test_set(tmp_path):
     service, _paths = build_dataset_service(tmp_path)
     train_root = tmp_path / "train"
@@ -175,6 +199,27 @@ def test_dataset_service_import_dataset_bundle_supports_labels_and_optional_test
     assert train_samples["items"][0]["labels"][0]["class_id"] == 7
     assert train_samples["items"][0]["labels"][0]["source"] == str(label_file)
     assert test_samples["items"][0]["labels"][0]["class_name"] == "class_b"
+
+
+def test_dataset_service_import_dataset_bundle_parses_yolo_detection_records(tmp_path):
+    service, _paths = build_dataset_service(tmp_path)
+    source_root = tmp_path / "bundle-yolo"
+    (source_root / "images").mkdir(parents=True)
+    (source_root / "labels").mkdir(parents=True)
+    (source_root / "data.yaml").write_text("names:\n- ship\n", encoding="utf-8")
+    (source_root / "images" / "a.jpg").write_bytes(b"image-a")
+    (source_root / "labels" / "a.txt").write_text("0 0.25 0.75 0.5 0.1\n", encoding="utf-8")
+
+    imported = service.import_dataset_bundle({"dataset_name": "bundle-yolo", "source_path": str(source_root), "modality": "auto"})
+    dataset = imported["data"]["train_dataset"]
+    samples = service.get_dataset_samples(dataset["id"], page=1, page_size=20, status="")
+
+    assert imported["ok"] is True
+    assert imported["data"]["imported_count"] == 1
+    assert dataset["extra"]["import_format"] == "yolo_detection"
+    assert samples["total"] == 1
+    assert samples["items"][0]["labels"][0]["type"] == "detection"
+    assert samples["items"][0]["labels"][0]["bbox"] == [0.25, 0.75, 0.5, 0.1]
 
 
 def test_dataset_service_import_dataset_bundle_allows_empty_test_set(tmp_path):
