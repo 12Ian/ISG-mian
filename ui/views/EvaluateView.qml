@@ -981,141 +981,150 @@ Item {
             }
         }
 
-        // 中部：训练任务队列
-        Rectangle { Layout.fillWidth: true; Layout.fillHeight: true; color: "transparent"; clip: true
-            ColumnLayout { anchors.fill: parent; spacing: 12
-                // 队列头部操作栏
-                Rectangle { Layout.fillWidth: true; height: 45; color: root.panelBg; radius: 8; border.color: root.borderColor; border.width: 1
-                    RowLayout { anchors.fill: parent; anchors.leftMargin: 15; anchors.rightMargin: 15; spacing: 15
-                        Rectangle { width: 18; height: 18; radius: 4; color: root.isAllSelected ? root.primaryColor : root.bgDark; border.color: root.isAllSelected ? root.primaryColor : root.textMuted
-                            Text { text: "✓"; color: "white"; font.pixelSize: 12; font.bold: true; anchors.centerIn: parent; visible: root.isAllSelected }
-                            MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    if (taskQueueModel.count === 0) return
-                                    var ns = !root.isAllSelected
-                                    for (var i = 0; i < taskQueueModel.count; i++) taskQueueModel.setProperty(i, "isSelected", ns)
-                                    root.checkStates()
+        SplitView {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            orientation: Qt.Vertical
+            clip: true
+
+            // 中部：训练任务队列
+            Rectangle {
+                SplitView.fillWidth: true
+                SplitView.fillHeight: true
+                SplitView.minimumHeight: 220
+                SplitView.preferredHeight: 360
+                color: "transparent"; clip: true
+                ColumnLayout { anchors.fill: parent; spacing: 12
+                    // 队列头部操作栏
+                    Rectangle { Layout.fillWidth: true; height: 45; color: root.panelBg; radius: 8; border.color: root.borderColor; border.width: 1
+                        RowLayout { anchors.fill: parent; anchors.leftMargin: 15; anchors.rightMargin: 15; spacing: 15
+                            Rectangle { width: 18; height: 18; radius: 4; color: root.isAllSelected ? root.primaryColor : root.bgDark; border.color: root.isAllSelected ? root.primaryColor : root.textMuted
+                                Text { text: "✓"; color: "white"; font.pixelSize: 12; font.bold: true; anchors.centerIn: parent; visible: root.isAllSelected }
+                                MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        if (taskQueueModel.count === 0) return
+                                        var ns = !root.isAllSelected
+                                        for (var i = 0; i < taskQueueModel.count; i++) taskQueueModel.setProperty(i, "isSelected", ns)
+                                        root.checkStates()
+                                    }
                                 }
                             }
-                        }
-                        Text { text: "全选"; color: root.textMuted; font.pixelSize: 13; font.bold: true }
-                        Rectangle { width: 1; height: 16; color: root.borderColor }
-                        Text { text: "📋 模型训练任务队列"; color: root.textColor; font.pixelSize: 15; font.bold: true }
-                        Item { Layout.fillWidth: true }
-                        // 启动训练按钮
-                        Rectangle { width: 130; height: 32; radius: 4
-                            visible: !root.isTraining
-                            color: root.canStartTraining() ? root.primaryColor : root.bgDark
-                            border.color: root.canStartTraining() ? "transparent" : root.borderColor
-                            Text { text: "▶ 启动选中训练"; color: root.canStartTraining() ? "white" : root.textMuted; font.bold: true; font.pixelSize: 12; anchors.centerIn: parent }
-                            MouseArea { anchors.fill: parent
-                                cursorShape: root.canStartTraining() ? Qt.PointingHandCursor : Qt.ForbiddenCursor
-                                enabled: root.canStartTraining()
-                                onClicked: root.startSelectedTraining()
+                            Text { text: "全选"; color: root.textMuted; font.pixelSize: 13; font.bold: true }
+                            Rectangle { width: 1; height: 16; color: root.borderColor }
+                            Text { text: "📋 模型训练任务队列"; color: root.textColor; font.pixelSize: 15; font.bold: true }
+                            Item { Layout.fillWidth: true }
+                            Rectangle { width: 130; height: 32; radius: 4
+                                visible: !root.isTraining
+                                color: root.canStartTraining() ? root.primaryColor : root.bgDark
+                                border.color: root.canStartTraining() ? "transparent" : root.borderColor
+                                Text { text: "▶ 启动选中训练"; color: root.canStartTraining() ? "white" : root.textMuted; font.bold: true; font.pixelSize: 12; anchors.centerIn: parent }
+                                MouseArea { anchors.fill: parent
+                                    cursorShape: root.canStartTraining() ? Qt.PointingHandCursor : Qt.ForbiddenCursor
+                                    enabled: root.canStartTraining()
+                                    onClicked: root.startSelectedTraining()
+                                }
                             }
-                        }
-                        // 取消训练按钮
-                        Rectangle { width: 130; height: 32; radius: 4
-                            visible: root.isTraining
-                            color: "#E11D48"
-                            border.color: "transparent"
-                            Text { text: "⏹ 取消训练"; color: "black"; font.bold: true; font.pixelSize: 12; anchors.centerIn: parent }
-                            MouseArea { anchors.fill: parent
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    for (var ci = 0; ci < taskQueueModel.count; ci++) {
-                                        var ct = taskQueueModel.get(ci)
-                                        if (ct.trainStatus === 1 && ct.taskId > 0) {
-                                            backendService.cancelTask(ct.taskId)
+                            Rectangle { width: 130; height: 32; radius: 4
+                                visible: root.isTraining
+                                color: "#E11D48"
+                                border.color: "transparent"
+                                Text { text: "⏹ 取消训练"; color: "black"; font.bold: true; font.pixelSize: 12; anchors.centerIn: parent }
+                                MouseArea { anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        for (var ci = 0; ci < taskQueueModel.count; ci++) {
+                                            var ct = taskQueueModel.get(ci)
+                                            if (ct.trainStatus === 1 && ct.taskId > 0) {
+                                                backendService.cancelTask(ct.taskId)
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
                     }
-                }
 
-                // 表头
-                Rectangle { Layout.fillWidth: true; height: 40; color: root.bgDark
-                    Rectangle { width: parent.width; height: 1; color: root.borderColor; anchors.bottom: parent.bottom }
-                    Rectangle { width: parent.width; height: 1; color: root.borderColor; anchors.top: parent.top }
-                    RowLayout { anchors.fill: parent; anchors.leftMargin: 15; anchors.rightMargin: 15; spacing: 10
-                        Item { Layout.preferredWidth: 60 }
-                        Label { text: "任务ID"; color: root.textMuted; font.pixelSize: 12; font.bold: true; Layout.preferredWidth: 60 }
-                        Label { text: "应用场景"; color: root.textMuted; font.pixelSize: 12; font.bold: true; Layout.preferredWidth: 160 }
-                        Label { text: "使用数据集"; color: root.textMuted; font.pixelSize: 12; font.bold: true; Layout.fillWidth: true }
-                        Label { text: "算法模型"; color: root.textMuted; font.pixelSize: 12; font.bold: true; Layout.preferredWidth: 160 }
-                        Label { text: "训练状态"; color: root.textMuted; font.pixelSize: 12; font.bold: true; Layout.preferredWidth: 150 }
-                        Label { text: "操作"; color: root.textMuted; font.pixelSize: 12; font.bold: true; Layout.preferredWidth: 80; horizontalAlignment: Text.AlignRight }
-                    }
-                }
-
-                ListView { Layout.fillWidth: true; Layout.fillHeight: true; clip: true; model: taskQueueModel; spacing: 0
-                    Text { visible: taskQueueModel.count === 0; text: "暂无训练任务，请在上方配置并追加至队列"; color: root.textMuted; font.pixelSize: 14; anchors.centerIn: parent }
-
-                    delegate: Rectangle { width: ListView.view ? ListView.view.width : 0; height: 50; color: index % 2 === 0 ? Theme.panel : "transparent"
-                        property bool rowHov: rowMa.containsMouse
-                        Rectangle { anchors.fill: parent; color: isSelected ? root.tableHoverBg : (rowHov ? Theme.hover : "transparent") }
+                    Rectangle { Layout.fillWidth: true; height: 40; color: root.bgDark
                         Rectangle { width: parent.width; height: 1; color: root.borderColor; anchors.bottom: parent.bottom }
-                        MouseArea { id: rowMa; anchors.fill: parent; hoverEnabled: true
-                            onClicked: { taskQueueModel.setProperty(index, "isSelected", !isSelected); root.checkStates() }
-                        }
+                        Rectangle { width: parent.width; height: 1; color: root.borderColor; anchors.top: parent.top }
                         RowLayout { anchors.fill: parent; anchors.leftMargin: 15; anchors.rightMargin: 15; spacing: 10
-                            Item { Layout.preferredWidth: 60
-                                Rectangle { width: 16; height: 16; radius: 2; anchors.centerIn: parent; color: isSelected ? root.primaryColor : root.bgDark; border.color: isSelected ? root.primaryColor : root.borderColor
-                                    Text { text: "✓"; color: "white"; font.pixelSize: 12; anchors.centerIn: parent; visible: isSelected }
-                                    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; hoverEnabled: true
-                                        onClicked: { taskQueueModel.setProperty(index, "isSelected", !isSelected); root.checkStates() }
-                                    }
-                                }
+                            Item { Layout.preferredWidth: 60 }
+                            Label { text: "任务ID"; color: root.textMuted; font.pixelSize: 12; font.bold: true; Layout.preferredWidth: 60 }
+                            Label { text: "应用场景"; color: root.textMuted; font.pixelSize: 12; font.bold: true; Layout.preferredWidth: 160 }
+                            Label { text: "使用数据集"; color: root.textMuted; font.pixelSize: 12; font.bold: true; Layout.fillWidth: true }
+                            Label { text: "算法模型"; color: root.textMuted; font.pixelSize: 12; font.bold: true; Layout.preferredWidth: 160 }
+                            Label { text: "训练状态"; color: root.textMuted; font.pixelSize: 12; font.bold: true; Layout.preferredWidth: 150 }
+                            Label { text: "操作"; color: root.textMuted; font.pixelSize: 12; font.bold: true; Layout.preferredWidth: 80; horizontalAlignment: Text.AlignRight }
+                        }
+                    }
+
+                    ListView { Layout.fillWidth: true; Layout.fillHeight: true; clip: true; model: taskQueueModel; spacing: 0
+                        Text { visible: taskQueueModel.count === 0; text: "暂无训练任务，请在上方配置并追加至队列"; color: root.textMuted; font.pixelSize: 14; anchors.centerIn: parent }
+
+                        delegate: Rectangle { width: ListView.view ? ListView.view.width : 0; height: 50; color: index % 2 === 0 ? Theme.panel : "transparent"
+                            property bool rowHov: rowMa.containsMouse
+                            Rectangle { anchors.fill: parent; color: isSelected ? root.tableHoverBg : (rowHov ? Theme.hover : "transparent") }
+                            Rectangle { width: parent.width; height: 1; color: root.borderColor; anchors.bottom: parent.bottom }
+                            MouseArea { id: rowMa; anchors.fill: parent; hoverEnabled: true
+                                onClicked: { taskQueueModel.setProperty(index, "isSelected", !isSelected); root.checkStates() }
                             }
-                            Text {
-                                text: taskId > 0 ? ("#" + taskId) : ("T" + (index + 1))
-                                color: root.primaryColor
-                                font.pixelSize: 13
-                                font.bold: true
-                                font.family: "Courier"
-                                Layout.preferredWidth: 60
-                            }
-                            Text { text: scenario; color: root.textColor; font.pixelSize: 13; Layout.preferredWidth: 160; elide: Text.ElideRight }
-                            Text { text: dataset; color: root.textColor; font.pixelSize: 13; Layout.fillWidth: true; elide: Text.ElideRight }
-                            Text { text: algo; color: "#4DD0E1"; font.pixelSize: 13; font.bold: true; Layout.preferredWidth: 160; elide: Text.ElideRight }
-                            Item { Layout.preferredWidth: 150; height: 30
-                                Text { text: "待训练"; color: root.textMuted; font.pixelSize: 13; font.bold: true; anchors.verticalCenter: parent.verticalCenter; visible: trainStatus === 0 }
-                                ColumnLayout {
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    RowLayout { spacing: 8; visible: trainStatus === 1
-                                        Rectangle { Layout.fillWidth: true; height: 6; radius: 3; color: root.bgDark
-                                            Rectangle { width: parent.width * trainProgress; height: parent.height; radius: 3; color: root.primaryColor }
+                            RowLayout { anchors.fill: parent; anchors.leftMargin: 15; anchors.rightMargin: 15; spacing: 10
+                                Item { Layout.preferredWidth: 60
+                                    Rectangle { width: 16; height: 16; radius: 2; anchors.centerIn: parent; color: isSelected ? root.primaryColor : root.bgDark; border.color: isSelected ? root.primaryColor : root.borderColor
+                                        Text { text: "✓"; color: "white"; font.pixelSize: 12; anchors.centerIn: parent; visible: isSelected }
+                                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; hoverEnabled: true
+                                            onClicked: { taskQueueModel.setProperty(index, "isSelected", !isSelected); root.checkStates() }
                                         }
-                                        Text { text: Math.floor(trainProgress * 100) + "%"; color: root.primaryColor; font.pixelSize: 12; font.bold: true; font.family: "Courier" }
-                                    }
-                                    Text {
-                                        visible: trainStatus === 1 && (progressMessage || "")
-                                        text: progressMessage || ""
-                                        color: root.textMuted
-                                        font.pixelSize: 11
-                                        font.family: "Courier"
-                                        elide: Text.ElideRight
-                                        Layout.fillWidth: true
                                     }
                                 }
-                                Rectangle { anchors.verticalCenter: parent.verticalCenter; height: 26; width: 70; radius: 4; color: Qt.rgba(0, 180, 42, 0.1); border.color: root.successColor; border.width: 1; visible: trainStatus === 2
-                                    Text { text: "✓ 已完成"; color: root.successColor; font.pixelSize: 12; font.bold: true; anchors.centerIn: parent }
+                                Text {
+                                    text: taskId > 0 ? ("#" + taskId) : ("T" + (index + 1))
+                                    color: root.primaryColor
+                                    font.pixelSize: 13
+                                    font.bold: true
+                                    font.family: "Courier"
+                                    Layout.preferredWidth: 60
                                 }
-                                Rectangle { anchors.verticalCenter: parent.verticalCenter; height: 26; width: 70; radius: 4; color: Qt.rgba(245, 63, 63, 0.1); border.color: root.dangerColor; border.width: 1; visible: trainStatus === 3
-                                    Text { text: "✗ 失败"; color: root.dangerColor; font.pixelSize: 12; font.bold: true; anchors.centerIn: parent }
+                                Text { text: scenario; color: root.textColor; font.pixelSize: 13; Layout.preferredWidth: 160; elide: Text.ElideRight }
+                                Text { text: dataset; color: root.textColor; font.pixelSize: 13; Layout.fillWidth: true; elide: Text.ElideRight }
+                                Text { text: algo; color: "#4DD0E1"; font.pixelSize: 13; font.bold: true; Layout.preferredWidth: 160; elide: Text.ElideRight }
+                                Item { Layout.preferredWidth: 150; height: 30
+                                    Text { text: "待训练"; color: root.textMuted; font.pixelSize: 13; font.bold: true; anchors.verticalCenter: parent.verticalCenter; visible: trainStatus === 0 }
+                                    ColumnLayout {
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        RowLayout { spacing: 8; visible: trainStatus === 1
+                                            Rectangle { Layout.fillWidth: true; height: 6; radius: 3; color: root.bgDark
+                                                Rectangle { width: parent.width * trainProgress; height: parent.height; radius: 3; color: root.primaryColor }
+                                            }
+                                            Text { text: Math.floor(trainProgress * 100) + "%"; color: root.primaryColor; font.pixelSize: 12; font.bold: true; font.family: "Courier" }
+                                        }
+                                        Text {
+                                            visible: trainStatus === 1 && (progressMessage || "")
+                                            text: progressMessage || ""
+                                            color: root.textMuted
+                                            font.pixelSize: 11
+                                            font.family: "Courier"
+                                            elide: Text.ElideRight
+                                            Layout.fillWidth: true
+                                        }
+                                    }
+                                    Rectangle { anchors.verticalCenter: parent.verticalCenter; height: 26; width: 70; radius: 4; color: Qt.rgba(0, 180, 42, 0.1); border.color: root.successColor; border.width: 1; visible: trainStatus === 2
+                                        Text { text: "✓ 已完成"; color: root.successColor; font.pixelSize: 12; font.bold: true; anchors.centerIn: parent }
+                                    }
+                                    Rectangle { anchors.verticalCenter: parent.verticalCenter; height: 26; width: 70; radius: 4; color: Qt.rgba(245, 63, 63, 0.1); border.color: root.dangerColor; border.width: 1; visible: trainStatus === 3
+                                        Text { text: "✗ 失败"; color: root.dangerColor; font.pixelSize: 12; font.bold: true; anchors.centerIn: parent }
+                                    }
+                                    Rectangle { anchors.verticalCenter: parent.verticalCenter; height: 26; width: 70; radius: 4; color: Qt.rgba(245, 158, 11, 0.1); border.color: root.warningColor; border.width: 1; visible: trainStatus === 4
+                                        Text { text: "⏸ 中断"; color: root.warningColor; font.pixelSize: 12; font.bold: true; anchors.centerIn: parent }
+                                    }
                                 }
-                                Rectangle { anchors.verticalCenter: parent.verticalCenter; height: 26; width: 70; radius: 4; color: Qt.rgba(245, 158, 11, 0.1); border.color: root.warningColor; border.width: 1; visible: trainStatus === 4
-                                    Text { text: "⏸ 中断"; color: root.warningColor; font.pixelSize: 12; font.bold: true; anchors.centerIn: parent }
-                                }
-                            }
-                            Item { Layout.preferredWidth: 80; height: 30
-                                Rectangle { anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; height: 26; width: 60; radius: 4; color: btnHov ? Theme.hover : root.bgDark; border.color: root.borderColor; border.width: 1; visible: trainStatus === 0 || trainStatus === 3 || trainStatus === 4
-                                    property bool btnHov: delBtnMa.containsMouse
-                                    Text { text: "删除"; color: root.dangerColor; font.pixelSize: 11; anchors.centerIn: parent }
-                                    MouseArea { id: delBtnMa; anchors.fill: parent; cursorShape: Qt.PointingHandCursor; hoverEnabled: true
-                                        onClicked: { taskQueueModel.remove(index); root.checkStates(); root.saveToAppState() }
+                                Item { Layout.preferredWidth: 80; height: 30
+                                    Rectangle { anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; height: 26; width: 60; radius: 4; color: btnHov ? Theme.hover : root.bgDark; border.color: root.borderColor; border.width: 1; visible: trainStatus === 0 || trainStatus === 3 || trainStatus === 4
+                                        property bool btnHov: delBtnMa.containsMouse
+                                        Text { text: "删除"; color: root.dangerColor; font.pixelSize: 11; anchors.centerIn: parent }
+                                        MouseArea { id: delBtnMa; anchors.fill: parent; cursorShape: Qt.PointingHandCursor; hoverEnabled: true
+                                            onClicked: { taskQueueModel.remove(index); root.checkStates(); root.saveToAppState() }
+                                        }
                                     }
                                 }
                             }
@@ -1123,11 +1132,15 @@ Item {
                     }
                 }
             }
-        }
 
-        // 底部：评估比对
-        Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 260; color: root.panelBg; radius: 8; border.color: root.borderColor; border.width: 1
-            ColumnLayout { anchors.fill: parent; anchors.margins: 15; spacing: 10
+            // 底部：评估比对
+            Rectangle {
+                SplitView.fillWidth: true
+                SplitView.fillHeight: true
+                SplitView.minimumHeight: 240
+                SplitView.preferredHeight: 360
+                color: root.panelBg; radius: 8; border.color: root.borderColor; border.width: 1
+                ColumnLayout { anchors.fill: parent; anchors.margins: 15; spacing: 10
                 RowLayout { Layout.fillWidth: true
                     Text { text: "📊 模型评估比对"; color: root.textColor; font.pixelSize: 16; font.bold: true }
                     Item { Layout.fillWidth: true }
@@ -1213,7 +1226,7 @@ Item {
                 }
 
                 // 底部保存/清空
-                RowLayout { Layout.fillWidth: true; Layout.preferredHeight: 36; spacing: 15
+                RowLayout { Layout.fillWidth: true; Layout.preferredHeight: 36; Layout.topMargin: 4; spacing: 15
                     Item { Layout.fillWidth: true }
                     Rectangle { width: 150; height: 36; radius: 4; color: root.bgDark; border.color: root.borderColor; border.width: 1; opacity: evalResultModel.count > 0 ? 1.0 : 0.4
                         RowLayout { anchors.centerIn: parent; spacing: 5
@@ -1237,6 +1250,7 @@ Item {
                         }
                     }
                 }
+            }
             }
         }
     }

@@ -22,6 +22,42 @@ PARAMETERS = [
 ]
 
 
+def _normalize_parts(path_value: str) -> list[str]:
+    return [part.lower() for part in Path(path_value).parts]
+
+
+def _is_rgb_image_file(path_value: str) -> bool:
+    parts = _normalize_parts(path_value)
+    suffix = Path(path_value).suffix.lower()
+    return suffix in {".jpg", ".jpeg", ".png"} and "images" in parts
+
+
+def _is_radar_feature_file(path_value: str) -> bool:
+    parts = _normalize_parts(path_value)
+    return Path(path_value).suffix.lower() == ".npz" and "vocradar320" in parts
+
+
+def _is_yolo_label_file(path_value: str) -> bool:
+    parts = _normalize_parts(path_value)
+    return Path(path_value).suffix.lower() == ".txt" and "detection" in parts and "yolo" in parts
+
+
+def _resolve_dataset_dirs(dataset_root: str) -> tuple[str, str, str]:
+    root = Path(dataset_root) if dataset_root else Path()
+    candidates = [root]
+    if root:
+        candidates.extend([root / "raw", root / "raw" / "WaterScenes-Mini", root / "WaterScenes-Mini"])
+
+    for candidate in candidates:
+        image_dir = candidate / "images"
+        radar_dir = candidate / "radar" / "VOCradar320"
+        label_dir = candidate / "detection" / "detection" / "yolo"
+        if image_dir.is_dir():
+            return str(image_dir), str(radar_dir), str(label_dir)
+
+    return "", "", ""
+
+
 def run(payload: dict, context) -> dict:
     try:
         return _run_training(payload, context)
@@ -51,24 +87,23 @@ def _run_training(payload: dict, context) -> dict:
     for s in samples:
         rp = s.get("relative_path", "")
         fp = s.get("file_path", s.get("path", ""))
-        if "VOCradar320" in fp or "VOCradar320" in rp:
+        source = fp or rp
+        if _is_radar_feature_file(source):
             radar_dir = str(Path(fp).parent) if fp else ""
-        elif (("detection" in fp or "yolo" in fp) or ("detection" in rp or "yolo" in rp)) and fp.endswith(".txt"):
+        elif _is_yolo_label_file(source):
             label_dir = str(Path(fp).parent) if fp else ""
-        elif fp.lower().endswith((".jpg", ".png")):
+        elif _is_rgb_image_file(source):
             image_dir = str(Path(fp).parent) if fp else ""
 
     # 回退: 从 dataset_path 推测
     if not image_dir and dataset_root:
-        image_dir = os.path.join(dataset_root, "images")
-        radar_dir = os.path.join(dataset_root, "radar", "VOCradar320")
-        label_dir = os.path.join(dataset_root, "detection", "detection", "yolo")
+        image_dir, radar_dir, label_dir = _resolve_dataset_dirs(dataset_root)
 
-    # 最后一招: 遍历样本找
+    # 最后一招: 遍历样本找 images 目录下的真图
     if not image_dir:
         for s in samples:
-            fp = s.get("file_path", s.get("path", ""))
-            if fp.lower().endswith((".jpg", ".png")):
+            fp = s.get("file_path", s.get("path", "")) or s.get("relative_path", "")
+            if _is_rgb_image_file(fp):
                 image_dir = str(Path(fp).parent)
                 break
 
