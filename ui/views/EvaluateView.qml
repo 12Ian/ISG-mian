@@ -1385,7 +1385,8 @@ Item {
 
             var scId = root.findScenarioId(t.scenario)
             var evalAlgoId = 0
-            var evalKey = root.trainingToEvalKey[t.algoKey || ""]
+            var trainingAlgoKey = t.algoKey || root.algorithmKeyById(t.algoId || 0)
+            var evalKey = root.trainingToEvalKey[trainingAlgoKey || ""]
             if (evalKey && root.evalAlgorithmMap[evalKey]) {
                 evalAlgoId = root.evalAlgorithmMap[evalKey].id
             }
