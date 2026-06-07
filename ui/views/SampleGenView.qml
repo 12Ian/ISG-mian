@@ -58,6 +58,7 @@ Item {
     property string previewSource: ""
     property string currentTargetDatasetName: ""
 
+    property int pendingPreviewId: -1
     property int pendingEditIndex: -1
     property int pendingDeleteIndex: -1
     property int selectedExportCount: 0
@@ -435,6 +436,8 @@ Item {
         function onSamplePreviewUpdated(data) {
             var payload = data && data.data ? data.data : data
             if (!payload || !payload.sample_id) return
+            if (root.pendingPreviewId !== payload.sample_id) return
+            root.pendingPreviewId = -1
             root.previewKind = payload.preview_kind || "file"
             root.previewText = payload.text_content || payload.error || ""
             root.previewTitle = payload.name || payload.relative_path || "样本预览"
@@ -1427,6 +1430,7 @@ Item {
                                         cursorShape: Qt.PointingHandCursor
                                         onClicked: {
                                             if (outputSampleId > 0) {
+                                                root.pendingPreviewId = outputSampleId
                                                 backendService.getSamplePreview(outputSampleId)
                                             }
                                         }
@@ -1929,6 +1933,7 @@ Item {
                                     cursorShape: Qt.PointingHandCursor
                                     onClicked: {
                                         if (outputSampleId > 0) {
+                                            root.pendingPreviewId = outputSampleId
                                             backendService.getSamplePreview(outputSampleId)
                                         }
                                     }
