@@ -39,6 +39,8 @@ Item {
     property var currentHistoryItem: null
     property int pendingDeleteIndex: -1
     property int pendingEditIndex: -1
+    property bool trainingHistoryExpanded: true
+    property bool evaluationHistoryExpanded: true
 
     property var algorithmNameMap: ({})
     property var evalAlgorithmMap: ({})
@@ -197,6 +199,7 @@ Item {
             progressMessage: task.progress_message || ""
         }
         return {
+            historyType: "training",
             projectName: "训练任务 #" + taskId,
             scenario: scenarioNameById(payload.scenario_id || 0),
             datasets: details.dataset,
@@ -207,6 +210,28 @@ Item {
             detailsJson: JSON.stringify([details]),
             taskIdsJson: JSON.stringify([taskId])
         }
+    }
+
+    function historyEntryType(item) {
+        if (!item) return "evaluation"
+        if (item.historyType === "training" || item.historyType === "evaluation") return item.historyType
+        var projectName = item.projectName || ""
+        if (projectName.indexOf("训练任务 #") === 0) return "training"
+        var taskIds = []
+        try {
+            taskIds = JSON.parse(item.taskIdsJson || "[]")
+        } catch(e) {
+            taskIds = []
+        }
+        return taskIds.length > 0 ? "training" : "evaluation"
+    }
+
+    function historyIndexesByType(type) {
+        var indexes = []
+        for (var i = 0; i < evalHistoryModel.count; i++) {
+            if (historyEntryType(evalHistoryModel.get(i)) === type) indexes.push(i)
+        }
+        return indexes
     }
 
     function syncHistoryFromTrainingTask(task) {
@@ -676,6 +701,7 @@ Item {
                         }
                         var allDone = evalResultModel.count > 0
                         evalHistoryModel.insert(0, {
+                            historyType: "evaluation",
                             projectName: saveProjectInput.text,
                             scenario: scenarioName,
                             datasets: Object.keys(dsSet).join(", ") || "无",
@@ -794,76 +820,248 @@ Item {
         }
 
         Rectangle { Layout.fillWidth: true; Layout.fillHeight: true; color: "transparent"; clip: true
-            ListView {
-                id: historyListView
-                anchors.fill: parent; clip: true; spacing: 12; model: evalHistoryModel
+            ScrollView {
+                id: historyScroll
+                anchors.fill: parent
+                clip: true
+                ScrollBar.vertical.policy: ScrollBar.AlwaysOn
 
-                delegate: Rectangle {
-                    width: historyListView.width; height: 130; radius: 8; color: Theme.panel
-                    border.color: rowMa.containsMouse ? Theme.primary : root.borderColor; border.width: 1
-                    MouseArea { id: rowMa; anchors.fill: parent; hoverEnabled: true }
-                    RowLayout { anchors.fill: parent; anchors.margins: 15; spacing: 20
-                        ColumnLayout { Layout.fillWidth: true; spacing: 6
-                            RowLayout { Layout.fillWidth: true; spacing: 8
-                                Label { text: "🚀 " + model.projectName; color: root.primaryColor; font.pixelSize: 16; font.bold: true; elide: Text.ElideRight; Layout.maximumWidth: 400 }
-                                Item { Layout.fillWidth: true }
-                                Label { text: "🕒 " + model.time; color: root.textMuted; font.pixelSize: 12 }
+                Column {
+                    id: historySections
+                    width: historyScroll.availableWidth
+                    spacing: 12
+
+                    Rectangle {
+                        width: parent.width
+                        height: 44
+                        radius: 8
+                        color: Qt.rgba(3/255, 155/255, 229/255, 0.08)
+                        border.color: root.borderColor
+                        border.width: 1
+
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.margins: 12
+                            spacing: 10
+
+                            Label { text: root.trainingHistoryExpanded ? "▼" : "▶"; color: root.primaryColor; font.pixelSize: 14; font.bold: true }
+                            Label { text: "训练任务"; color: root.textColor; font.pixelSize: 15; font.bold: true }
+                            Rectangle { width: 24; height: 20; radius: 10; color: Qt.rgba(3/255, 155/255, 229/255, 0.18)
+                                Text { anchors.centerIn: parent; text: root.historyIndexesByType("training").length; color: root.primaryColor; font.pixelSize: 11; font.bold: true }
                             }
-                            RowLayout { Layout.fillWidth: true; spacing: 10
-                                Label { text: "应用场景: "; color: root.textMuted; font.pixelSize: 13 }
-                                Label { text: model.scenario; color: root.textColor; font.pixelSize: 13; Layout.maximumWidth: 200; elide: Text.ElideRight }
-                                Rectangle { width: 1; height: 12; color: root.borderColor }
-                                Label { text: "挂载数据: "; color: root.textMuted; font.pixelSize: 13 }
-                                Label { text: model.datasets; color: root.textColor; font.pixelSize: 13; Layout.fillWidth: true; elide: Text.ElideRight }
-                            }
-                            RowLayout { Layout.fillWidth: true
-                                Label { text: "算法模型: "; color: root.textMuted; font.pixelSize: 13 }
-                                Label { text: model.algos; color: "#4DD0E1"; font.pixelSize: 13; Layout.fillWidth: true; elide: Text.ElideRight }
-                            }
-                            RowLayout { Layout.fillWidth: true; spacing: 10
-                                Label { text: "训练状态: "; color: root.textMuted; font.pixelSize: 12 }
-                                Label { text: model.trainStatus; color: model.trainStatus === "已完成" ? root.successColor : root.warningColor; font.pixelSize: 12; font.bold: true }
-                                Rectangle { width: 1; height: 12; color: root.borderColor }
-                                Label { text: "评估报告: "; color: root.textMuted; font.pixelSize: 12 }
-                                Label { text: model.evalReport; color: root.primaryColor; font.pixelSize: 12; font.family: "Courier"; font.bold: true; Layout.fillWidth: true }
-                            }
+                            Item { Layout.fillWidth: true }
                         }
-                        ColumnLayout { Layout.alignment: Qt.AlignVCenter | Qt.AlignRight; spacing: 10
-                            Button {
-                                text: "查看"; Layout.preferredWidth: 90; Layout.preferredHeight: 30
-                                background: Rectangle { color: parent.hovered ? Theme.hover : Theme.control; radius: 4; border.color: Theme.border }
-                                contentItem: Text { text: parent.text; color: "#D1D5DB"; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                                onClicked: {
-                                    root.currentHistoryItem = { projectName: model.projectName, scenario: model.scenario, datasets: model.datasets, algos: model.algos, trainStatus: model.trainStatus, evalReport: model.evalReport }
-                                    currentDetailModel.clear()
-                                    if (model.detailsJson && model.detailsJson !== "") {
-                                        var arr = JSON.parse(model.detailsJson)
-                                        for (var i = 0; i < arr.length; i++) {
-                                            var item = arr[i]
-                                            item.detailsJson = JSON.stringify(item)
-                                            currentDetailModel.append(item)
+
+                        MouseArea {
+                            anchors.fill: parent
+                            onClicked: root.trainingHistoryExpanded = !root.trainingHistoryExpanded
+                        }
+                    }
+
+                    Column {
+                        width: parent.width
+                        spacing: 12
+                        visible: root.trainingHistoryExpanded
+
+                        Repeater {
+                            model: root.historyIndexesByType("training")
+
+                            delegate: Rectangle {
+                                required property int modelData
+                                property int historyIndex: modelData
+                                property var historyItem: evalHistoryModel.get(historyIndex)
+                                width: historySections.width
+                                height: 130
+                                radius: 8
+                                color: Theme.panel
+                                border.color: rowMa.containsMouse ? Theme.primary : root.borderColor
+                                border.width: 1
+
+                                MouseArea { id: rowMa; anchors.fill: parent; hoverEnabled: true }
+
+                                RowLayout { anchors.fill: parent; anchors.margins: 15; spacing: 20
+                                    ColumnLayout { Layout.fillWidth: true; spacing: 6
+                                        RowLayout { Layout.fillWidth: true; spacing: 8
+                                            Label { text: "🚀 " + (historyItem.projectName || ""); color: root.primaryColor; font.pixelSize: 16; font.bold: true; elide: Text.ElideRight; Layout.maximumWidth: 400 }
+                                            Item { Layout.fillWidth: true }
+                                            Label { text: "🕒 " + (historyItem.time || ""); color: root.textMuted; font.pixelSize: 12 }
+                                        }
+                                        RowLayout { Layout.fillWidth: true; spacing: 10
+                                            Label { text: "应用场景: "; color: root.textMuted; font.pixelSize: 13 }
+                                            Label { text: historyItem.scenario || ""; color: root.textColor; font.pixelSize: 13; Layout.maximumWidth: 200; elide: Text.ElideRight }
+                                            Rectangle { width: 1; height: 12; color: root.borderColor }
+                                            Label { text: "挂载数据: "; color: root.textMuted; font.pixelSize: 13 }
+                                            Label { text: historyItem.datasets || ""; color: root.textColor; font.pixelSize: 13; Layout.fillWidth: true; elide: Text.ElideRight }
+                                        }
+                                        RowLayout { Layout.fillWidth: true
+                                            Label { text: "算法模型: "; color: root.textMuted; font.pixelSize: 13 }
+                                            Label { text: historyItem.algos || ""; color: "#4DD0E1"; font.pixelSize: 13; Layout.fillWidth: true; elide: Text.ElideRight }
+                                        }
+                                        RowLayout { Layout.fillWidth: true; spacing: 10
+                                            Label { text: "训练状态: "; color: root.textMuted; font.pixelSize: 12 }
+                                            Label { text: historyItem.trainStatus || ""; color: historyItem.trainStatus === "已完成" ? root.successColor : root.warningColor; font.pixelSize: 12; font.bold: true }
+                                            Rectangle { width: 1; height: 12; color: root.borderColor }
+                                            Label { text: "评估报告: "; color: root.textMuted; font.pixelSize: 12 }
+                                            Label { text: historyItem.evalReport || ""; color: root.primaryColor; font.pixelSize: 12; font.family: "Courier"; font.bold: true; Layout.fillWidth: true }
                                         }
                                     }
-                                    root.viewMode = "detail"
+                                    ColumnLayout { Layout.alignment: Qt.AlignVCenter | Qt.AlignRight; spacing: 10
+                                        Button {
+                                            text: "查看"; Layout.preferredWidth: 90; Layout.preferredHeight: 30
+                                            background: Rectangle { color: parent.hovered ? Theme.hover : Theme.control; radius: 4; border.color: Theme.border }
+                                            contentItem: Text { text: parent.text; color: "#D1D5DB"; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                            onClicked: {
+                                                root.currentHistoryItem = { projectName: historyItem.projectName, scenario: historyItem.scenario, datasets: historyItem.datasets, algos: historyItem.algos, trainStatus: historyItem.trainStatus, evalReport: historyItem.evalReport }
+                                                currentDetailModel.clear()
+                                                if (historyItem.detailsJson && historyItem.detailsJson !== "") {
+                                                    var arr = JSON.parse(historyItem.detailsJson)
+                                                    for (var i = 0; i < arr.length; i++) {
+                                                        var item = arr[i]
+                                                        item.detailsJson = JSON.stringify(item)
+                                                        currentDetailModel.append(item)
+                                                    }
+                                                }
+                                                root.viewMode = "detail"
+                                            }
+                                        }
+                                        Button {
+                                            text: "修改"; Layout.preferredWidth: 90; Layout.preferredHeight: 30
+                                            background: Rectangle { color: parent.hovered ? Theme.hover : Theme.control; radius: 4; border.color: Theme.border }
+                                            contentItem: Text { text: parent.text; color: "#D1D5DB"; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                            onClicked: { root.pendingEditIndex = historyIndex; editProjectNameInput.text = historyItem.projectName || ""; editProjectPopup.open() }
+                                        }
+                                        Button {
+                                            text: "删除"; Layout.preferredWidth: 90; Layout.preferredHeight: 30
+                                            background: Rectangle { color: parent.hovered ? "#BE123C" : "transparent"; border.color: root.dangerColor; border.width: 1; radius: 4 }
+                                            contentItem: Text { text: parent.text; color: parent.parent.hovered ? "white" : root.dangerColor; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                            onClicked: { root.pendingDeleteIndex = historyIndex; deleteConfirmPopup.open() }
+                                        }
+                                    }
                                 }
-                            }
-                            Button {
-                                text: "修改"; Layout.preferredWidth: 90; Layout.preferredHeight: 30
-                                background: Rectangle { color: parent.hovered ? Theme.hover : Theme.control; radius: 4; border.color: Theme.border }
-                                contentItem: Text { text: parent.text; color: "#D1D5DB"; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                                onClicked: { root.pendingEditIndex = index; editProjectNameInput.text = model.projectName; editProjectPopup.open() }
-                            }
-                            Button {
-                                text: "删除"; Layout.preferredWidth: 90; Layout.preferredHeight: 30
-                                background: Rectangle { color: parent.hovered ? "#BE123C" : "transparent"; border.color: root.dangerColor; border.width: 1; radius: 4 }
-                                contentItem: Text { text: parent.text; color: parent.parent.hovered ? "white" : root.dangerColor; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                                onClicked: { root.pendingDeleteIndex = index; deleteConfirmPopup.open() }
                             }
                         }
                     }
-                }
 
-                Text { anchors.centerIn: parent; text: "暂无评估历史记录"; color: Theme.muted; font.pixelSize: 16; visible: evalHistoryModel.count === 0 }
+                    Rectangle {
+                        width: parent.width
+                        height: 44
+                        radius: 8
+                        color: Qt.rgba(77/255, 208/255, 225/255, 0.08)
+                        border.color: root.borderColor
+                        border.width: 1
+
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.margins: 12
+                            spacing: 10
+
+                            Label { text: root.evaluationHistoryExpanded ? "▼" : "▶"; color: "#4DD0E1"; font.pixelSize: 14; font.bold: true }
+                            Label { text: "评估任务"; color: root.textColor; font.pixelSize: 15; font.bold: true }
+                            Rectangle { width: 24; height: 20; radius: 10; color: Qt.rgba(77/255, 208/255, 225/255, 0.18)
+                                Text { anchors.centerIn: parent; text: root.historyIndexesByType("evaluation").length; color: "#4DD0E1"; font.pixelSize: 11; font.bold: true }
+                            }
+                            Item { Layout.fillWidth: true }
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            onClicked: root.evaluationHistoryExpanded = !root.evaluationHistoryExpanded
+                        }
+                    }
+
+                    Column {
+                        width: parent.width
+                        spacing: 12
+                        visible: root.evaluationHistoryExpanded
+
+                        Repeater {
+                            model: root.historyIndexesByType("evaluation")
+
+                            delegate: Rectangle {
+                                required property int modelData
+                                property int historyIndex: modelData
+                                property var historyItem: evalHistoryModel.get(historyIndex)
+                                width: historySections.width
+                                height: 130
+                                radius: 8
+                                color: Theme.panel
+                                border.color: rowMaEval.containsMouse ? Theme.primary : root.borderColor
+                                border.width: 1
+
+                                MouseArea { id: rowMaEval; anchors.fill: parent; hoverEnabled: true }
+
+                                RowLayout { anchors.fill: parent; anchors.margins: 15; spacing: 20
+                                    ColumnLayout { Layout.fillWidth: true; spacing: 6
+                                        RowLayout { Layout.fillWidth: true; spacing: 8
+                                            Label { text: "📊 " + (historyItem.projectName || ""); color: "#4DD0E1"; font.pixelSize: 16; font.bold: true; elide: Text.ElideRight; Layout.maximumWidth: 400 }
+                                            Item { Layout.fillWidth: true }
+                                            Label { text: "🕒 " + (historyItem.time || ""); color: root.textMuted; font.pixelSize: 12 }
+                                        }
+                                        RowLayout { Layout.fillWidth: true; spacing: 10
+                                            Label { text: "应用场景: "; color: root.textMuted; font.pixelSize: 13 }
+                                            Label { text: historyItem.scenario || ""; color: root.textColor; font.pixelSize: 13; Layout.maximumWidth: 200; elide: Text.ElideRight }
+                                            Rectangle { width: 1; height: 12; color: root.borderColor }
+                                            Label { text: "挂载数据: "; color: root.textMuted; font.pixelSize: 13 }
+                                            Label { text: historyItem.datasets || ""; color: root.textColor; font.pixelSize: 13; Layout.fillWidth: true; elide: Text.ElideRight }
+                                        }
+                                        RowLayout { Layout.fillWidth: true
+                                            Label { text: "算法模型: "; color: root.textMuted; font.pixelSize: 13 }
+                                            Label { text: historyItem.algos || ""; color: "#4DD0E1"; font.pixelSize: 13; Layout.fillWidth: true; elide: Text.ElideRight }
+                                        }
+                                        RowLayout { Layout.fillWidth: true; spacing: 10
+                                            Label { text: "训练状态: "; color: root.textMuted; font.pixelSize: 12 }
+                                            Label { text: historyItem.trainStatus || ""; color: historyItem.trainStatus === "已完成" ? root.successColor : root.warningColor; font.pixelSize: 12; font.bold: true }
+                                            Rectangle { width: 1; height: 12; color: root.borderColor }
+                                            Label { text: "评估报告: "; color: root.textMuted; font.pixelSize: 12 }
+                                            Label { text: historyItem.evalReport || ""; color: root.primaryColor; font.pixelSize: 12; font.family: "Courier"; font.bold: true; Layout.fillWidth: true }
+                                        }
+                                    }
+                                    ColumnLayout { Layout.alignment: Qt.AlignVCenter | Qt.AlignRight; spacing: 10
+                                        Button {
+                                            text: "查看"; Layout.preferredWidth: 90; Layout.preferredHeight: 30
+                                            background: Rectangle { color: parent.hovered ? Theme.hover : Theme.control; radius: 4; border.color: Theme.border }
+                                            contentItem: Text { text: parent.text; color: "#D1D5DB"; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                            onClicked: {
+                                                root.currentHistoryItem = { projectName: historyItem.projectName, scenario: historyItem.scenario, datasets: historyItem.datasets, algos: historyItem.algos, trainStatus: historyItem.trainStatus, evalReport: historyItem.evalReport }
+                                                currentDetailModel.clear()
+                                                if (historyItem.detailsJson && historyItem.detailsJson !== "") {
+                                                    var arr = JSON.parse(historyItem.detailsJson)
+                                                    for (var i = 0; i < arr.length; i++) {
+                                                        var item = arr[i]
+                                                        item.detailsJson = JSON.stringify(item)
+                                                        currentDetailModel.append(item)
+                                                    }
+                                                }
+                                                root.viewMode = "detail"
+                                            }
+                                        }
+                                        Button {
+                                            text: "修改"; Layout.preferredWidth: 90; Layout.preferredHeight: 30
+                                            background: Rectangle { color: parent.hovered ? Theme.hover : Theme.control; radius: 4; border.color: Theme.border }
+                                            contentItem: Text { text: parent.text; color: "#D1D5DB"; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                            onClicked: { root.pendingEditIndex = historyIndex; editProjectNameInput.text = historyItem.projectName || ""; editProjectPopup.open() }
+                                        }
+                                        Button {
+                                            text: "删除"; Layout.preferredWidth: 90; Layout.preferredHeight: 30
+                                            background: Rectangle { color: parent.hovered ? "#BE123C" : "transparent"; border.color: root.dangerColor; border.width: 1; radius: 4 }
+                                            contentItem: Text { text: parent.text; color: parent.parent.hovered ? "white" : root.dangerColor; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                            onClicked: { root.pendingDeleteIndex = historyIndex; deleteConfirmPopup.open() }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Text {
+                        width: parent.width
+                        horizontalAlignment: Text.AlignHCenter
+                        text: "暂无历史记录"
+                        color: Theme.muted
+                        font.pixelSize: 16
+                        visible: evalHistoryModel.count === 0
+                    }
+                }
             }
         }
     }
