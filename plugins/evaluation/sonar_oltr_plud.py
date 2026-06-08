@@ -541,8 +541,12 @@ def _run_plud(payload: dict, context) -> dict:
 
     # 从 checkpoint 中提取已知类对应的分类头权重行
     sorted_known_indices = sorted(train_classes)
-    ckpt_weight = ckpt_state.get("fc.weight") or ckpt_state.get("last_linear.weight")  # [ckpt_num_classes, df]
-    ckpt_bias = ckpt_state.get("fc.bias") or ckpt_state.get("last_linear.bias")       # [ckpt_num_classes]
+    ckpt_weight = ckpt_state.get("fc.weight")
+    if ckpt_weight is None:
+        ckpt_weight = ckpt_state.get("last_linear.weight")  # [ckpt_num_classes, df]
+    ckpt_bias = ckpt_state.get("fc.bias")
+    if ckpt_bias is None:
+        ckpt_bias = ckpt_state.get("last_linear.bias")       # [ckpt_num_classes]
     if ckpt_weight is None or ckpt_bias is None:
         return {
             "ok": False,
