@@ -941,6 +941,29 @@ Item {
             Item { Layout.fillWidth: true }
 
             Button {
+                text: "插件规范"
+                font.bold: true
+                font.pixelSize: 14
+                background: Rectangle {
+                    color: parent.pressed ? "#1A00838F" : parent.hovered ? "#1A00E5FF" : "transparent"
+                    border.color: root.devAccentColor
+                    border.width: 1
+                    radius: 4
+                }
+                contentItem: Text {
+                    text: parent.text
+                    color: root.devAccentColor
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                }
+                onClicked: {
+                    var result = backendService.openAlgorithmPluginSpec()
+                    if (result.status === "success") root.showToast("✅ 已打开插件规范")
+                    else root.showToast("⚠️ " + (result.message || "插件规范打开失败"))
+                }
+            }
+
+            Button {
                 text: "+ 注册新插件环境"
                 font.bold: true
                 font.pixelSize: 14

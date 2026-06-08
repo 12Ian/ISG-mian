@@ -4,7 +4,7 @@ import sys
 import os
 import threading
 
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtGui import QDesktopServices, QGuiApplication
 from PySide6.QtQml import QQmlApplicationEngine, QQmlContext
 from PySide6.QtCore import QUrl, QObject, Signal, Slot, Property
 
@@ -308,6 +308,15 @@ class BackendService(QObject):
     @Slot(int, result=dict)
     def validateAlgorithm(self, algorithmId: int) -> dict:
         return self._bridge.validate_algorithm(algorithmId)
+
+    @Slot(result=dict)
+    def openAlgorithmPluginSpec(self) -> dict:
+        spec_path = Path(__file__).resolve().parent / "docs" / "ISG 算法插件开发规范 v1.0.pdf"
+        if not spec_path.exists():
+            return {"status": "error", "message": f"未找到插件规范文档: {spec_path}"}
+        if QDesktopServices.openUrl(QUrl.fromLocalFile(str(spec_path))):
+            return {"status": "success"}
+        return {"status": "error", "message": "无法打开插件规范文档"}
 
     @Slot(int, result=dict)
     def startEnhancementTask(self, taskId: int) -> dict:
