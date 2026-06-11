@@ -144,6 +144,103 @@ Item {
         return ""
     }
 
+    function normalizeParamToken(value) {
+        return String(value || "").toLowerCase().replace(/[\s_\-]/g, "")
+    }
+
+    function resolveTrainingParamValue(params, algoId, aliases, labelKeywords) {
+        var source = params || {}
+        var defs = root.algoParamsMap[String(algoId)] || []
+        var aliasTokens = []
+        var labelTokens = []
+        var directKeys = Object.keys(source)
+
+        for (var ai = 0; ai < aliases.length; ai++) aliasTokens.push(root.normalizeParamToken(aliases[ai]))
+        for (var li = 0; li < labelKeywords.length; li++) labelTokens.push(String(labelKeywords[li] || "").toLowerCase())
+
+        for (var di = 0; di < defs.length; di++) {
+            var def = defs[di]
+            var keyName = String(def.name || "")
+            var keyToken = root.normalizeParamToken(keyName)
+            var labelText = String(def.label || keyName || "").toLowerCase()
+            var matched = aliasTokens.indexOf(keyToken) !== -1
+            if (!matched) {
+                for (var lk = 0; lk < labelTokens.length; lk++) {
+                    if (labelText.indexOf(labelTokens[lk]) !== -1) {
+                        matched = true
+                        break
+                    }
+                }
+            }
+            if (matched && source[keyName] !== undefined && source[keyName] !== null && source[keyName] !== "") {
+                return source[keyName]
+            }
+        }
+
+        for (var ki = 0; ki < directKeys.length; ki++) {
+            var rawKey = directKeys[ki]
+            var rawToken = root.normalizeParamToken(rawKey)
+            var rawLower = String(rawKey || "").toLowerCase()
+            if (aliasTokens.indexOf(rawToken) !== -1) return source[rawKey]
+            for (var lj = 0; lj < labelTokens.length; lj++) {
+                if (rawLower.indexOf(labelTokens[lj]) !== -1) return source[rawKey]
+            }
+        }
+        return ""
+    }
+
+    function displayTrainingParamValue(value) {
+        if (value === undefined || value === null || value === "") return "未设置"
+        if (typeof value === "object") return JSON.stringify(value)
+        return String(value)
+    }
+
+    function buildTrainingParamSummary(params, algoId) {
+        return [
+            "骨干网络: " + root.displayTrainingParamValue(root.resolveTrainingParamValue(params, algoId, ["backbone", "backbone_network", "network", "arch", "model", "model_name"], ["骨干", "网络"])),
+            "训练轮次: " + root.displayTrainingParamValue(root.resolveTrainingParamValue(params, algoId, ["epochs", "epoch", "num_epochs"], ["训练轮次", "轮次", "epoch"])),
+            "批大小: " + root.displayTrainingParamValue(root.resolveTrainingParamValue(params, algoId, ["batch_size", "batchsize", "batch"], ["批大小", "batch"])),
+            "学习率: " + root.displayTrainingParamValue(root.resolveTrainingParamValue(params, algoId, ["learning_rate", "lr"], ["学习率", "lr"]))
+        ].join(" | ")
+    }
+
+    function findWeightOptionByTaskId(taskId) {
+        var id = Number(taskId || 0)
+        for (var i = 0; i < weightOptionModel.count; i++) {
+            var item = weightOptionModel.get(i)
+            if (Number(item.taskId || 0) === id) return item
+        }
+        return null
+    }
+
+    function buildTrainingDetailFromTask(taskId, fallbackItem) {
+        var item = root.findWeightOptionByTaskId(taskId)
+        var datasetName = ""
+        var algoName = ""
+        var algoId = 0
+        var params = {}
+
+        if (item) {
+            datasetName = item.dataset || ""
+            algoName = item.algo || ""
+            algoId = item.algoId || 0
+            params = item.params || {}
+        } else if (fallbackItem) {
+            datasetName = fallbackItem.datasets || ""
+            algoName = fallbackItem.algos || ""
+        }
+
+        var detail = {
+            dataset: datasetName,
+            algo: algoName,
+            "骨干网络": root.displayTrainingParamValue(root.resolveTrainingParamValue(params, algoId, ["backbone", "backbone_network", "network", "arch", "model", "model_name"], ["骨干", "网络"])),
+            "训练轮次": root.displayTrainingParamValue(root.resolveTrainingParamValue(params, algoId, ["epochs", "epoch", "num_epochs"], ["训练轮次", "轮次", "epoch"])),
+            "批大小": root.displayTrainingParamValue(root.resolveTrainingParamValue(params, algoId, ["batch_size", "batchsize", "batch"], ["批大小", "batch"])),
+            "学习率": root.displayTrainingParamValue(root.resolveTrainingParamValue(params, algoId, ["learning_rate", "lr"], ["学习率", "lr"]))
+        }
+        return detail
+    }
+
     function scenarioNameById(scenarioId) {
         var id = Number(scenarioId)
         for (var i = 0; i < scenarioModel.count; i++) {
@@ -193,16 +290,17 @@ Item {
         var status = task.status || ""
         var resultJson = task.result || {}
         var artifactCount = resultJson.artifacts ? resultJson.artifacts.length : 0
+        var algoId = task.algorithm_id || 0
+        var taskParams = task.parameters || {}
         var details = {
-            taskId: taskId,
-            status: trainingStatusLabel(status),
             dataset: task.source_dataset_name || ("数据集#" + (task.source_dataset_id || 0)),
-            algo: algorithmName(task.algorithm_id || 0),
-            outputDir: task.output_dir || "",
-            artifactPath: artifactCount > 0 ? (resultJson.artifacts[0] || "") : "",
-            summary: resultJson.summary || "",
-            progressMessage: task.progress_message || ""
+            algo: algorithmName(algoId),
+            "骨干网络": root.displayTrainingParamValue(root.resolveTrainingParamValue(taskParams, algoId, ["backbone", "backbone_network", "network", "arch", "model", "model_name"], ["骨干", "网络"])),
+            "训练轮次": root.displayTrainingParamValue(root.resolveTrainingParamValue(taskParams, algoId, ["epochs", "epoch", "num_epochs"], ["训练轮次", "轮次", "epoch"])),
+            "批大小": root.displayTrainingParamValue(root.resolveTrainingParamValue(taskParams, algoId, ["batch_size", "batchsize", "batch"], ["批大小", "batch"])),
+            "学习率": root.displayTrainingParamValue(root.resolveTrainingParamValue(taskParams, algoId, ["learning_rate", "lr"], ["学习率", "lr"]))
         }
+        if (resultJson.summary) details["训练摘要"] = resultJson.summary
         return {
             historyType: "training",
             projectName: "训练任务 #" + taskId,
@@ -312,6 +410,7 @@ Item {
         var trainStatus = trainingStatusCode(task.status || "")
         var trainProgress = (task.progress || 0) / 100.0
         var progressMessage = task.progress_message || ""
+        var taskParams = task.parameters || {}
         var resultJson = task.result || {}
         var outputDir = task.output_dir || ""
 
@@ -326,6 +425,7 @@ Item {
             taskQueueModel.setProperty(matchedIndex, "dbStatus", task.status || "")
             taskQueueModel.setProperty(matchedIndex, "trainProgress", trainProgress)
             taskQueueModel.setProperty(matchedIndex, "progressMessage", progressMessage)
+            taskQueueModel.setProperty(matchedIndex, "params", taskParams)
             taskQueueModel.setProperty(matchedIndex, "resultJson", resultJson)
             taskQueueModel.setProperty(matchedIndex, "outputDir", outputDir)
             return
@@ -372,6 +472,7 @@ Item {
         var algoId = task.algorithm_id || 0
         var algoName = algorithmName(algoId)
         var algoKey = algorithmKeyById(algoId)
+        var taskParams = task.parameters || {}
         var selected = existingIndex >= 0 ? !!weightOptionModel.get(existingIndex).isSelected : false
         var item = {
             taskId: taskId,
@@ -382,8 +483,10 @@ Item {
             algoId: algoId,
             algo: algoName,
             algoKey: algoKey,
+            params: taskParams,
             checkpointPath: checkpointPath,
             checkpointName: checkpointPath.split(/[\\/]/).pop(),
+            paramSummary: root.buildTrainingParamSummary(taskParams, algoId),
             summary: resultJson.summary || "",
             outputDir: task.output_dir || "",
             createdAt: task.created_at || "",
@@ -1027,9 +1130,15 @@ Item {
                                             background: Rectangle { color: parent.hovered ? Theme.hover : Theme.control; radius: 4; border.color: Theme.border }
                                             contentItem: Text { text: parent.text; color: "#D1D5DB"; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                                             onClicked: {
-                                                root.currentHistoryItem = { projectName: historyItem.projectName, scenario: historyItem.scenario, datasets: historyItem.datasets, algos: historyItem.algos, trainStatus: historyItem.trainStatus, evalReport: historyItem.evalReport }
+                                                root.currentHistoryItem = { historyType: historyItem.historyType || "training", projectName: historyItem.projectName, scenario: historyItem.scenario, datasets: historyItem.datasets, algos: historyItem.algos, trainStatus: historyItem.trainStatus, evalReport: historyItem.evalReport }
                                                 currentDetailModel.clear()
-                                                if (historyItem.detailsJson && historyItem.detailsJson !== "") {
+                                                var taskIds = []
+                                                try { taskIds = JSON.parse(historyItem.taskIdsJson || "[]") } catch(e) { taskIds = [] }
+                                                if (taskIds.length > 0) {
+                                                    var rebuilt = root.buildTrainingDetailFromTask(taskIds[0], historyItem)
+                                                    rebuilt.detailsJson = JSON.stringify(rebuilt)
+                                                    currentDetailModel.append(rebuilt)
+                                                } else if (historyItem.detailsJson && historyItem.detailsJson !== "") {
                                                     var arr = JSON.parse(historyItem.detailsJson)
                                                     for (var i = 0; i < arr.length; i++) {
                                                         var item = arr[i]
@@ -1138,7 +1247,7 @@ Item {
                                             background: Rectangle { color: parent.hovered ? Theme.hover : Theme.control; radius: 4; border.color: Theme.border }
                                             contentItem: Text { text: parent.text; color: "#D1D5DB"; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                                             onClicked: {
-                                                root.currentHistoryItem = { projectName: historyItem.projectName, scenario: historyItem.scenario, datasets: historyItem.datasets, algos: historyItem.algos, trainStatus: historyItem.trainStatus, evalReport: historyItem.evalReport }
+                                                root.currentHistoryItem = { historyType: historyItem.historyType || "evaluation", projectName: historyItem.projectName, scenario: historyItem.scenario, datasets: historyItem.datasets, algos: historyItem.algos, trainStatus: historyItem.trainStatus, evalReport: historyItem.evalReport }
                                                 currentDetailModel.clear()
                                                 if (historyItem.detailsJson && historyItem.detailsJson !== "") {
                                                     var arr = JSON.parse(historyItem.detailsJson)
@@ -1206,7 +1315,7 @@ Item {
                     RowLayout { anchors.fill: parent; anchors.leftMargin: 20; anchors.rightMargin: 20; spacing: 10
                         Label { text: "使用数据集"; font.bold: true; color: "#A0AEC0"; Layout.preferredWidth: 160 }
                         Label { text: "匹配算法模型"; font.bold: true; color: "#A0AEC0"; Layout.preferredWidth: 140 }
-                        Label { text: "评估指标"; font.bold: true; color: "#A0AEC0"; Layout.fillWidth: true }
+                        Label { text: root.currentHistoryItem && root.currentHistoryItem.historyType === "training" ? "训练配置" : "评估指标"; font.bold: true; color: "#A0AEC0"; Layout.fillWidth: true }
                     }
                 }
                 ListView { id: detailListView; Layout.fillWidth: true; Layout.fillHeight: true; clip: true; spacing: 1; model: currentDetailModel
@@ -1220,8 +1329,10 @@ Item {
                                 property var _metricText: {
                                     var str = "";
                                     var keys = Object.keys(_detailObj);
+                                    var hiddenTrainingKeys = ["taskId", "status", "outputDir", "artifactPath", "progressMessage", "summary", "checkpoint"]
                                     for (var mi = 0; mi < keys.length; mi++) {
                                         if (keys[mi] === "dataset" || keys[mi] === "algo") continue;
+                                        if (root.currentHistoryItem && root.currentHistoryItem.historyType === "training" && hiddenTrainingKeys.indexOf(keys[mi]) !== -1) continue;
                                         if (str !== "") str += " | ";
                                         str += keys[mi] + ": " + _detailObj[keys[mi]];
                                     }
@@ -1609,11 +1720,11 @@ Item {
                                     }
 
                                     Text {
-                                        text: checkpointName || checkpointPath || ""
+                                        text: paramSummary || ""
                                         color: "#4DD0E1"
                                         font.pixelSize: 12
-                                        font.family: "Courier"
-                                        elide: Text.ElideMiddle
+                                        wrapMode: Text.NoWrap
+                                        elide: Text.ElideRight
                                         Layout.fillWidth: true
                                     }
                                 }
