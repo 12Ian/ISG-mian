@@ -38,7 +38,7 @@ Item {
     Popup {
         id: helpPopup
         width: 360
-        height: Math.max(190, Math.min(360, helpBody.contentHeight + 104))
+        height: Math.max(220, Math.min(520, helpBody.contentHeight + 104))
         modal: false
         focus: true
         x: Math.min(0, root.width - width)
@@ -89,14 +89,21 @@ Item {
 
             Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: Theme.border }
 
-            Text {
-                id: helpBody
-                text: root.body
-                color: Theme.muted
-                font.pixelSize: 13
-                lineHeight: 1.35
-                wrapMode: Text.WordWrap
+            ScrollView {
+                id: helpScroll
                 Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+
+                Text {
+                    id: helpBody
+                    width: helpScroll.availableWidth
+                    text: root.body
+                    color: Theme.muted
+                    font.pixelSize: 13
+                    lineHeight: 1.35
+                    wrapMode: Text.WordWrap
+                }
             }
         }
     }

@@ -4,6 +4,10 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+import cv2
+
+from ._image_io import read_image, write_image
+
 
 PARAMETERS = []
 
@@ -43,8 +47,8 @@ def run(payload: dict[str, Any], context: Any) -> dict[str, Any]:
                 "message": f"Cannot read source sample: {source_path}",
             }
 
-        target = output_dir / f"copy_{index:04d}{source_path.suffix or '.dat'}"
-        shutil.copy2(source_path, target)
+        target = output_dir / f"{source_path.stem}_copy_aug_{index:04d}{source_path.suffix or '.dat'}"
+        changed = _write_augmented_copy(source_path, target)
         outputs.append(
             {
                 "source_sample_id": sample.get("id"),
@@ -54,6 +58,7 @@ def run(payload: dict[str, Any], context: Any) -> dict[str, Any]:
                     "method": "copy",
                     "algorithm_key": payload.get("algorithm_key", "generation.copy_augmenter"),
                     "parameters": parameters,
+                    "augmented_copy": changed,
                 },
                 "status": "created",
             }
@@ -61,3 +66,27 @@ def run(payload: dict[str, Any], context: Any) -> dict[str, Any]:
         context.set_progress((index + 1) * 100 / target_count, f"Generated {index + 1}/{target_count}")
 
     return {"ok": True, "outputs": outputs, "logs": []}
+
+
+def _write_augmented_copy(source_path: Path, target: Path) -> bool:
+    if source_path.suffix.lower() in {".bmp", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp"}:
+        img = read_image(source_path)
+        if img is None:
+            shutil.copy2(source_path, target)
+            return False
+        h, w = img.shape[:2]
+        center = (w / 2.0, h / 2.0)
+        matrix = cv2.getRotationMatrix2D(center, 2.5, 1.0)
+        rotated = cv2.warpAffine(img, matrix, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
+        enhanced = cv2.convertScaleAbs(rotated, alpha=1.12, beta=8)
+        blur = cv2.GaussianBlur(enhanced, (0, 0), 1.0)
+        out = cv2.addWeighted(enhanced, 1.25, blur, -0.25, 0)
+        return bool(write_image(target, out))
+
+    if source_path.suffix.lower() in {".txt", ".md", ".csv", ".json", ".xml", ".yaml", ".yml"}:
+        text = source_path.read_text(encoding="utf-8", errors="ignore")
+        target.write_text(text + "\n# augmented copy\n", encoding="utf-8")
+        return True
+
+    shutil.copy2(source_path, target)
+    return False

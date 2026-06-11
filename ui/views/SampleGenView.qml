@@ -25,7 +25,7 @@ Item {
         anchors.topMargin: -16
         anchors.rightMargin: -16
         title: "数据生成帮助"
-        body: "在本页基于源数据或清洗数据生成扩增样本。选择基础数据集、勾选生成算法、配置参数和目标数量后启动任务；完成后可查看生成文件并用于后续评估。"
+        body: "本页用于基于已有数据集生成扩增样本，并管理生成任务历史。\n\n1. 左侧历史区展示已创建的生成任务，可按任务卡片查看任务状态、目标数据集、使用算法、参数和生成结果。\n2. 点击“新建生成任务”进入配置流程。先选择基础数据集，可通过阶段筛选切换原始、清洗后或生成数据集。\n3. 选择数据集后，系统会按模态加载可用生成算法，例如图像增强、文本增强、音频增强等。可以同时勾选多个算法。\n4. 每个算法会显示动态参数表，参数来自算法注册信息。修改参数后会随任务一起提交，例如生成数量、强度、噪声类型、线性倍率等。\n5. 设置目标生成数量后启动任务。运行过程中可以查看进度；任务失败时会弹出错误原因，便于检查算法配置、源数据或依赖环境。\n6. 任务完成后，右侧详情区可查看生成输出列表、源样本、生成样本、算法名称和状态。点击样本可打开预览。\n7. 可对历史任务重命名、删除，或批量选择后导出生成工程记录。生成结果会写入目标数据集，可继续用于清洗、训练或评估。"
     }
 
     property string viewMode: "history"
@@ -129,6 +129,125 @@ Item {
         backendService.getAlgorithms("generation", modality)
     }
 
+    function imageStrongDefaultValue(algo, param) {
+        if (!algo || algo.modality !== "image" || !param || !param.name) return undefined
+        var key = String(algo.key || "")
+        var name = String(param.name || "")
+        var defaults = {
+            "generation.image.crop": {
+                "crop_ratio": 0.7,
+                "crop_mode": "random"
+            },
+            "generation.image.geometric_transform": {
+                "rotation_degrees": 15,
+                "scale": 0.92,
+                "translate_x_pct": 6,
+                "translate_y_pct": -4,
+                "flip_horizontal": false,
+                "flip_vertical": false
+            },
+            "generation.image.style_transfer": {
+                "strength": 0.85
+            },
+            "generation.image.texture_enhancement": {
+                "texture_strength": 0.75,
+                "detail_sigma": 1.2,
+                "detail_gain": 1.8
+            },
+            "generation.image.lighting_direction": {
+                "light_direction": "left_to_right",
+                "light_strength": 0.75,
+                "ambient_level": 0.1
+            },
+            "generation.image.temperature_calibration": {
+                "stretch_low_pct": 4,
+                "stretch_high_pct": 96,
+                "clahe_clip": 3.5,
+                "clahe_tile": 8
+            },
+            "generation.image.halo_effect": {
+                "mode": "simulate",
+                "halo_strength": 0.75,
+                "halo_radius": 36,
+                "dehalo_clip": 0.7
+            },
+            "generation.image.color_space": {
+                "brightness": 14,
+                "contrast": 1.18,
+                "saturation": 1.25,
+                "hue": 8,
+                "pca_jitter": 0.08
+            },
+            "generation.image.clarity": {
+                "blur_strength": 0,
+                "blur_kernel": 5,
+                "sharpen_strength": 1.2,
+                "sharpen_amount": 0.55
+            },
+            "generation.image.occlusion": {
+                "occlusion_type": "random_erase",
+                "erase_count": 2,
+                "area_ratio": 0.35
+            },
+            "generation.image.environment_simulation": {
+                "fog_intensity": 0.45,
+                "snow_intensity": 0.35,
+                "shadow_intensity": 0.35
+            },
+            "generation.image.deformation_distortion": {
+                "elastic_strength": 8,
+                "elastic_gaussian_kernel": 10,
+                "distortion_k1": 0.18,
+                "distortion_k2": 0.03
+            },
+            "generation.image.imaging_simulation": {
+                "blur_kernel": 5,
+                "downsample": 0.5
+            },
+            "generation.image.linear_transform": {
+                "alpha": 1.6,
+                "beta": 35,
+                "gamma": 1.1
+            },
+            "generation.image.channel_shuffle": {
+                "shuffle": true
+            },
+            "generation.image.cross_modal_fusion": {
+                "clahe_clip": 4,
+                "ir_weight": 0.75
+            },
+            "generation.image.wgan_gp": {
+                "gradient_penalty": 10,
+                "discriminator_iterations": 5,
+                "learning_rate": 0.0001,
+                "enhance_strength": 1.3
+            },
+            "generation.image.diffusion": {
+                "diffusion_steps": 60,
+                "cfg_guidance_scale": 1,
+                "noise_strength": 0.35,
+                "blend_strength": 0.65
+            },
+            "generation.image.vit_mae": {
+                "mask_ratio": 0.45,
+                "learning_rate": 0.0001,
+                "training_steps": 160,
+                "patch_size": 4,
+                "blend_strength": 0.75
+            },
+            "噪声注入": {
+                "noise_type": "gaussian",
+                "noise_intensity": 0.16,
+                "salt_pepper_ratio": 0.5,
+                "shot_noise": 0.06,
+                "read_noise": 0.03
+            }
+        }
+        var values = defaults[key]
+        if (!values || values[name] === undefined) return undefined
+        return values[name]
+    }
+
     function buildParamsDataMap(algorithms) {
         var map = {}
         for (var i = 0; i < algorithms.length; i++) {
@@ -138,10 +257,12 @@ Item {
             for (var p = 0; p < rawParams.length; p++) {
                 var param = rawParams[p]
                 var opts = param.options || param.options_json || []
+                var strongDefault = root.imageStrongDefaultValue(algo, param)
+                var defaultValue = strongDefault !== undefined ? strongDefault : param.default_value
                 params.push({
                     n: param.name || "",
                     label: param.label || param.name || "",
-                    v: param.default_value !== undefined && param.default_value !== null ? String(param.default_value) : "",
+                    v: defaultValue !== undefined && defaultValue !== null ? String(defaultValue) : "",
                     type: param.type || "string",
                     options: opts,
                     optionsJson: JSON.stringify(opts)

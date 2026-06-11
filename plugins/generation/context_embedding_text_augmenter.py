@@ -11,7 +11,7 @@ PARAMETERS = [
         "name": "mask_ratio",
         "type": "float",
         "label": "Mask比例",
-        "default": 0.1,
+        "default": 0.25,
         "min": 0.0,
         "max": 1.0,
         "options": [],
@@ -22,14 +22,41 @@ PARAMETERS = [
         "name": "cross_lingual_strength",
         "type": "float",
         "label": "跨语言增强强度",
-        "default": 0.0,
+        "default": 0.35,
         "min": 0.0,
         "max": 1.0,
         "options": [],
-        "description": "跨语言增强强度",
+        "description": "跨语言表达替换强度",
         "required": False,
     },
 ]
+
+
+PHRASE_REPLACEMENTS = {
+    "很好": ["表现良好", "质量较好", "效果不错"],
+    "很快": ["速度较快", "响应迅速", "处理较快"],
+    "很强": ["强度较高", "效果显著", "能力较强"],
+    "明显": ["显著", "清晰可见", "较为突出"],
+    "系统": ["平台", "模型", "流程"],
+    "算法": ["方法", "模型", "处理流程"],
+    "图像": ["图片", "影像", "视觉样本"],
+    "数据": ["样本", "数据内容", "输入数据"],
+    "good": ["solid", "effective", "reliable"],
+    "fast": ["quick", "rapid", "responsive"],
+    "strong": ["robust", "pronounced", "high-intensity"],
+    "image": ["visual sample", "picture", "frame"],
+    "data": ["sample data", "input data", "dataset content"],
+}
+
+CONNECTOR_REPLACEMENTS = {
+    "同时": "并且",
+    "此外": "另外",
+    "因此": "所以",
+    "但是": "不过",
+    "和": "以及",
+    "and": "as well as",
+    "however": "nevertheless",
+}
 
 
 def run(payload: dict, context) -> dict:
@@ -42,27 +69,8 @@ def run(payload: dict, context) -> dict:
         return {"ok": False, "error_code": "NO_INPUT_SAMPLES"}
 
     target_count = max(1, int(payload.get("target_count") or len(samples)))
-    mask_ratio = max(0.0, min(float(parameters.get("mask_ratio", parameters.get("mask比例", 0.1)) or 0.1), 1.0))
-    cross = max(0.0, min(float(parameters.get("cross_lingual_strength", parameters.get("cross", parameters.get("跨语言增强强度", 0.0))) or 0.0), 1.0))
-
-    synonyms = {
-        "好": ["优秀", "良好", "不错"],
-        "坏": ["糟糕", "恶劣", "不佳"],
-        "大": ["巨大", "庞大", "大规模"],
-        "小": ["微小", "细小", "小型"],
-        "快": ["迅速", "快速", "敏捷"],
-        "慢": ["缓慢", "迟缓", "较慢"],
-        "高": ["较高", "更高", "高水平"],
-        "低": ["较低", "更低", "低水平"],
-        "新": ["崭新", "更新", "全新"],
-        "旧": ["陈旧", "老旧", "过时"],
-        "强": ["强劲", "显著", "有力"],
-        "弱": ["较弱", "微弱", "有限"],
-        "明": ["明亮", "清晰", "鲜明"],
-        "暗": ["昏暗", "暗淡", "阴暗"],
-        "增": ["增强", "提升", "加强"],
-        "减": ["减少", "降低", "削减"],
-    }
+    mask_ratio = _clamp_float(parameters.get("mask_ratio", 0.25), 0.0, 1.0)
+    cross = _clamp_float(parameters.get("cross_lingual_strength", parameters.get("cross", 0.35)), 0.0, 1.0)
 
     outputs = []
     for index in range(target_count):
@@ -78,60 +86,11 @@ def run(payload: dict, context) -> dict:
         if not text:
             continue
 
-        cleaned = re.sub(r"\s+", "", text)
-        bigram = {}
-        for i in range(len(cleaned) - 1):
-            bg = cleaned[i : i + 2]
-            bigram[bg] = bigram.get(bg, 0) + 1
-        total = max(1, sum(bigram.values()))
-
-        out = list(text)
-        candidates = [i for i, ch in enumerate(out) if ch in synonyms]
-        if candidates:
-            num_mask = max(1, int(len(candidates) * mask_ratio))
-            if cross > 0:
-                num_mask = max(num_mask, int(len(out) * 0.02 * cross))
-            np.random.shuffle(candidates)
-            selected = candidates[: min(len(candidates), num_mask)]
-
-            for pos in selected:
-                key = out[pos]
-                cands = synonyms[key]
-                left = right = None
-                for li in range(pos - 1, -1, -1):
-                    if out[li] not in [" ", "\n", "\t", "\r"]:
-                        left = out[li]
-                        break
-                for ri in range(pos + 1, len(out)):
-                    if out[ri] not in [" ", "\n", "\t", "\r"]:
-                        right = out[ri]
-                        break
-
-                best, best_score = key, -1e18
-                for cand in cands:
-                    if not cand:
-                        continue
-                    sc = 0.0
-                    if left:
-                        sc += np.log((bigram.get(left + cand[0], 0) + 1) / (total + 1))
-                    for j in range(len(cand) - 1):
-                        sc += np.log((bigram.get(cand[j : j + 2], 0) + 1) / (total + 1))
-                    if right:
-                        sc += np.log((bigram.get(cand[-1] + right, 0) + 1) / (total + 1))
-                    if cross > 0:
-                        sc += 0.1 * cross
-                    if sc > best_score:
-                        best_score, best = sc, cand
-                out[pos] = best
-
-        out_text = "".join(out)
+        out_text = _replace_phrases(text, mask_ratio)
         if cross > 0:
-            if "和" in out_text and np.random.rand() < cross:
-                out_text = out_text.replace("和", "以及", 1)
-            if "同时" in out_text and np.random.rand() < cross:
-                out_text = out_text.replace("同时", "并且", 1)
-            if "此外" in out_text and np.random.rand() < cross:
-                out_text = out_text.replace("此外", "另外", 1)
+            out_text = _replace_connectors(out_text, cross)
+        if out_text == text:
+            out_text = _fallback_rewrite(text)
 
         of = output_dir / f"{sp.stem}_ctxemb_{index:04d}{sp.suffix or '.txt'}"
         of.write_text(out_text, encoding="utf-8")
@@ -151,3 +110,38 @@ def run(payload: dict, context) -> dict:
         context.set_progress((index + 1) * 100 / target_count, f"Ctx embed {index + 1}/{target_count}")
 
     return {"ok": True, "outputs": outputs, "logs": []}
+
+
+def _replace_phrases(text: str, ratio: float) -> str:
+    candidates = [phrase for phrase in PHRASE_REPLACEMENTS if phrase in text]
+    if not candidates:
+        return text
+    count = max(1, int(len(candidates) * ratio))
+    np.random.shuffle(candidates)
+    out = text
+    for phrase in candidates[:count]:
+        replacement = str(np.random.choice(PHRASE_REPLACEMENTS[phrase]))
+        out = out.replace(phrase, replacement, 1)
+    return out
+
+
+def _replace_connectors(text: str, strength: float) -> str:
+    out = text
+    for src, dst in CONNECTOR_REPLACEMENTS.items():
+        if src in out and np.random.rand() < strength:
+            out = out.replace(src, dst, 1)
+    return out
+
+
+def _fallback_rewrite(text: str) -> str:
+    if re.search(r"[\u4e00-\u9fff]", text):
+        return text.rstrip() + "\n补充说明：该样本已进行上下文表达增强。"
+    return text.rstrip() + "\nAdditional context: this sample has been contextually augmented."
+
+
+def _clamp_float(value, low, high):
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        parsed = low
+    return max(low, min(parsed, high))

@@ -8,6 +8,7 @@ from ..errors import NotFoundError, ValidationError
 from ..models import Algorithm, Dataset, Sample
 from ..plugins import PluginRunner
 from .base import ServiceBase
+from .sample_ordering import interleave_by_top_folder
 
 
 @slots_dataclass
@@ -101,6 +102,7 @@ class TrainingService(ServiceBase):
                 .order_by(Sample.id.asc())
                 .all()
             )
+            samples = interleave_by_top_folder(samples)
             if not samples:
                 raise ValidationError("Dataset must contain at least one active sample.")
 
@@ -153,6 +155,8 @@ class TrainingService(ServiceBase):
             "id": sample.id,
             "name": sample.name,
             "path": sample.file_path,
+            "sample_path": sample.file_path,
+            "relative_path": sample.relative_path,
             "status": sample.status,
             "metadata": sample.metadata_json,
             "labels": sample.labels_json or [],
