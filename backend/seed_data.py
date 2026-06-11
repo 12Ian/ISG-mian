@@ -519,6 +519,7 @@ DEFAULT_ALGORITHMS = (
         "description": "最小训练demo，模拟训练循环并产生模型checkpoint文件",
         "input_contract": {"dataset_required": True, "sample_required": True},
         "output_contract": {"produces": ["model_checkpoint"], "artifact_types": ["checkpoint"]},
+        "validation_rules_json": {"scenario_key": "underwater_target_detection_recognition"},
         "parameters": [
             {
                 "name": "epochs",
@@ -556,6 +557,7 @@ DEFAULT_ALGORITHMS = (
             "produces": ["model_checkpoint"],
             "artifact_types": ["checkpoint"],
         },
+        "validation_rules_json": {"scenario_key": "underwater_target_detection_recognition"},
         "parameters": [
             {
                 "name": "n_estimators",
@@ -2332,6 +2334,7 @@ DEFAULT_ALGORITHMS = (
             "produces": ["model_checkpoint"],
             "artifact_types": ["checkpoint"],
         },
+        "validation_rules_json": {"scenario_key": "underwater_target_detection_recognition"},
         "parameters": [
             {
                 "name": "backbone",
@@ -2397,6 +2400,7 @@ DEFAULT_ALGORITHMS = (
         "description": "多模态UNet融合RGB图像和雷达特征，逐像素语义分割水面场景。",
         "input_contract": {"dataset_required": True, "sample_required": True, "fields": ["images", "semantic_masks"]},
         "output_contract": {"produces": ["model_checkpoint"], "artifact_types": ["checkpoint"]},
+        "validation_rules_json": {"scenario_key": "multimodal_data_fusion"},
         "parameters": [
             {"name": "epochs", "label": "训练轮次", "type": "integer", "required": False, "default_value": 30, "description": "训练epoch"},
             {"name": "batch_size", "label": "批大小", "type": "integer", "required": False, "default_value": 8, "description": "批次大小"},
@@ -2420,6 +2424,7 @@ DEFAULT_ALGORITHMS = (
         "description": "双流CNN同时处理RGB图像和雷达特征图，特征融合后进行目标检测分类。",
         "input_contract": {"dataset_required": True, "sample_required": True, "fields": ["images", "radar_npz", "yolo_labels"]},
         "output_contract": {"produces": ["model_checkpoint"], "artifact_types": ["checkpoint"]},
+        "validation_rules_json": {"scenario_key": "multimodal_data_fusion"},
         "parameters": [
             {"name": "epochs", "label": "训练轮次", "type": "integer", "required": False, "default_value": 50, "description": "训练epoch"},
             {"name": "batch_size", "label": "批大小", "type": "integer", "required": False, "default_value": 16, "description": "批次大小"},
@@ -2443,6 +2448,7 @@ DEFAULT_ALGORITHMS = (
         "description": "基于HyFD-SME混合模型(时域特征+ResNet34+注意力)的船舶主机故障诊断，排气温度6类故障分类。",
         "input_contract": {"dataset_required": True, "sample_required": True, "fields": ["csv_file"]},
         "output_contract": {"produces": ["model_checkpoint"], "artifact_types": ["checkpoint"]},
+        "validation_rules_json": {"scenario_key": "system_health_fault_diagnosis"},
         "parameters": [
             {"name": "epochs", "label": "训练轮次", "type": "integer", "required": False, "default_value": 100, "description": "训练epoch"},
             {"name": "batch_size", "label": "批大小", "type": "integer", "required": False, "default_value": 256, "description": "批次大小"},
@@ -2476,6 +2482,7 @@ DEFAULT_ALGORITHMS = (
             "produces": ["model_checkpoint"],
             "artifact_types": ["checkpoint"],
         },
+        "validation_rules_json": {"scenario_key": "intelligent_decision_command_control"},
         "parameters": [
             {"name": "model_type", "label": "模型类型", "type": "string", "required": False, "default_value": "LSTM", "options": ["LSTM", "GRU", "TRANSFORMER"], "description": "时序预测模型架构"},
             {"name": "hidden_size", "label": "隐藏层大小", "type": "integer", "required": False, "default_value": 64, "description": "隐藏单元数"},
@@ -2510,6 +2517,7 @@ DEFAULT_ALGORITHMS = (
             "produces": ["model_checkpoint"],
             "artifact_types": ["checkpoint"],
         },
+        "validation_rules_json": {"scenario_key": "ship_target_recognition_tracking"},
         "parameters": [
             {
                 "name": "weights",
@@ -2809,3 +2817,13 @@ DEFAULT_ALGORITHMS = (
         ],
     },
 )
+
+# 默认训练→评估算法绑定 (training_key → evaluation_key)
+DEFAULT_BINDINGS: dict[str, str] = {
+    "training.image.sonar_oltr_classifier": "evaluation.multimodal.sonar_oltr_plud",
+    "training.image.yolov5_detector": "evaluation.image.yolov5_evaluator",
+    "training.timeseries.ship_predictor": "evaluation.timeseries.ship_evaluator",
+    "training.timeseries.hyfd_fault_diagnosis": "evaluation.timeseries.hyfd_fault_evaluator",
+    "training.multimodal.fusion_detector": "evaluation.multimodal.fusion_evaluator",
+    "training.multimodal.seg": "evaluation.multimodal.seg_evaluator",
+}

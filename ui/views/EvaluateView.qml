@@ -41,8 +41,9 @@ Item {
     property int pendingEditIndex: -1
     property bool trainingHistoryExpanded: true
     property bool evaluationHistoryExpanded: true
+    property string workMode: "train"  // "train" / "eval"
     property bool trainingWorkbenchExpanded: true
-    property bool evaluationWorkbenchExpanded: true
+    property bool evaluationWorkbenchExpanded: false
     property real evalTableContentX: 0
 
     property var algorithmNameMap: ({})
@@ -64,26 +65,7 @@ Item {
     })
 
     // 场景 → 算法 绑定表 (按场景key过滤算法key)
-    property var scenarioAlgoMap: ({
-        "underwater_target_detection_recognition": [
-            "training.image.sonar_oltr_classifier",
-            "training.image.ship_classifier",
-            "training.demo_classifier"
-        ],
-        "ship_target_recognition_tracking": [
-            "training.image.yolov5_detector"
-        ],
-        "system_health_fault_diagnosis": [
-            "training.timeseries.hyfd_fault_diagnosis"
-        ],
-        "intelligent_decision_command_control": [
-            "training.timeseries.ship_predictor"
-        ],
-        "multimodal_data_fusion": [
-            "training.multimodal.fusion_detector",
-            "training.multimodal.seg"
-        ]
-    })
+    property var scenarioAlgoMap: ({})
     // 所有训练算法的完整列表 (用于场景过滤)
     property var allTrainingAlgos: []
 
@@ -117,7 +99,7 @@ Item {
     function workbenchMainHeight() {
         var total = 0
         if (root.trainingWorkbenchExpanded) total += 309
-        total += root.evaluationWorkbenchExpanded ? 640 : 46
+        total += (root.workMode === "eval" && root.evaluationWorkbenchExpanded) ? 640 : 0
         if (root.trainingWorkbenchExpanded) total += 15
         return total
     }
@@ -513,7 +495,13 @@ Item {
         if (existingIndex >= 0) {
             weightOptionModel.set(existingIndex, item)
         } else {
-            weightOptionModel.insert(0, item)
+            // 按 taskId 降序插入，保持最新在前
+            var ins = 0
+            for (var wi = 0; wi < weightOptionModel.count; wi++) {
+                if (Number(weightOptionModel.get(wi).taskId || 0) < taskId) break
+                ins = wi + 1
+            }
+            weightOptionModel.insert(ins, item)
         }
     }
 
@@ -590,6 +578,7 @@ Item {
             for (var ek in oldEvalMap) { if (oldEvalMap.hasOwnProperty(ek)) evalMap[ek] = oldEvalMap[ek] }
             var paramsMap = {}
             var trainingList = []
+            var newScenarioAlgoMap = {}
             for (var i = 0; i < algorithms.length; i++) {
                 var a = algorithms[i]
                 map[String(a.id)] = a.name || a.key || ""
@@ -601,13 +590,23 @@ Item {
                     evalMap[a.key || a.name] = {id: a.id || 0, name: a.name || a.key || ""}
                 } else if (a.category === "training") {
                     trainingList.push({id: a.id || 0, name: a.name || a.key || "", modality: a.modality || "", key: a.key || ""})
+                    var vr = a.validation_rules || {}
+                    var scKey = vr["scenario_key"] || ""
+                    if (scKey) {
+                        if (!newScenarioAlgoMap[scKey]) newScenarioAlgoMap[scKey] = []
+                        newScenarioAlgoMap[scKey].push(a.key)
+                    }
+                    var boundKey = a.bound_evaluation_key || ""
+                    if (boundKey && !root.trainingToEvalKey[a.key]) {
+                        root.trainingToEvalKey[a.key] = boundKey
+                    }
                 }
             }
             root.algorithmNameMap = map
             root.evalAlgorithmMap = evalMap
             root.algoParamsMap = paramsMap
             root.allTrainingAlgos = trainingList
-            // 根据当前场景过滤算法列表
+            root.scenarioAlgoMap = newScenarioAlgoMap
             root.filterAlgorithmsByScenario()
         }
 
@@ -635,6 +634,7 @@ Item {
         function onTrainingStatusUpdated(message, success, progressVal) {
             root.showToast(success ? "✅ " + message : "⚠️ " + message)
             if (!success) root.isTraining = false
+            if (success) backendService.getTrainingTasks(0, "")  // 训练完成立即刷新状态
         }
 
         function onEvaluationStatusUpdated(message, success) {
@@ -754,7 +754,6 @@ Item {
         backendService.getAlgorithms("", "")
         root.restoreTrainingTasksFromBackend()
     }
-
     Component.onDestruction: {
         root.saveToAppState()
     }
@@ -1035,7 +1034,7 @@ Item {
             Label { text: "模型训练与评估历史"; font.pixelSize: 18; font.bold: true; color: root.textColor }
             Item { Layout.fillWidth: true }
             Button {
-                text: "+ 添加评估任务"; font.bold: true; font.pixelSize: 14
+                text: "+ 添加训练或评估任务"; font.bold: true; font.pixelSize: 14
                 background: Rectangle { color: parent.pressed ? "#0277BD" : parent.hovered ? "#0288D1" : "#039BE5"; radius: 4 }
                 contentItem: Text { text: parent.text; color: "black"; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                 onClicked: {
@@ -1405,6 +1404,60 @@ Item {
         onClicked: root.viewMode = "history"
     }
 
+    // 右下角浮动按钮 -- 训练模式
+    RowLayout {
+        id: floatingButtons
+        anchors.bottom: parent.bottom; anchors.right: parent.right
+        anchors.bottomMargin: 12; anchors.rightMargin: 20; spacing: 10
+        visible: root.viewMode === "evaluating" && root.workMode === "train"
+        z: 10
+        property bool canSave: {
+            for (var i = 0; i < taskQueueModel.count; i++) {
+                var t = taskQueueModel.get(i)
+                if (t.trainStatus === 2 && t.isSelected) return true
+            }
+            return false
+        }
+        Rectangle { height: 34; width: 110; radius: 6
+            color: floatingButtons.canSave ? root.successColor : root.bgDark
+            border.color: floatingButtons.canSave ? "transparent" : root.borderColor; border.width: floatingButtons.canSave ? 0 : 1
+            Text { text: "💾 保存权重"; color: floatingButtons.canSave ? "white" : root.textMuted; font.pixelSize: 12; font.bold: true; anchors.centerIn: parent }
+            MouseArea { anchors.fill: parent; cursorShape: floatingButtons.canSave ? Qt.PointingHandCursor : Qt.ForbiddenCursor; enabled: floatingButtons.canSave
+                onClicked: {
+                    var count = 0; var delCount = 0
+                    for (var i = taskQueueModel.count - 1; i >= 0; i--) {
+                        var t = taskQueueModel.get(i)
+                        if (t.trainStatus === 2 && t.isSelected) { taskQueueModel.setProperty(i, "saved", true); count++ }
+                        else if (t.trainStatus === 2) {
+                            if (t.taskId > 0) { backendService.deleteTask(t.taskId); delCount++ }
+                            taskQueueModel.remove(i)
+                        }
+                    }
+                    root.checkStates(); root.saveToAppState()
+                    backendService.getTrainingTasks(0, "")
+                    root.viewMode = "history"
+                    root.showToast(count > 0 ? "✅ 已保存 " + count + " 个，删除 " + delCount + " 个" : "⚠️ 未勾选已完成的任务")
+                }
+            }
+        }
+        Rectangle { id: clrBtn; height: 34; width: 90; radius: 6
+            color: taskQueueModel.count > 0 ? (clrMa.containsMouse ? Qt.rgba(245,63,63,0.1) : "transparent") : root.bgDark
+            border.color: taskQueueModel.count > 0 ? root.borderColor : root.textMuted; border.width: 1
+            Text { text: "清空队列"; color: taskQueueModel.count > 0 ? root.textMuted : Qt.darker(root.textMuted, 2); font.pixelSize: 12; anchors.centerIn: parent }
+            MouseArea { id: clrMa; anchors.fill: parent; cursorShape: taskQueueModel.count > 0 ? Qt.PointingHandCursor : Qt.ForbiddenCursor; enabled: taskQueueModel.count > 0; hoverEnabled: true
+                onClicked: {
+                    for (var i = taskQueueModel.count - 1; i >= 0; i--) {
+                        var tid = taskQueueModel.get(i).taskId
+                        if (tid > 0) backendService.deleteTask(tid)
+                    }
+                    taskQueueModel.clear(); root.checkStates(); root.saveToAppState()
+                    backendService.getTrainingTasks(0, "")
+                    root.showToast("🗑️ 队列及权重已清空")
+                }
+            }
+        }
+    }
+
     Flickable {
         id: evaluationWorkbenchFlickable
         anchors.fill: parent; anchors.margins: 20
@@ -1415,8 +1468,7 @@ Item {
         contentHeight: Math.max(root.workbenchContentHeight(), height + 1)
 
         ScrollBar.vertical: ScrollBar {
-            policy: ScrollBar.AlwaysOn
-            interactive: true
+            policy: ScrollBar.AsNeeded
         }
 
         ColumnLayout {
@@ -1438,20 +1490,35 @@ Item {
                 anchors.rightMargin: 16
                 spacing: 10
 
-                Text { text: root.trainingWorkbenchExpanded ? "▼" : "▶"; color: root.primaryColor; font.pixelSize: 14; font.bold: true }
-                Text { text: "模型训练任务"; color: root.textColor; font.pixelSize: 16; font.bold: true }
+                Text { text: "模型训练与评估"; color: root.textColor; font.pixelSize: 16; font.bold: true }
                 Item { Layout.fillWidth: true }
-            }
-            MouseArea {
-                anchors.fill: parent
-                cursorShape: Qt.PointingHandCursor
-                onClicked: root.trainingWorkbenchExpanded = !root.trainingWorkbenchExpanded
+                // 模式切换按钮
+                Rectangle {
+                    width: 64; height: 30; radius: 6
+                    color: root.workMode === "train" ? root.primaryColor : "transparent"
+                    border.color: root.workMode === "train" ? "transparent" : root.borderColor; border.width: 1
+                    Text { text: "训练"; color: root.workMode === "train" ? "white" : root.textColor; font.pixelSize: 12; font.bold: root.workMode === "train"; anchors.centerIn: parent }
+                    MouseArea {
+                        anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                        onClicked: { root.workMode = "train"; root.trainingWorkbenchExpanded = true; root.evaluationWorkbenchExpanded = false }
+                    }
+                }
+                Rectangle {
+                    width: 64; height: 30; radius: 6
+                    color: root.workMode === "eval" ? root.primaryColor : "transparent"
+                    border.color: root.workMode === "eval" ? "transparent" : root.borderColor; border.width: 1
+                    Text { text: "评估"; color: root.workMode === "eval" ? "white" : root.textColor; font.pixelSize: 12; font.bold: root.workMode === "eval"; anchors.centerIn: parent }
+                    MouseArea {
+                        anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                        onClicked: { root.workMode = "eval"; root.trainingWorkbenchExpanded = false; root.evaluationWorkbenchExpanded = true }
+                    }
+                }
             }
         }
 
         // 顶部控制栏
         Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 80; color: root.panelBg; radius: 8; border.color: root.borderColor; border.width: 1
-            visible: root.trainingWorkbenchExpanded
+            visible: root.workMode === "train" && root.trainingWorkbenchExpanded
             RowLayout { anchors.fill: parent; anchors.margins: 15; spacing: 20
                 ColumnLayout { spacing: 5
                     Text { text: "1. 任务场景"; color: root.textMuted; font.pixelSize: 12; font.bold: true }
@@ -1501,7 +1568,7 @@ Item {
             Layout.fillHeight: root.trainingWorkbenchExpanded || root.evaluationWorkbenchExpanded
             Layout.minimumHeight: root.workbenchMainHeight()
             Layout.preferredHeight: root.workbenchMainHeight()
-            spacing: (!root.trainingWorkbenchExpanded && !root.evaluationWorkbenchExpanded) ? 8 : 15
+            spacing: 4
             clip: false
 
             // 中部：训练任务队列
@@ -1511,7 +1578,7 @@ Item {
                 Layout.minimumHeight: root.trainingWorkbenchExpanded ? 309 : 0
                 Layout.preferredHeight: root.trainingWorkbenchExpanded ? 309 : 0
                 color: "transparent"; clip: true
-                visible: root.trainingWorkbenchExpanded
+                visible: root.workMode === "train" && root.trainingWorkbenchExpanded
                 ColumnLayout { anchors.fill: parent; spacing: 12
                     // 队列头部操作栏
                     Rectangle { Layout.fillWidth: true; height: 45; color: root.panelBg; radius: 8; border.color: root.borderColor; border.width: 1
@@ -1571,7 +1638,7 @@ Item {
                             Label { text: "应用场景"; color: root.textMuted; font.pixelSize: 12; font.bold: true; Layout.preferredWidth: 160 }
                             Label { text: "使用数据集"; color: root.textMuted; font.pixelSize: 12; font.bold: true; Layout.fillWidth: true }
                             Label { text: "算法模型"; color: root.textMuted; font.pixelSize: 12; font.bold: true; Layout.preferredWidth: 160 }
-                            Label { text: "训练状态"; color: root.textMuted; font.pixelSize: 12; font.bold: true; Layout.preferredWidth: 150 }
+                            Label { text: "训练状态"; color: root.textMuted; font.pixelSize: 12; font.bold: true; Layout.preferredWidth: 220 }
                             Label { text: "操作"; color: root.textMuted; font.pixelSize: 12; font.bold: true; Layout.preferredWidth: 80; horizontalAlignment: Text.AlignRight }
                         }
                     }
@@ -1612,34 +1679,24 @@ Item {
                                 Text { text: scenario; color: root.textColor; font.pixelSize: 13; Layout.preferredWidth: 160; elide: Text.ElideRight }
                                 Text { text: dataset; color: root.textColor; font.pixelSize: 13; Layout.fillWidth: true; elide: Text.ElideRight }
                                 Text { text: algo; color: "#4DD0E1"; font.pixelSize: 13; font.bold: true; Layout.preferredWidth: 160; elide: Text.ElideRight }
-                                Item { Layout.preferredWidth: 150; height: 30
-                                    Text { text: "待训练"; color: root.textMuted; font.pixelSize: 13; font.bold: true; anchors.verticalCenter: parent.verticalCenter; visible: trainStatus === 0 }
-                                    ColumnLayout {
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        RowLayout { spacing: 8; visible: trainStatus === 1
+                                Item { Layout.preferredWidth: 220; height: 30
+                                    Text { text: "待训练"; color: root.textMuted; font.pixelSize: 12; font.bold: true; anchors.verticalCenter: parent.verticalCenter; visible: trainStatus === 0 }
+                                    ColumnLayout { anchors.verticalCenter: parent.verticalCenter; visible: trainStatus === 1; anchors.left: parent.left; anchors.right: parent.right
+                                        RowLayout { spacing: 6
                                             Rectangle { Layout.fillWidth: true; height: 6; radius: 3; color: root.bgDark
                                                 Rectangle { width: parent.width * trainProgress; height: parent.height; radius: 3; color: root.primaryColor }
                                             }
-                                            Text { text: Math.floor(trainProgress * 100) + "%"; color: root.primaryColor; font.pixelSize: 12; font.bold: true; font.family: "Courier" }
-                                        }
-                                        Text {
-                                            visible: trainStatus === 1 && (progressMessage || "")
-                                            text: progressMessage || ""
-                                            color: root.textMuted
-                                            font.pixelSize: 11
-                                            font.family: "Courier"
-                                            elide: Text.ElideRight
-                                            Layout.fillWidth: true
+                                            Text { text: Math.floor(trainProgress * 100) + "%"; color: root.primaryColor; font.pixelSize: 11; font.bold: true; font.family: "Courier" }
                                         }
                                     }
-                                    Rectangle { anchors.verticalCenter: parent.verticalCenter; height: 26; width: 70; radius: 4; color: Qt.rgba(0, 180, 42, 0.1); border.color: root.successColor; border.width: 1; visible: trainStatus === 2
-                                        Text { text: "✓ 已完成"; color: root.successColor; font.pixelSize: 12; font.bold: true; anchors.centerIn: parent }
+                                    Rectangle { anchors.verticalCenter: parent.verticalCenter; height: 22; width: 64; radius: 3; color: Qt.rgba(0,180,42,0.1); border.color: root.successColor; border.width: 1; visible: trainStatus === 2
+                                        Text { text: "✓ 已完成"; color: root.successColor; font.pixelSize: 11; font.bold: true; anchors.centerIn: parent }
                                     }
-                                    Rectangle { anchors.verticalCenter: parent.verticalCenter; height: 26; width: 70; radius: 4; color: Qt.rgba(245, 63, 63, 0.1); border.color: root.dangerColor; border.width: 1; visible: trainStatus === 3
-                                        Text { text: "✗ 失败"; color: root.dangerColor; font.pixelSize: 12; font.bold: true; anchors.centerIn: parent }
+                                    Rectangle { anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter; height: 22; width: 56; radius: 3; color: Qt.rgba(245,63,63,0.1); border.color: root.dangerColor; border.width: 1; visible: trainStatus === 3
+                                        Text { text: "✗ 失败"; color: root.dangerColor; font.pixelSize: 11; font.bold: true; anchors.centerIn: parent }
                                     }
-                                    Rectangle { anchors.verticalCenter: parent.verticalCenter; height: 26; width: 70; radius: 4; color: Qt.rgba(245, 158, 11, 0.1); border.color: root.warningColor; border.width: 1; visible: trainStatus === 4
-                                        Text { text: "⏸ 中断"; color: root.warningColor; font.pixelSize: 12; font.bold: true; anchors.centerIn: parent }
+                                    Rectangle { anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter; height: 22; width: 56; radius: 3; color: Qt.rgba(245,158,11,0.1); border.color: root.warningColor; border.width: 1; visible: trainStatus === 4
+                                        Text { text: "⏸ 中断"; color: root.warningColor; font.pixelSize: 11; font.bold: true; anchors.centerIn: parent }
                                     }
                                 }
                                 Item { Layout.preferredWidth: 80; height: 30
@@ -1660,6 +1717,7 @@ Item {
             // 底部：评估比对
             Rectangle {
                 Layout.fillWidth: true
+                visible: root.workMode === "eval"
                 Layout.fillHeight: root.evaluationWorkbenchExpanded
                 Layout.minimumHeight: root.evaluationWorkbenchExpanded ? 640 : 46
                 Layout.preferredHeight: root.evaluationWorkbenchExpanded ? 640 : 46
@@ -1686,10 +1744,10 @@ Item {
                         onClicked: root.evaluationWorkbenchExpanded = !root.evaluationWorkbenchExpanded
                     }
                 }
-                Rectangle { Layout.fillWidth: true; height: 1; color: root.borderColor; visible: root.evaluationWorkbenchExpanded }
+                Rectangle { Layout.fillWidth: true; height: 1; color: root.borderColor; visible: root.workMode === "eval" && root.evaluationWorkbenchExpanded }
 
                 // 启动评估
-                RowLayout { Layout.fillWidth: true; visible: root.evaluationWorkbenchExpanded
+                RowLayout { Layout.fillWidth: true; visible: root.workMode === "eval" && root.evaluationWorkbenchExpanded
                     Text { text: "4. 评估比对:"; color: root.textMuted; font.pixelSize: 13; font.bold: true }
                     Text { text: "加载训练checkpoint进行开放集识别评估（MAV收集 → Weibull拟合 → OpenMax）"; color: root.textMuted; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
                     Rectangle { width: 160; height: 36; radius: 4
@@ -1712,7 +1770,7 @@ Item {
                     radius: 6
                     border.color: root.borderColor
                     border.width: 1
-                    visible: root.evaluationWorkbenchExpanded
+                    visible: root.workMode === "eval" && root.evaluationWorkbenchExpanded
 
                     ColumnLayout {
                         anchors.fill: parent
@@ -1746,14 +1804,14 @@ Item {
                                 width: ListView.view ? ListView.view.width : 0
                                 height: 52
                                 radius: 4
-                                color: isSelected ? root.tableHoverBg : "transparent"
-                                border.color: isSelected ? root.primaryColor : root.borderColor
+                                color: model.isSelected ? root.tableHoverBg : "transparent"
+                                border.color: model.isSelected ? root.primaryColor : root.borderColor
                                 border.width: 1
 
                                 MouseArea {
                                     anchors.fill: parent
                                     cursorShape: Qt.PointingHandCursor
-                                    onClicked: weightOptionModel.setProperty(index, "isSelected", !isSelected)
+                                    onClicked: weightOptionModel.setProperty(index, "isSelected", !model.isSelected)
                                 }
 
                                 RowLayout {
@@ -1797,7 +1855,7 @@ Item {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     color: "transparent"
-                    visible: root.evaluationWorkbenchExpanded
+                    visible: root.workMode === "eval" && root.evaluationWorkbenchExpanded
 
                     ColumnLayout {
                         anchors.fill: parent
@@ -1894,7 +1952,7 @@ Item {
                 }
 
                 // 底部保存/清空
-                RowLayout { Layout.fillWidth: true; Layout.preferredHeight: 36; Layout.topMargin: 4; spacing: 15; visible: root.evaluationWorkbenchExpanded
+                RowLayout { Layout.fillWidth: true; Layout.preferredHeight: 36; Layout.topMargin: 4; spacing: 15; visible: root.workMode === "eval" && root.evaluationWorkbenchExpanded
                     Item { Layout.fillWidth: true }
                     Rectangle { width: 150; height: 36; radius: 4; color: root.bgDark; border.color: root.borderColor; border.width: 1; opacity: evalResultModel.count > 0 ? 1.0 : 0.4
                         RowLayout { anchors.centerIn: parent; spacing: 5
@@ -1929,13 +1987,6 @@ Item {
         }
     }
 
-    // ================= 轮询定时器 =================
-    Timer {
-        id: progressPollTimer
-        interval: 1000; repeat: true
-        running: root.isTraining
-        onTriggered: backendService.getTrainingTasks(0, "")
-    }
 
     // 评估结果轮询定时器 (后台任务完成后自动拉取结果)
     Timer {
@@ -1980,6 +2031,13 @@ Item {
         root.showToast("✅ 训练任务已启动")
     }
 
+    function isWeightSaved(taskId) {
+        for (var i = 0; i < taskQueueModel.count; i++) {
+            if (Number(taskQueueModel.get(i).taskId || 0) === Number(taskId)) return taskQueueModel.get(i).saved === true
+        }
+        return true  // 不在队列中的历史权重默认允许评估
+    }
+
     function findScenarioId(name) {
         for (var i = 0; i < scenarioModel.count; i++) {
             if (scenarioModel.get(i).name === name) return scenarioModel.get(i).id || 0
@@ -2016,6 +2074,7 @@ Item {
             algoKey: algoItem ? (algoItem.key || "") : "",
             params: taskParams,
             isSelected: true,
+            saved: false,
             trainStatus: 0,
             trainProgress: 0.0,
             progressMessage: "",
@@ -2054,6 +2113,7 @@ Item {
             var t = weightOptionModel.get(i)
             if (!t.isSelected) continue
             if (!t.taskId || t.taskId <= 0) continue
+            if (!root.isWeightSaved(t.taskId)) continue
             selectedWeights++
 
             var scId = Number(t.scenarioId || root.findScenarioId(t.scenario))

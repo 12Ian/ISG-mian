@@ -12,6 +12,15 @@ ApplicationWindow {
     height: 800
     title: qsTr("智能应用增量样本生成软件")
 
+    Component.onCompleted: backendService.getSetting("ui.theme")
+
+    Connections {
+        target: backendService
+        function onSettingValueLoaded(key, value) {
+            if (key === "ui.theme" && value) Theme.setMode(String(value))
+        }
+    }
+
     // 全局主题配色属性
     property color bgDark: Theme.bg
     property color panelBg: Theme.panel
@@ -96,8 +105,8 @@ ApplicationWindow {
                 id: navModel
                 // 核心功能
                 ListElement { isHeader: false; name: "数据管理"; source: "views/DataManageView.qml"; icon: "🗄️" }
-                ListElement { isHeader: false; name: "数据清洗"; source: "views/DataCleanView.qml"; icon: "🧹" }
                 ListElement { isHeader: false; name: "数据生成"; source: "views/SampleGenView.qml"; icon: "⚡" }
+                ListElement { isHeader: false; name: "数据清洗"; source: "views/DataCleanView.qml"; icon: "🧹" }
                 ListElement { isHeader: false; name: "多专业智能应用仿真模型"; source: "views/EvaluateView.qml"; icon: "📈" }
 
 
@@ -218,18 +227,29 @@ Component {
         anchors.left: sidebar.right
         anchors.right: parent.right
 
+        property bool page0Loaded: true
+        property bool page1Loaded: false; property bool page2Loaded: false
+        property bool page3Loaded: false; property bool page4Loaded: false
+        property bool page5Loaded: false
+        function markLoaded(idx) {
+            if (idx===1) page1Loaded=true; else if (idx===2) page2Loaded=true
+            else if (idx===3) page3Loaded=true; else if (idx===4) page4Loaded=true
+            else if (idx===5) page5Loaded=true
+        }
+
         StackLayout {
             id: viewStack
             anchors.fill: parent
             anchors.margins: 20
             currentIndex: 0
+            onCurrentIndexChanged: mainContentArea.markLoaded(currentIndex)
 
-            Item { DataManageView  { anchors.fill: parent } }
-            Item { DataCleanView  { anchors.fill: parent } }
-            Item { SampleGenView  { anchors.fill: parent } }
-            Item { EvaluateView  { anchors.fill: parent } }
-            Item { AlgoConfigView  { anchors.fill: parent } }
-            Item { SystemSettingsView  { anchors.fill: parent } }
+            Loader { source: "views/DataManageView.qml";  active: true;                 asynchronous: true }
+            Loader { source: "views/SampleGenView.qml";    active: mainContentArea.page1Loaded;          asynchronous: true }
+            Loader { source: "views/DataCleanView.qml";    active: mainContentArea.page2Loaded;          asynchronous: true }
+            Loader { source: "views/EvaluateView.qml";     active: true;          asynchronous: true }
+            Loader { source: "views/AlgoConfigView.qml";   active: mainContentArea.page4Loaded;          asynchronous: true }
+            Loader { source: "views/SystemSettingsView.qml"; active: mainContentArea.page5Loaded;        asynchronous: true }
         }
     }
 }

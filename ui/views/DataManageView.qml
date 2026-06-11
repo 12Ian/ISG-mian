@@ -420,12 +420,12 @@ Item {
                         anchors.rightMargin: 15
                         spacing: 10
 
-                        Label { text: "数据集名称"; font.bold: true; color: "#A0AEC0"; Layout.preferredWidth: 200 }
+                        Label { text: "数据集名称"; font.bold: true; color: Theme.muted; Layout.preferredWidth: 200 }
                         Item { Layout.fillWidth: true } // 弹簧
-                        Label { text: "类型/阶段"; font.bold: true; color: "#A0AEC0"; Layout.preferredWidth: 140 }
-                        Label { text: "文件总数"; font.bold: true; color: "#A0AEC0"; Layout.preferredWidth: 100 }
-                        Label { text: "存储占用"; font.bold: true; color: "#A0AEC0"; Layout.preferredWidth: 100 }
-                        Label { text: "操作管理"; font.bold: true; color: "#A0AEC0"; Layout.preferredWidth: 196; horizontalAlignment: Text.AlignHCenter }
+                        Label { text: "类型/阶段"; font.bold: true; color: Theme.muted; Layout.preferredWidth: 140 }
+                        Label { text: "文件总数"; font.bold: true; color: Theme.muted; Layout.preferredWidth: 100 }
+                        Label { text: "存储占用"; font.bold: true; color: Theme.muted; Layout.preferredWidth: 100 }
+                        Label { text: "操作管理"; font.bold: true; color: Theme.muted; Layout.preferredWidth: 196; horizontalAlignment: Text.AlignHCenter }
                     }
                 }
 
@@ -615,7 +615,7 @@ Item {
                         width: 32; height: 32; radius: 4; color: "transparent"
                         Text {
                             text: fileDetailPopup.isMaximized ? "🗗" : "🗖"
-                            color: "#A0AEC0"
+                            color: Theme.muted
                             font.pixelSize: 15
                             anchors.centerIn: parent
                         }
@@ -893,7 +893,7 @@ Item {
                                     Layout.preferredWidth: 90
                                     Layout.preferredHeight: 34
                                     background: Rectangle { color: parent.hovered ? "#0288D1" : "#039BE5"; radius: 4 }
-                                    contentItem: Text { text: parent.text; color: "black"; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                    contentItem: Text { text: parent.text; color: "white"; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                                     onClicked: {
                                         if (previewPlayer.playbackState === MediaPlayer.PlayingState) previewPlayer.pause()
                                         else previewPlayer.play()
@@ -1016,7 +1016,8 @@ Item {
                 id: inputName
                 placeholderText: "输入源数据集名称"
                 Layout.fillWidth: true
-                color: "black"
+                color: Theme.text
+                placeholderTextColor: Theme.muted
                 background: Rectangle {
                     color: Theme.row
                     border.color: Theme.border
@@ -1040,9 +1041,9 @@ Item {
                     }
                     contentItem: Text {
                         text: importModeCombo.currentText
-                        color: "black"
+                        color: Theme.text
                         verticalAlignment: Text.AlignVCenter
-                        padding: 10
+                        leftPadding: 10
                     }
                     onCurrentIndexChanged: selectedPathInput.text = ""
                 }
@@ -1052,7 +1053,8 @@ Item {
                     placeholderText: "未选择路径..."
                     readOnly: true
                     Layout.fillWidth: true
-                    color: "black"
+                    color: Theme.text
+                    placeholderTextColor: Theme.muted
                     background: Rectangle {
                         color: Theme.row
                         border.color: Theme.border
@@ -1070,7 +1072,7 @@ Item {
                     }
                     contentItem: Text {
                         text: parent.text
-                        color: "black"
+                        color: Theme.text
                         horizontalAlignment: Text.AlignHCenter
                         verticalAlignment: Text.AlignVCenter
                     }
@@ -1093,9 +1095,9 @@ Item {
                 }
                 contentItem: Text {
                     text: inputType.currentText
-                    color: "black"
+                    color: Theme.text
                     verticalAlignment: Text.AlignVCenter
-                    padding: 10
+                    leftPadding: 10
                 }
             }
 
@@ -1173,7 +1175,7 @@ Item {
                 spacing: 15
                 Label {
                     text: "数据集名称:"
-                    color: "#A0AEC0"
+                    color: Theme.muted
                     font.pixelSize: 14
                     Layout.preferredWidth: 80
                     horizontalAlignment: Text.AlignRight
@@ -1182,7 +1184,7 @@ Item {
                     id: editNameInput
                     Layout.fillWidth: true
                     Layout.preferredHeight: 36
-                    color: "black"
+                    color: Theme.text
                     font.pixelSize: 13
                     leftPadding: 10
                     verticalAlignment: TextInput.AlignVCenter
@@ -1199,7 +1201,7 @@ Item {
                 spacing: 15
                 Label {
                     text: "数据类型:"
-                    color: "#A0AEC0"
+                    color: Theme.muted
                     font.pixelSize: 14
                     Layout.preferredWidth: 80
                     horizontalAlignment: Text.AlignRight
@@ -1216,7 +1218,7 @@ Item {
                     }
                     contentItem: Text {
                         text: editTypeCombo.currentText
-                        color: "black"
+                        color: Theme.text
                         font.pixelSize: 13
                         verticalAlignment: Text.AlignVCenter
                         padding: 10
@@ -1302,7 +1304,7 @@ Item {
                     text: "确认删除"
                     Layout.preferredWidth: 80; Layout.preferredHeight: 30
                     background: Rectangle { color: "#E11D48"; radius: 4 }
-                    contentItem: Text { text: parent.text; color: "black"; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    contentItem: Text { text: parent.text; color: "white"; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                     onClicked: {
                         if (root.pendingDeleteId !== -1) {
                             backendService.deleteDataset(root.pendingDeleteId)

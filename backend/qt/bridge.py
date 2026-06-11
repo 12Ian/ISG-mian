@@ -176,6 +176,24 @@ class BackendBridge:
         except Exception as exc:
             return _normalize_error(exc)
 
+    def get_algorithm_bindings(self) -> dict:
+        try:
+            return self.facade.algorithm_service.get_bindings()
+        except Exception as exc:
+            return _normalize_error(exc)
+
+    def save_algorithm_binding(self, training_key: str, evaluation_key: str) -> dict:
+        try:
+            return self.facade.algorithm_service.set_binding(training_key, evaluation_key)
+        except Exception as exc:
+            return _normalize_error(exc)
+
+    def delete_algorithm_binding(self, training_key: str) -> dict:
+        try:
+            return self.facade.algorithm_service.delete_binding(training_key)
+        except Exception as exc:
+            return _normalize_error(exc)
+
     def get_tasks(self, task_type: str, status: str, page: int, page_size: int) -> dict:
         try:
             result = self.facade.task_repository.list_tasks(
@@ -422,25 +440,12 @@ class BackendBridge:
         self.facade.settings_service.ensure_defaults()
 
     def seed_default_algorithms(self) -> None:
-        from ..seed_data import DEFAULT_ALGORITHMS
+        from ..seed_data import DEFAULT_ALGORITHMS, DEFAULT_BINDINGS
         existing = self.facade.algorithm_service.get_algorithms("", "")
         existing_map = {a["key"]: a for a in existing}
         for algo in DEFAULT_ALGORITHMS:
             if algo["key"] in existing_map:
-                existing_id = existing_map[algo["key"]]["id"]
-                self.facade.algorithm_service.update_algorithm(existing_id, {
-                    "name": algo.get("name"),
-                    "category": algo.get("category"),
-                    "modality": algo.get("modality"),
-                    "entry_type": algo.get("entry_type"),
-                    "module_path": algo.get("module_path"),
-                    "callable_name": algo.get("callable_name"),
-                    "script_path": algo.get("script_path"),
-                    "executable_path": algo.get("executable_path"),
-                    "input_contract": algo.get("input_contract", {}),
-                    "output_contract": algo.get("output_contract", {}),
-                    "parameters": algo.get("parameters", []),
-                })
+                continue  # 已有算法不覆盖，保留用户修改
             else:
                 self.facade.algorithm_service.create_algorithm(dict(algo))
         self._merge_legacy_algorithm_aliases()
@@ -491,6 +496,15 @@ class BackendBridge:
             if changed:
                 task.parameters_json = parameters
                 task.payload_json = payload
+
+        # 播种默认训练→评估绑定
+        existing_bindings = self.facade.algorithm_service.get_bindings()
+        for training_key, eval_key in DEFAULT_BINDINGS.items():
+            if training_key not in existing_bindings:
+                try:
+                    self.facade.algorithm_service.set_binding(training_key, eval_key)
+                except Exception:
+                    pass  # 绑定失败的静默跳过（算法可能尚未注册）
 
     def reflect_parameters(self, script_path: str) -> dict:
         """从 .py 脚本反射参数列表。"""

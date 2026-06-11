@@ -14,6 +14,7 @@ Item {
     readonly property color textMuted: Theme.muted
     readonly property color borderColor: Theme.border
     readonly property color successColor: Theme.success
+    readonly property color tableHoverBg: Theme.hover
 
     property string storageRoot: ""
     property int taskMaxWorkers: 2
@@ -45,13 +46,8 @@ Item {
             root.previewMaxSamples = payload["preview.max_samples"] ? Number(payload["preview.max_samples"].value) : 100
             root.logRetentionDays = payload["log.retention_days"] ? Number(payload["log.retention_days"].value) : 30
 
-            if (themeValue === "dark") {
-                themeSelector.currentIndex = 1
-            } else if (themeValue === "blue") {
-                themeSelector.currentIndex = 2
-            } else {
-                themeSelector.currentIndex = 0
-            }
+            var idxMap = {"light":0, "seamist":1, "blue":2, "ocean":3, "deepsea":4, "dark":5}
+            themeSelector.currentIndex = idxMap[themeValue] !== undefined ? idxMap[themeValue] : 0
 
             Theme.setMode(themeValue)
             root.settingsLoaded = true
@@ -231,10 +227,11 @@ Item {
                         Text { text: "界面主题"; color: root.textMuted; Layout.preferredWidth: 110 }
                         ComboBox {
                             id: themeSelector
-                            model: ["浅色", "深色", "蓝色"]
+                            model: ["晨光", "海雾", "碧蓝", "海渊", "深海", "夜航"]
                             Layout.preferredWidth: 160
                             onActivated: function(index) {
-                                var mode = index === 1 ? "dark" : (index === 2 ? "blue" : "light")
+                                var m = ["light","seamist","blue","ocean","deepsea","dark"]
+                                var mode = index >= 0 && index < m.length ? m[index] : "light"
                                 Theme.setMode(mode)
                                 if (root.settingsLoaded) {
                                     root.persistSetting("ui.theme", mode, "主题设置已保存")
@@ -271,24 +268,20 @@ Item {
                         Text { text: "任务并发数"; color: root.textMuted; Layout.preferredWidth: 110 }
                         SpinBox {
                             id: workerSpinBox
-                            from: 1
-                            to: 16
-                            value: root.taskMaxWorkers
+                            from: 1; to: 16; value: root.taskMaxWorkers
+                            background: Rectangle { color: root.bgDark; border.color: root.borderColor; border.width: 1; radius: 4 }
                         }
                         Text { text: "预览上限"; color: root.textMuted; Layout.preferredWidth: 80 }
                         SpinBox {
                             id: previewSpinBox
-                            from: 10
-                            to: 1000
-                            stepSize: 10
-                            value: root.previewMaxSamples
+                            from: 10; to: 1000; stepSize: 10; value: root.previewMaxSamples
+                            background: Rectangle { color: root.bgDark; border.color: root.borderColor; border.width: 1; radius: 4 }
                         }
                         Text { text: "日志保留"; color: root.textMuted; Layout.preferredWidth: 80 }
                         SpinBox {
                             id: retentionSpinBox
-                            from: 1
-                            to: 365
-                            value: root.logRetentionDays
+                            from: 1; to: 365; value: root.logRetentionDays
+                            background: Rectangle { color: root.bgDark; border.color: root.borderColor; border.width: 1; radius: 4 }
                         }
                     }
                 }
@@ -311,7 +304,15 @@ Item {
                         Layout.fillWidth: true
                         Text { text: "最近操作日志"; color: root.textColor; font.pixelSize: 16; font.bold: true }
                         Item { Layout.fillWidth: true }
-                        Button { text: "刷新"; onClicked: backendService.getOperationLogs(1, 8, "") }
+                        Button {
+                            text: "刷新"
+                            background: Rectangle { color: parent.hovered ? root.tableHoverBg : root.bgDark; border.color: root.borderColor; border.width: 1; radius: 4 }
+                            contentItem: Text { text: parent.text; color: root.textColor; font.pixelSize: 12; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                            onClicked: {
+                                backendService.getOperationLogs(1, 8, "")
+                                root.showToast("日志已刷新")
+                            }
+                        }
                     }
 
                     ListView {
@@ -355,6 +356,8 @@ Item {
 
                 Button {
                     text: "恢复默认"
+                    background: Rectangle { color: parent.hovered ? root.tableHoverBg : root.bgDark; border.color: root.borderColor; border.width: 1; radius: 4 }
+                    contentItem: Text { text: parent.text; color: root.textColor; font.pixelSize: 13; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                     onClicked: {
                         themeSelector.currentIndex = 0
                         storageRootInput.text = "./data"
@@ -366,6 +369,8 @@ Item {
 
                 Button {
                     text: "保存全部设置"
+                    background: Rectangle { color: root.primaryColor; radius: 4 }
+                    contentItem: Text { text: parent.text; color: "white"; font.pixelSize: 13; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                     onClicked: {
                         root.persistSetting("storage.root_dir", storageRootInput.text, "存储目录已保存")
                         root.persistSetting("task.max_workers", workerSpinBox.value, "并发设置已保存")

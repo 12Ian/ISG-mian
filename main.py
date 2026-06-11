@@ -62,6 +62,7 @@ class BackendService(QObject):
     trainingTasksUpdated = Signal(dict)
     trainingStatusUpdated = Signal(str, bool, float)
     testSetImported = Signal(dict)
+    algorithmBindingsUpdated = Signal(dict)
 
     taskLogsUpdated = Signal(dict)
     systemStatusUpdated = Signal(dict)
@@ -324,6 +325,22 @@ class BackendService(QObject):
         if result.get("ok"):
             return {"status": "success", "path": result.get("path", "")}
         return {"status": "error", "message": result.get("message", "插件规范下载失败")}
+
+    # ── 算法绑定 ──────────────────────────────────────────
+
+    @Slot(result=dict)
+    def getAlgorithmBindings(self) -> dict:
+        bindings = self._bridge.get_algorithm_bindings()
+        self.algorithmBindingsUpdated.emit(bindings)
+        return bindings
+
+    @Slot(str, str, result=dict)
+    def saveAlgorithmBinding(self, trainingKey: str, evaluationKey: str) -> dict:
+        return self._bridge.save_algorithm_binding(trainingKey, evaluationKey)
+
+    @Slot(str, result=dict)
+    def deleteAlgorithmBinding(self, trainingKey: str) -> dict:
+        return self._bridge.delete_algorithm_binding(trainingKey)
 
     @Slot(int, result=dict)
     def startEnhancementTask(self, taskId: int) -> dict:
