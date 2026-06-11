@@ -105,6 +105,23 @@ Item {
         root.isAllSelected = _allSel
     }
 
+    function workbenchContentHeight() {
+        var total = 0
+        total += 46
+        if (root.trainingWorkbenchExpanded) total += 80
+        total += root.workbenchMainHeight()
+        total += (!root.trainingWorkbenchExpanded && !root.evaluationWorkbenchExpanded) ? 80 : 60
+        return total
+    }
+
+    function workbenchMainHeight() {
+        var total = 0
+        if (root.trainingWorkbenchExpanded) total += 309
+        total += root.evaluationWorkbenchExpanded ? 640 : 46
+        if (root.trainingWorkbenchExpanded) total += 15
+        return total
+    }
+
     function filterAlgorithmsByScenario() {
         algoModel.clear()
         var scIdx = scenarioCombo.currentIndex
@@ -1372,7 +1389,7 @@ Item {
         visible: root.viewMode === "evaluating"
         clip: true
         boundsBehavior: Flickable.StopAtBounds
-        contentHeight: Math.max(evaluationWorkbenchContent.implicitHeight, height)
+        contentHeight: Math.max(root.workbenchContentHeight(), height + 1)
 
         ScrollBar.vertical: ScrollBar {
             policy: ScrollBar.AlwaysOn
@@ -1459,17 +1476,17 @@ Item {
         ColumnLayout {
             Layout.fillWidth: true
             Layout.fillHeight: root.trainingWorkbenchExpanded || root.evaluationWorkbenchExpanded
-            Layout.minimumHeight: root.trainingWorkbenchExpanded || root.evaluationWorkbenchExpanded ? 240 : 46
-            Layout.preferredHeight: root.trainingWorkbenchExpanded ? 420 : (root.evaluationWorkbenchExpanded ? 360 : 46)
+            Layout.minimumHeight: root.workbenchMainHeight()
+            Layout.preferredHeight: root.workbenchMainHeight()
             spacing: (!root.trainingWorkbenchExpanded && !root.evaluationWorkbenchExpanded) ? 8 : 15
-            clip: true
+            clip: false
 
             // 中部：训练任务队列
             Rectangle {
                 Layout.fillWidth: true
                 Layout.fillHeight: false
-                Layout.minimumHeight: root.trainingWorkbenchExpanded ? 220 : 0
-                Layout.preferredHeight: root.trainingWorkbenchExpanded ? 360 : 0
+                Layout.minimumHeight: root.trainingWorkbenchExpanded ? 309 : 0
+                Layout.preferredHeight: root.trainingWorkbenchExpanded ? 309 : 0
                 color: "transparent"; clip: true
                 visible: root.trainingWorkbenchExpanded
                 ColumnLayout { anchors.fill: parent; spacing: 12
@@ -1536,10 +1553,16 @@ Item {
                         }
                     }
 
-                    ListView { Layout.fillWidth: true; Layout.fillHeight: true; clip: true; model: taskQueueModel; spacing: 0
+                    ListView {
+                        id: taskQueueListView
+                        Layout.fillWidth: true; Layout.preferredHeight: 200; clip: true; model: taskQueueModel; spacing: 0
+                        boundsBehavior: Flickable.StopAtBounds
                         Text { visible: taskQueueModel.count === 0; text: "暂无训练任务，请在上方配置并追加至队列"; color: root.textMuted; font.pixelSize: 14; anchors.centerIn: parent }
 
-                        delegate: Rectangle { width: ListView.view ? ListView.view.width : 0; height: 50; color: index % 2 === 0 ? Theme.panel : "transparent"
+                        delegate: Rectangle {
+                            width: taskQueueListView.width
+                            height: 50
+                            color: index % 2 === 0 ? Theme.panel : "transparent"
                             property bool rowHov: rowMa.containsMouse
                             Rectangle { anchors.fill: parent; color: isSelected ? root.tableHoverBg : (rowHov ? Theme.hover : "transparent") }
                             Rectangle { width: parent.width; height: 1; color: root.borderColor; anchors.bottom: parent.bottom }
@@ -1615,8 +1638,8 @@ Item {
             Rectangle {
                 Layout.fillWidth: true
                 Layout.fillHeight: root.evaluationWorkbenchExpanded
-                Layout.minimumHeight: root.evaluationWorkbenchExpanded ? 240 : 46
-                Layout.preferredHeight: root.evaluationWorkbenchExpanded ? 360 : 46
+                Layout.minimumHeight: root.evaluationWorkbenchExpanded ? 640 : 46
+                Layout.preferredHeight: root.evaluationWorkbenchExpanded ? 640 : 46
                 color: root.panelBg; radius: 8; border.color: root.borderColor; border.width: 1
                 ColumnLayout { anchors.fill: parent; anchors.margins: root.evaluationWorkbenchExpanded ? 15 : 0; spacing: 10
                 Rectangle {
@@ -1661,7 +1684,7 @@ Item {
 
                 Rectangle {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 180
+                    Layout.preferredHeight: 291
                     color: root.bgDark
                     radius: 6
                     border.color: root.borderColor
@@ -1683,7 +1706,7 @@ Item {
 
                         ListView {
                             Layout.fillWidth: true
-                            Layout.fillHeight: true
+                            Layout.preferredHeight: 226
                             clip: true
                             model: weightOptionModel
                             spacing: 6
