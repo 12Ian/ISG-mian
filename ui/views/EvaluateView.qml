@@ -234,6 +234,51 @@ Item {
         return indexes
     }
 
+    function historyTaskIds(item) {
+        if (!item) return []
+        try {
+            var ids = JSON.parse(item.taskIdsJson || "[]")
+            return Array.isArray(ids) ? ids : []
+        } catch(e) {
+            return []
+        }
+    }
+
+    function deleteHistoryEntry(index) {
+        if (index < 0 || index >= evalHistoryModel.count) return false
+        var item = evalHistoryModel.get(index)
+        var taskIds = historyTaskIds(item)
+        var deleteIds = []
+
+        for (var qi = taskQueueModel.count - 1; qi >= 0; qi--) {
+            var q = taskQueueModel.get(qi)
+            var matched = taskIds.indexOf(q.taskId || 0) !== -1 || taskIds.indexOf(q.evalTaskId || 0) !== -1
+            if (!matched) continue
+            if ((q.evalTaskId || 0) > 0 && deleteIds.indexOf(q.evalTaskId) === -1) deleteIds.push(q.evalTaskId)
+            if ((q.taskId || 0) > 0 && deleteIds.indexOf(q.taskId) === -1) deleteIds.push(q.taskId)
+            taskQueueModel.remove(qi)
+        }
+
+        for (var ti = 0; ti < taskIds.length; ti++) {
+            var taskId = taskIds[ti] || 0
+            if (taskId > 0 && deleteIds.indexOf(taskId) === -1) deleteIds.push(taskId)
+        }
+
+        for (var ri = evalResultModel.count - 1; ri >= 0; ri--) {
+            var resultTaskId = evalResultModel.get(ri).taskId || 0
+            if (deleteIds.indexOf(resultTaskId) !== -1) evalResultModel.remove(ri)
+        }
+
+        for (var di = 0; di < deleteIds.length; di++) {
+            backendService.deleteTask(deleteIds[di])
+        }
+
+        evalHistoryModel.remove(index)
+        root.checkStates()
+        root.saveToAppState()
+        return true
+    }
+
     function syncHistoryFromTrainingTask(task) {
         if (!task) return
         var status = task.status || ""
@@ -542,7 +587,7 @@ Item {
         var histArr = []
         for (var hi = 0; hi < evalHistoryModel.count; hi++) {
             var h = evalHistoryModel.get(hi)
-            histArr.push({projectName: h.projectName, scenario: h.scenario, datasets: h.datasets,
+            histArr.push({historyType: h.historyType || historyEntryType(h), projectName: h.projectName, scenario: h.scenario, datasets: h.datasets,
                           algos: h.algos, trainStatus: h.trainStatus, evalReport: h.evalReport,
                           time: h.time, detailsJson: h.detailsJson, taskIdsJson: h.taskIdsJson || "[]"})
         }
@@ -780,7 +825,10 @@ Item {
                     background: Rectangle { color: root.dangerColor; radius: 4 }
                     contentItem: Text { text: parent.text; color: "black"; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                     onClicked: {
-                        if (root.pendingDeleteIndex !== -1) { evalHistoryModel.remove(root.pendingDeleteIndex); root.showToast("🗑️ 记录已删除") }
+                        if (root.pendingDeleteIndex !== -1 && root.deleteHistoryEntry(root.pendingDeleteIndex)) {
+                            root.showToast("🗑️ 记录已删除")
+                        }
+                        root.pendingDeleteIndex = -1
                         deleteConfirmPopup.close()
                     }
                 }
