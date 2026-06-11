@@ -7,7 +7,7 @@ from .._compat import slots_dataclass
 from pathlib import Path
 
 from ..errors import NotFoundError, ValidationError
-from ..models import Sample
+from ..models import Dataset, Sample
 from ..storage import FileIndexer
 from .base import ServiceBase
 
@@ -89,7 +89,18 @@ class DatasetService(ServiceBase):
     def update_dataset(self, dataset_id: int, name: str, type_name: str) -> dict:
         with self.session_factory() as session:
             dataset = self._require_dataset(session, dataset_id, include_deleted=True)
-            dataset.name = (name or dataset.name).strip() or dataset.name
+            clean_name = (name or dataset.name).strip()
+            if not clean_name:
+                raise ValidationError("Dataset name is required.")
+            duplicate = (
+                session.query(Dataset)
+                .filter(Dataset.id != dataset.id, Dataset.name == clean_name, Dataset.is_deleted.is_(False))
+                .first()
+            )
+            if duplicate:
+                raise ValidationError(f"Dataset name '{clean_name}' already exists.")
+            self._rename_dataset_storage(session, dataset, clean_name)
+            dataset.name = clean_name
             if type_name:
                 dataset.modality = type_name
             self.log_repository.add(
@@ -1078,6 +1089,35 @@ class DatasetService(ServiceBase):
         if not dataset:
             raise NotFoundError(f"Dataset {dataset_id} not found.")
         return dataset
+
+    def _rename_dataset_storage(self, session, dataset, new_name: str) -> None:
+        current_path = Path(dataset.storage_path) if dataset.storage_path else None
+        if current_path is None:
+            return
+
+        target_path = self.paths.datasets_dir / f"{dataset.id}_{self._sanitize_name(new_name)}"
+        if current_path == target_path:
+            return
+
+        if current_path.exists():
+            if target_path.exists():
+                raise ValidationError(f"Dataset directory already exists: {target_path}")
+            current_path.rename(target_path)
+        else:
+            for subdir in [target_path, target_path / "raw", target_path / "cleaned", target_path / "generated", target_path / "preview"]:
+                subdir.mkdir(parents=True, exist_ok=True)
+
+        old_prefix = str(current_path).replace("\\", "/").rstrip("/")
+        new_prefix = str(target_path).replace("\\", "/").rstrip("/")
+        samples = self.dataset_repository.get_all_samples(session, dataset.id)
+        for sample in samples:
+            file_path = str(sample.file_path or "")
+            normalized = file_path.replace("\\", "/")
+            if not normalized.startswith(old_prefix):
+                continue
+            sample.file_path = new_prefix + normalized[len(old_prefix):]
+
+        dataset.storage_path = str(target_path)
 
     def _allocate_dataset_dir(self, dataset_id: int, name: str) -> Path:
         root = self.paths.datasets_dir / f"{dataset_id}_{self._sanitize_name(name)}"

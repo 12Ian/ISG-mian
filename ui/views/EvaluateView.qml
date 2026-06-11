@@ -41,6 +41,9 @@ Item {
     property int pendingEditIndex: -1
     property bool trainingHistoryExpanded: true
     property bool evaluationHistoryExpanded: true
+    property bool trainingWorkbenchExpanded: true
+    property bool evaluationWorkbenchExpanded: true
+    property real evalTableContentX: 0
 
     property var algorithmNameMap: ({})
     property var evalAlgorithmMap: ({})
@@ -91,6 +94,8 @@ Item {
     ListModel { id: evalResultModel }
     ListModel { id: evalHistoryModel }
     ListModel { id: currentDetailModel }
+    ListModel { id: weightOptionModel }
+    ListModel { id: activeEvalSourceModel }
 
     function checkStates() {
         var _allSel = taskQueueModel.count > 0
@@ -137,6 +142,103 @@ Item {
             if ((algo.id || 0) === id) return algo.key || ""
         }
         return ""
+    }
+
+    function normalizeParamToken(value) {
+        return String(value || "").toLowerCase().replace(/[\s_\-]/g, "")
+    }
+
+    function resolveTrainingParamValue(params, algoId, aliases, labelKeywords) {
+        var source = params || {}
+        var defs = root.algoParamsMap[String(algoId)] || []
+        var aliasTokens = []
+        var labelTokens = []
+        var directKeys = Object.keys(source)
+
+        for (var ai = 0; ai < aliases.length; ai++) aliasTokens.push(root.normalizeParamToken(aliases[ai]))
+        for (var li = 0; li < labelKeywords.length; li++) labelTokens.push(String(labelKeywords[li] || "").toLowerCase())
+
+        for (var di = 0; di < defs.length; di++) {
+            var def = defs[di]
+            var keyName = String(def.name || "")
+            var keyToken = root.normalizeParamToken(keyName)
+            var labelText = String(def.label || keyName || "").toLowerCase()
+            var matched = aliasTokens.indexOf(keyToken) !== -1
+            if (!matched) {
+                for (var lk = 0; lk < labelTokens.length; lk++) {
+                    if (labelText.indexOf(labelTokens[lk]) !== -1) {
+                        matched = true
+                        break
+                    }
+                }
+            }
+            if (matched && source[keyName] !== undefined && source[keyName] !== null && source[keyName] !== "") {
+                return source[keyName]
+            }
+        }
+
+        for (var ki = 0; ki < directKeys.length; ki++) {
+            var rawKey = directKeys[ki]
+            var rawToken = root.normalizeParamToken(rawKey)
+            var rawLower = String(rawKey || "").toLowerCase()
+            if (aliasTokens.indexOf(rawToken) !== -1) return source[rawKey]
+            for (var lj = 0; lj < labelTokens.length; lj++) {
+                if (rawLower.indexOf(labelTokens[lj]) !== -1) return source[rawKey]
+            }
+        }
+        return ""
+    }
+
+    function displayTrainingParamValue(value) {
+        if (value === undefined || value === null || value === "") return "未设置"
+        if (typeof value === "object") return JSON.stringify(value)
+        return String(value)
+    }
+
+    function buildTrainingParamSummary(params, algoId) {
+        return [
+            "骨干网络: " + root.displayTrainingParamValue(root.resolveTrainingParamValue(params, algoId, ["backbone", "backbone_network", "network", "arch", "model", "model_name"], ["骨干", "网络"])),
+            "训练轮次: " + root.displayTrainingParamValue(root.resolveTrainingParamValue(params, algoId, ["epochs", "epoch", "num_epochs"], ["训练轮次", "轮次", "epoch"])),
+            "批大小: " + root.displayTrainingParamValue(root.resolveTrainingParamValue(params, algoId, ["batch_size", "batchsize", "batch"], ["批大小", "batch"])),
+            "学习率: " + root.displayTrainingParamValue(root.resolveTrainingParamValue(params, algoId, ["learning_rate", "lr"], ["学习率", "lr"]))
+        ].join(" | ")
+    }
+
+    function findWeightOptionByTaskId(taskId) {
+        var id = Number(taskId || 0)
+        for (var i = 0; i < weightOptionModel.count; i++) {
+            var item = weightOptionModel.get(i)
+            if (Number(item.taskId || 0) === id) return item
+        }
+        return null
+    }
+
+    function buildTrainingDetailFromTask(taskId, fallbackItem) {
+        var item = root.findWeightOptionByTaskId(taskId)
+        var datasetName = ""
+        var algoName = ""
+        var algoId = 0
+        var params = {}
+
+        if (item) {
+            datasetName = item.dataset || ""
+            algoName = item.algo || ""
+            algoId = item.algoId || 0
+            params = item.params || {}
+        } else if (fallbackItem) {
+            datasetName = fallbackItem.datasets || ""
+            algoName = fallbackItem.algos || ""
+        }
+
+        var detail = {
+            dataset: datasetName,
+            algo: algoName,
+            "骨干网络": root.displayTrainingParamValue(root.resolveTrainingParamValue(params, algoId, ["backbone", "backbone_network", "network", "arch", "model", "model_name"], ["骨干", "网络"])),
+            "训练轮次": root.displayTrainingParamValue(root.resolveTrainingParamValue(params, algoId, ["epochs", "epoch", "num_epochs"], ["训练轮次", "轮次", "epoch"])),
+            "批大小": root.displayTrainingParamValue(root.resolveTrainingParamValue(params, algoId, ["batch_size", "batchsize", "batch"], ["批大小", "batch"])),
+            "学习率": root.displayTrainingParamValue(root.resolveTrainingParamValue(params, algoId, ["learning_rate", "lr"], ["学习率", "lr"]))
+        }
+        return detail
     }
 
     function scenarioNameById(scenarioId) {
@@ -188,16 +290,17 @@ Item {
         var status = task.status || ""
         var resultJson = task.result || {}
         var artifactCount = resultJson.artifacts ? resultJson.artifacts.length : 0
+        var algoId = task.algorithm_id || 0
+        var taskParams = task.parameters || {}
         var details = {
-            taskId: taskId,
-            status: trainingStatusLabel(status),
             dataset: task.source_dataset_name || ("数据集#" + (task.source_dataset_id || 0)),
-            algo: algorithmName(task.algorithm_id || 0),
-            outputDir: task.output_dir || "",
-            artifactPath: artifactCount > 0 ? (resultJson.artifacts[0] || "") : "",
-            summary: resultJson.summary || "",
-            progressMessage: task.progress_message || ""
+            algo: algorithmName(algoId),
+            "骨干网络": root.displayTrainingParamValue(root.resolveTrainingParamValue(taskParams, algoId, ["backbone", "backbone_network", "network", "arch", "model", "model_name"], ["骨干", "网络"])),
+            "训练轮次": root.displayTrainingParamValue(root.resolveTrainingParamValue(taskParams, algoId, ["epochs", "epoch", "num_epochs"], ["训练轮次", "轮次", "epoch"])),
+            "批大小": root.displayTrainingParamValue(root.resolveTrainingParamValue(taskParams, algoId, ["batch_size", "batchsize", "batch"], ["批大小", "batch"])),
+            "学习率": root.displayTrainingParamValue(root.resolveTrainingParamValue(taskParams, algoId, ["learning_rate", "lr"], ["学习率", "lr"]))
         }
+        if (resultJson.summary) details["训练摘要"] = resultJson.summary
         return {
             historyType: "training",
             projectName: "训练任务 #" + taskId,
@@ -234,6 +337,51 @@ Item {
         return indexes
     }
 
+    function historyTaskIds(item) {
+        if (!item) return []
+        try {
+            var ids = JSON.parse(item.taskIdsJson || "[]")
+            return Array.isArray(ids) ? ids : []
+        } catch(e) {
+            return []
+        }
+    }
+
+    function deleteHistoryEntry(index) {
+        if (index < 0 || index >= evalHistoryModel.count) return false
+        var item = evalHistoryModel.get(index)
+        var taskIds = historyTaskIds(item)
+        var deleteIds = []
+
+        for (var qi = taskQueueModel.count - 1; qi >= 0; qi--) {
+            var q = taskQueueModel.get(qi)
+            var matched = taskIds.indexOf(q.taskId || 0) !== -1 || taskIds.indexOf(q.evalTaskId || 0) !== -1
+            if (!matched) continue
+            if ((q.evalTaskId || 0) > 0 && deleteIds.indexOf(q.evalTaskId) === -1) deleteIds.push(q.evalTaskId)
+            if ((q.taskId || 0) > 0 && deleteIds.indexOf(q.taskId) === -1) deleteIds.push(q.taskId)
+            taskQueueModel.remove(qi)
+        }
+
+        for (var ti = 0; ti < taskIds.length; ti++) {
+            var taskId = taskIds[ti] || 0
+            if (taskId > 0 && deleteIds.indexOf(taskId) === -1) deleteIds.push(taskId)
+        }
+
+        for (var ri = evalResultModel.count - 1; ri >= 0; ri--) {
+            var resultTaskId = evalResultModel.get(ri).taskId || 0
+            if (deleteIds.indexOf(resultTaskId) !== -1) evalResultModel.remove(ri)
+        }
+
+        for (var di = 0; di < deleteIds.length; di++) {
+            backendService.deleteTask(deleteIds[di])
+        }
+
+        evalHistoryModel.remove(index)
+        root.checkStates()
+        root.saveToAppState()
+        return true
+    }
+
     function syncHistoryFromTrainingTask(task) {
         if (!task) return
         var status = task.status || ""
@@ -262,6 +410,7 @@ Item {
         var trainStatus = trainingStatusCode(task.status || "")
         var trainProgress = (task.progress || 0) / 100.0
         var progressMessage = task.progress_message || ""
+        var taskParams = task.parameters || {}
         var resultJson = task.result || {}
         var outputDir = task.output_dir || ""
 
@@ -276,29 +425,79 @@ Item {
             taskQueueModel.setProperty(matchedIndex, "dbStatus", task.status || "")
             taskQueueModel.setProperty(matchedIndex, "trainProgress", trainProgress)
             taskQueueModel.setProperty(matchedIndex, "progressMessage", progressMessage)
+            taskQueueModel.setProperty(matchedIndex, "params", taskParams)
             taskQueueModel.setProperty(matchedIndex, "resultJson", resultJson)
             taskQueueModel.setProperty(matchedIndex, "outputDir", outputDir)
             return
         }
+    }
 
-        taskQueueModel.append({
+    function weightOptionIndex(taskId) {
+        var id = Number(taskId || 0)
+        for (var i = 0; i < weightOptionModel.count; i++) {
+            if (Number(weightOptionModel.get(i).taskId || 0) === id) return i
+        }
+        return -1
+    }
+
+    function trainingTaskIdForEvalTask(evalTaskId) {
+        var id = Number(evalTaskId || 0)
+        if (id <= 0) return 0
+        for (var i = 0; i < activeEvalSourceModel.count; i++) {
+            var item = activeEvalSourceModel.get(i)
+            if (Number(item.evalTaskId || 0) === id) return Number(item.trainingTaskId || 0)
+        }
+        return 0
+    }
+
+    function upsertWeightOption(task) {
+        if (!task) return
+        var taskId = Number(task.id || 0)
+        if (taskId <= 0) return
+
+        var status = task.status || ""
+        var resultJson = task.result || {}
+        var artifacts = resultJson.artifacts || []
+        var checkpointPath = artifacts.length > 0 ? (artifacts[0] || "") : ""
+        var existingIndex = root.weightOptionIndex(taskId)
+
+        if (status !== "completed" || !checkpointPath) {
+            if (existingIndex >= 0) weightOptionModel.remove(existingIndex)
+            return
+        }
+
+        var payload = task.payload || {}
+        var scenarioName = scenarioNameById(payload.scenario_id || 0)
+        var datasetName = task.source_dataset_name || ("数据集#" + (task.source_dataset_id || 0))
+        var algoId = task.algorithm_id || 0
+        var algoName = algorithmName(algoId)
+        var algoKey = algorithmKeyById(algoId)
+        var taskParams = task.parameters || {}
+        var selected = existingIndex >= 0 ? !!weightOptionModel.get(existingIndex).isSelected : false
+        var item = {
             taskId: taskId,
-            evalTaskId: 0,
+            scenarioId: payload.scenario_id || 0,
             scenario: scenarioName,
-            dataset: datasetName,
             datasetId: task.source_dataset_id || 0,
-            algo: algoName,
+            dataset: datasetName,
             algoId: algoId,
+            algo: algoName,
             algoKey: algoKey,
-            params: task.parameters || {},
-            isSelected: false,
-            trainStatus: trainStatus,
-            trainProgress: trainProgress,
-            progressMessage: progressMessage,
-            dbStatus: task.status || "",
-            resultJson: resultJson,
-            outputDir: outputDir
-        })
+            params: taskParams,
+            checkpointPath: checkpointPath,
+            checkpointName: checkpointPath.split(/[\\/]/).pop(),
+            paramSummary: root.buildTrainingParamSummary(taskParams, algoId),
+            summary: resultJson.summary || "",
+            outputDir: task.output_dir || "",
+            createdAt: task.created_at || "",
+            isSelected: selected
+        }
+
+        if (existingIndex >= 0) {
+            weightOptionModel.set(existingIndex, item)
+        } else {
+            weightOptionModel.insert(0, item)
+        }
     }
 
     // ================= 后端信号 =================
@@ -326,6 +525,8 @@ Item {
 
                 var r = state.evalResults || []
                 for (var ri = 0; ri < r.length; ri++) evalResultModel.append(r[ri])
+                var activeSources = state.activeEvalSources || []
+                for (var ai = 0; ai < activeSources.length; ai++) activeEvalSourceModel.append(activeSources[ai])
                 backendService.getTrainingTasks(0, "")
             } catch(e) {}
         }
@@ -399,6 +600,7 @@ Item {
             for (var i = 0; i < items.length; i++) {
                 var task = items[i]
                 root.upsertTrainingTask(task)
+                root.upsertWeightOption(task)
                 root.syncHistoryFromTrainingTask(task)
                 if (task.status === "running") root.isTraining = true
             }
@@ -487,6 +689,8 @@ Item {
             for (var i = 0; i < items.length; i++) {
                 var r = items[i]
                 var m = r.metrics || {}
+                var evalTaskId = r.task_id || 0
+                var trainingTaskId = root.trainingTaskIdForEvalTask(evalTaskId)
                 var vals = []
                 for (var k = 0; k < allKeys.length; k++) {
                     var v = m[allKeys[k]]
@@ -498,15 +702,17 @@ Item {
                     }
                 }
                 evalResultModel.append({
-                    taskId: r.task_id || 0,
+                    taskId: evalTaskId,
+                    trainingTaskId: trainingTaskId,
                     modelName: r.model_name || "",
+                    displayName: (trainingTaskId > 0 ? ("#" + trainingTaskId + " ") : "") + (r.model_name || r.method || "评估算法"),
                     evalMethod: r.model_name || r.method || "评估算法",
                     metricValues: vals,
                     metricValuesJson: JSON.stringify(vals),
                     summary: r.summary || ""
                 })
-                if (r.task_id > 0 && completedTaskIds.indexOf(r.task_id) < 0) {
-                    completedTaskIds.push(r.task_id)
+                if (evalTaskId > 0 && completedTaskIds.indexOf(evalTaskId) < 0) {
+                    completedTaskIds.push(evalTaskId)
                 }
             }
             // 从pending列表中移除已完成的评估任务
@@ -542,7 +748,7 @@ Item {
         var histArr = []
         for (var hi = 0; hi < evalHistoryModel.count; hi++) {
             var h = evalHistoryModel.get(hi)
-            histArr.push({projectName: h.projectName, scenario: h.scenario, datasets: h.datasets,
+            histArr.push({historyType: h.historyType || historyEntryType(h), projectName: h.projectName, scenario: h.scenario, datasets: h.datasets,
                           algos: h.algos, trainStatus: h.trainStatus, evalReport: h.evalReport,
                           time: h.time, detailsJson: h.detailsJson, taskIdsJson: h.taskIdsJson || "[]"})
         }
@@ -563,14 +769,20 @@ Item {
         var resArr = []
         for (var ri = 0; ri < evalResultModel.count; ri++) {
             var r = evalResultModel.get(ri)
-            resArr.push({taskId: r.taskId, modelName: r.modelName, evalMethod: r.evalMethod,
+            resArr.push({taskId: r.taskId, trainingTaskId: r.trainingTaskId, modelName: r.modelName, displayName: r.displayName, evalMethod: r.evalMethod,
                          metricValues: r.metricValues, metricValuesJson: r.metricValuesJson, summary: r.summary})
+        }
+
+        var activeEvalSources = []
+        for (var ai = 0; ai < activeEvalSourceModel.count; ai++) {
+            activeEvalSources.push(activeEvalSourceModel.get(ai))
         }
 
         var state = {
             evalHistory: histArr,
             taskQueue: queueArr,
             evalResults: resArr,
+            activeEvalSources: activeEvalSources,
             metricHeaders: root.evalMetricHeaders,
             isTraining: root.isTraining,
             taskCounter: root.taskCounter
@@ -680,14 +892,18 @@ Item {
                     onClicked: {
                         var dsSet = {}; var algoSet = {}; var detailsArr = []; var scenarioName = ""
                         var headers = root.evalMetricHeaders || []
-                        for (var i = 0; i < taskQueueModel.count; i++) {
-                            var t = taskQueueModel.get(i)
+                        var sourceModel = activeEvalSourceModel.count > 0 ? activeEvalSourceModel : taskQueueModel
+                        for (var i = 0; i < sourceModel.count; i++) {
+                            var t = sourceModel.get(i)
+                            if (!t.dataset && !t.algo) continue
                             dsSet[t.dataset] = true; algoSet[t.algo] = true
                             if (!scenarioName) scenarioName = t.scenario || ""
                             var detail = {dataset: t.dataset, algo: t.algo}
+                            if (t.checkpointName) detail.checkpoint = t.checkpointName
+                            var evalTaskId = t.evalTaskId || 0
                             for (var hj = 0; hj < evalResultModel.count; hj++) {
                                 var r = evalResultModel.get(hj)
-                                if (r.taskId === t.evalTaskId) {
+                                if (r.taskId === evalTaskId) {
                                     try {
                                         var vals = JSON.parse(r.metricValuesJson || "[]")
                                         for (var vi = 0; vi < headers.length && vi < vals.length; vi++) {
@@ -715,7 +931,7 @@ Item {
                         root.saveToAppState()
                         saveProjectPopup.close()
                         root.showToast("✅ 评估工程已归档")
-                        taskQueueModel.clear(); evalResultModel.clear()
+                        taskQueueModel.clear(); evalResultModel.clear(); activeEvalSourceModel.clear()
                         root.taskCounter = 1; root.viewMode = "history"
                         root.saveToAppState()
                     }
@@ -780,7 +996,10 @@ Item {
                     background: Rectangle { color: root.dangerColor; radius: 4 }
                     contentItem: Text { text: parent.text; color: "black"; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                     onClicked: {
-                        if (root.pendingDeleteIndex !== -1) { evalHistoryModel.remove(root.pendingDeleteIndex); root.showToast("🗑️ 记录已删除") }
+                        if (root.pendingDeleteIndex !== -1 && root.deleteHistoryEntry(root.pendingDeleteIndex)) {
+                            root.showToast("🗑️ 记录已删除")
+                        }
+                        root.pendingDeleteIndex = -1
                         deleteConfirmPopup.close()
                     }
                 }
@@ -911,9 +1130,15 @@ Item {
                                             background: Rectangle { color: parent.hovered ? Theme.hover : Theme.control; radius: 4; border.color: Theme.border }
                                             contentItem: Text { text: parent.text; color: "#D1D5DB"; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                                             onClicked: {
-                                                root.currentHistoryItem = { projectName: historyItem.projectName, scenario: historyItem.scenario, datasets: historyItem.datasets, algos: historyItem.algos, trainStatus: historyItem.trainStatus, evalReport: historyItem.evalReport }
+                                                root.currentHistoryItem = { historyType: historyItem.historyType || "training", projectName: historyItem.projectName, scenario: historyItem.scenario, datasets: historyItem.datasets, algos: historyItem.algos, trainStatus: historyItem.trainStatus, evalReport: historyItem.evalReport }
                                                 currentDetailModel.clear()
-                                                if (historyItem.detailsJson && historyItem.detailsJson !== "") {
+                                                var taskIds = []
+                                                try { taskIds = JSON.parse(historyItem.taskIdsJson || "[]") } catch(e) { taskIds = [] }
+                                                if (taskIds.length > 0) {
+                                                    var rebuilt = root.buildTrainingDetailFromTask(taskIds[0], historyItem)
+                                                    rebuilt.detailsJson = JSON.stringify(rebuilt)
+                                                    currentDetailModel.append(rebuilt)
+                                                } else if (historyItem.detailsJson && historyItem.detailsJson !== "") {
                                                     var arr = JSON.parse(historyItem.detailsJson)
                                                     for (var i = 0; i < arr.length; i++) {
                                                         var item = arr[i]
@@ -1022,7 +1247,7 @@ Item {
                                             background: Rectangle { color: parent.hovered ? Theme.hover : Theme.control; radius: 4; border.color: Theme.border }
                                             contentItem: Text { text: parent.text; color: "#D1D5DB"; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                                             onClicked: {
-                                                root.currentHistoryItem = { projectName: historyItem.projectName, scenario: historyItem.scenario, datasets: historyItem.datasets, algos: historyItem.algos, trainStatus: historyItem.trainStatus, evalReport: historyItem.evalReport }
+                                                root.currentHistoryItem = { historyType: historyItem.historyType || "evaluation", projectName: historyItem.projectName, scenario: historyItem.scenario, datasets: historyItem.datasets, algos: historyItem.algos, trainStatus: historyItem.trainStatus, evalReport: historyItem.evalReport }
                                                 currentDetailModel.clear()
                                                 if (historyItem.detailsJson && historyItem.detailsJson !== "") {
                                                     var arr = JSON.parse(historyItem.detailsJson)
@@ -1090,7 +1315,7 @@ Item {
                     RowLayout { anchors.fill: parent; anchors.leftMargin: 20; anchors.rightMargin: 20; spacing: 10
                         Label { text: "使用数据集"; font.bold: true; color: "#A0AEC0"; Layout.preferredWidth: 160 }
                         Label { text: "匹配算法模型"; font.bold: true; color: "#A0AEC0"; Layout.preferredWidth: 140 }
-                        Label { text: "评估指标"; font.bold: true; color: "#A0AEC0"; Layout.fillWidth: true }
+                        Label { text: root.currentHistoryItem && root.currentHistoryItem.historyType === "training" ? "训练配置" : "评估指标"; font.bold: true; color: "#A0AEC0"; Layout.fillWidth: true }
                     }
                 }
                 ListView { id: detailListView; Layout.fillWidth: true; Layout.fillHeight: true; clip: true; spacing: 1; model: currentDetailModel
@@ -1104,8 +1329,10 @@ Item {
                                 property var _metricText: {
                                     var str = "";
                                     var keys = Object.keys(_detailObj);
+                                    var hiddenTrainingKeys = ["taskId", "status", "outputDir", "artifactPath", "progressMessage", "summary", "checkpoint"]
                                     for (var mi = 0; mi < keys.length; mi++) {
                                         if (keys[mi] === "dataset" || keys[mi] === "algo") continue;
+                                        if (root.currentHistoryItem && root.currentHistoryItem.historyType === "training" && hiddenTrainingKeys.indexOf(keys[mi]) !== -1) continue;
                                         if (str !== "") str += " | ";
                                         str += keys[mi] + ": " + _detailObj[keys[mi]];
                                     }
@@ -1124,18 +1351,55 @@ Item {
     // ========================================================================
     // 视图 C: 评估任务操作台
     // ========================================================================
-    ColumnLayout {
-        anchors.fill: parent; anchors.margins: 20; spacing: 15
+    Button {
+        text: "返回历史"
+        anchors.top: parent.top
+        anchors.right: parent.right
+        anchors.topMargin: 20
+        anchors.rightMargin: 20
+        width: 92
+        height: 30
         visible: root.viewMode === "evaluating"
+        background: Rectangle { color: "transparent"; border.color: Theme.border; border.width: 1; radius: 4 }
+        contentItem: Text { text: parent.text; color: "#4DD0E1"; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+        onClicked: root.viewMode = "history"
+    }
+
+    ColumnLayout {
+        anchors.fill: parent; anchors.margins: 20
+        anchors.topMargin: 66
+        spacing: (!root.trainingWorkbenchExpanded && !root.evaluationWorkbenchExpanded) ? 8 : 15
+        visible: root.viewMode === "evaluating"
+
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.preferredHeight: 46
+            radius: 8
+            color: root.panelBg
+            border.color: root.borderColor
+            border.width: 1
+
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: 16
+                anchors.rightMargin: 16
+                spacing: 10
+
+                Text { text: root.trainingWorkbenchExpanded ? "▼" : "▶"; color: root.primaryColor; font.pixelSize: 14; font.bold: true }
+                Text { text: "模型训练任务"; color: root.textColor; font.pixelSize: 16; font.bold: true }
+                Item { Layout.fillWidth: true }
+            }
+            MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.trainingWorkbenchExpanded = !root.trainingWorkbenchExpanded
+            }
+        }
 
         // 顶部控制栏
         Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 80; color: root.panelBg; radius: 8; border.color: root.borderColor; border.width: 1
+            visible: root.trainingWorkbenchExpanded
             RowLayout { anchors.fill: parent; anchors.margins: 15; spacing: 20
-                Button { text: "⬅ 返回历史"; font.bold: true; font.pixelSize: 13
-                    background: Rectangle { color: "transparent"; border.color: Theme.border; border.width: 1; radius: 4 }
-                    contentItem: Text { text: parent.text; color: "#4DD0E1"; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                    onClicked: root.viewMode = "history" }
-                Rectangle { width: 1; height: 20; color: root.borderColor }
                 ColumnLayout { spacing: 5
                     Text { text: "1. 任务场景"; color: root.textMuted; font.pixelSize: 12; font.bold: true }
                     ComboBox { id: scenarioCombo; model: scenarioModel; textRole: "name"; Layout.preferredWidth: 160
@@ -1179,19 +1443,22 @@ Item {
             }
         }
 
-        SplitView {
+        ColumnLayout {
             Layout.fillWidth: true
-            Layout.fillHeight: true
-            orientation: Qt.Vertical
+            Layout.fillHeight: root.trainingWorkbenchExpanded || root.evaluationWorkbenchExpanded
+            Layout.minimumHeight: root.trainingWorkbenchExpanded || root.evaluationWorkbenchExpanded ? 240 : 46
+            Layout.preferredHeight: root.trainingWorkbenchExpanded ? 420 : (root.evaluationWorkbenchExpanded ? 360 : 46)
+            spacing: (!root.trainingWorkbenchExpanded && !root.evaluationWorkbenchExpanded) ? 8 : 15
             clip: true
 
             // 中部：训练任务队列
             Rectangle {
-                SplitView.fillWidth: true
-                SplitView.fillHeight: true
-                SplitView.minimumHeight: 220
-                SplitView.preferredHeight: 360
+                Layout.fillWidth: true
+                Layout.fillHeight: false
+                Layout.minimumHeight: root.trainingWorkbenchExpanded ? 220 : 0
+                Layout.preferredHeight: root.trainingWorkbenchExpanded ? 360 : 0
                 color: "transparent"; clip: true
+                visible: root.trainingWorkbenchExpanded
                 ColumnLayout { anchors.fill: parent; spacing: 12
                     // 队列头部操作栏
                     Rectangle { Layout.fillWidth: true; height: 45; color: root.panelBg; radius: 8; border.color: root.borderColor; border.width: 1
@@ -1209,7 +1476,7 @@ Item {
                             }
                             Text { text: "全选"; color: root.textMuted; font.pixelSize: 13; font.bold: true }
                             Rectangle { width: 1; height: 16; color: root.borderColor }
-                            Text { text: "📋 模型训练任务队列"; color: root.textColor; font.pixelSize: 15; font.bold: true }
+                            Text { text: "训练任务队列"; color: root.textColor; font.pixelSize: 15; font.bold: true }
                             Item { Layout.fillWidth: true }
                             Rectangle { width: 130; height: 32; radius: 4
                                 visible: !root.isTraining
@@ -1333,20 +1600,37 @@ Item {
 
             // 底部：评估比对
             Rectangle {
-                SplitView.fillWidth: true
-                SplitView.fillHeight: true
-                SplitView.minimumHeight: 240
-                SplitView.preferredHeight: 360
+                Layout.fillWidth: true
+                Layout.fillHeight: root.evaluationWorkbenchExpanded
+                Layout.minimumHeight: root.evaluationWorkbenchExpanded ? 240 : 46
+                Layout.preferredHeight: root.evaluationWorkbenchExpanded ? 360 : 46
                 color: root.panelBg; radius: 8; border.color: root.borderColor; border.width: 1
-                ColumnLayout { anchors.fill: parent; anchors.margins: 15; spacing: 10
-                RowLayout { Layout.fillWidth: true
-                    Text { text: "📊 模型评估比对"; color: root.textColor; font.pixelSize: 16; font.bold: true }
-                    Item { Layout.fillWidth: true }
+                ColumnLayout { anchors.fill: parent; anchors.margins: root.evaluationWorkbenchExpanded ? 15 : 0; spacing: 10
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: root.evaluationWorkbenchExpanded ? 40 : 46
+                    color: "transparent"
+
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: root.evaluationWorkbenchExpanded ? 0 : 16
+                        anchors.rightMargin: root.evaluationWorkbenchExpanded ? 0 : 16
+                        spacing: 10
+                        Text { text: root.evaluationWorkbenchExpanded ? "▼" : "▶"; color: root.primaryColor; font.pixelSize: 14; font.bold: true }
+                        Text { text: "模型评估比对"; color: root.textColor; font.pixelSize: 16; font.bold: true }
+                        Item { Layout.fillWidth: true }
+                    }
+
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.evaluationWorkbenchExpanded = !root.evaluationWorkbenchExpanded
+                    }
                 }
-                Rectangle { Layout.fillWidth: true; height: 1; color: root.borderColor }
+                Rectangle { Layout.fillWidth: true; height: 1; color: root.borderColor; visible: root.evaluationWorkbenchExpanded }
 
                 // 启动评估
-                RowLayout { Layout.fillWidth: true
+                RowLayout { Layout.fillWidth: true; visible: root.evaluationWorkbenchExpanded
                     Text { text: "4. 评估比对:"; color: root.textMuted; font.pixelSize: 13; font.bold: true }
                     Text { text: "加载训练checkpoint进行开放集识别评估（MAV收集 → Weibull拟合 → OpenMax）"; color: root.textMuted; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
                     Rectangle { width: 160; height: 36; radius: 4
@@ -1362,58 +1646,185 @@ Item {
                     }
                 }
 
-                // 评估比对表格
-                Rectangle { Layout.fillWidth: true; Layout.fillHeight: true; color: "transparent"
-                    Text { visible: evalResultModel.count === 0; text: root.isEvaluating ? "⏳ 正在执行评估比对..." : "请先完成训练，然后点击启动评估比对"; color: root.isEvaluating ? root.primaryColor : root.textMuted; font.pixelSize: 13; font.family: "Courier"; anchors.centerIn: parent }
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 180
+                    color: root.bgDark
+                    radius: 6
+                    border.color: root.borderColor
+                    border.width: 1
+                    visible: root.evaluationWorkbenchExpanded
 
-                    ColumnLayout { anchors.fill: parent; spacing: 0; visible: evalResultModel.count > 0
-                        // 表头 - 动态列 (可横向滚动)
-                        Rectangle { Layout.fillWidth: true; height: 40; color: root.bgDark
-                            Flickable {
-                                anchors.fill: parent
-                                contentWidth: headerRow.implicitWidth + 24
-                                clip: true; boundsBehavior: Flickable.StopAtBounds
-                                Row {
-                                    id: headerRow; anchors.leftMargin: 12; anchors.verticalCenter: parent.verticalCenter
-                                    spacing: 8
-                                    Label { text: "模型"; color: root.textMuted; font.pixelSize: 12; font.bold: true; width: 120 }
-                                    Repeater {
-                                        model: evalMetricHeaders
-                                        Label {
-                                            text: String(modelData).length > 10 ? String(modelData).substring(0, 10) + "…" : modelData
-                                            color: root.textMuted; font.pixelSize: 11; font.bold: true
-                                            width: Math.max(75, String(modelData).length * 10)
-                                            elide: Text.ElideRight; horizontalAlignment: Text.AlignRight
-                                        }
+                    ColumnLayout {
+                        anchors.fill: parent
+                        anchors.margins: 12
+                        spacing: 10
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Text { text: "选择训练权重"; color: root.textColor; font.pixelSize: 14; font.bold: true }
+                            Text { text: "勾选历史训练完成后的 checkpoint，再点击右上角启动评估"; color: root.textMuted; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
+                        }
+
+                        Rectangle { Layout.fillWidth: true; height: 1; color: root.borderColor }
+
+                        ListView {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            clip: true
+                            model: weightOptionModel
+                            spacing: 6
+
+                            Text {
+                                visible: weightOptionModel.count === 0
+                                text: "暂无可用训练权重，请先完成训练任务"
+                                color: root.textMuted
+                                font.pixelSize: 13
+                                anchors.centerIn: parent
+                            }
+
+                            delegate: Rectangle {
+                                width: ListView.view ? ListView.view.width : 0
+                                height: 52
+                                radius: 4
+                                color: isSelected ? root.tableHoverBg : "transparent"
+                                border.color: isSelected ? root.primaryColor : root.borderColor
+                                border.width: 1
+
+                                MouseArea {
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: weightOptionModel.setProperty(index, "isSelected", !isSelected)
+                                }
+
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 12
+                                    anchors.rightMargin: 12
+                                    spacing: 10
+
+                                    Rectangle {
+                                        width: 16
+                                        height: 16
+                                        radius: 2
+                                        color: isSelected ? root.primaryColor : root.panelBg
+                                        border.color: isSelected ? root.primaryColor : root.borderColor
+                                        Text { text: "✓"; color: "white"; font.pixelSize: 12; anchors.centerIn: parent; visible: isSelected }
+                                    }
+
+                                    ColumnLayout {
+                                        Layout.preferredWidth: 320
+                                        spacing: 2
+                                        Text { text: "#" + taskId + "  " + (algo || "训练模型"); color: root.primaryColor; font.pixelSize: 13; font.bold: true; elide: Text.ElideRight; Layout.fillWidth: true }
+                                        Text { text: (scenario || "") + " | " + (dataset || ""); color: root.textColor; font.pixelSize: 12; elide: Text.ElideRight; Layout.fillWidth: true }
+                                    }
+
+                                    Text {
+                                        text: paramSummary || ""
+                                        color: "#4DD0E1"
+                                        font.pixelSize: 12
+                                        wrapMode: Text.NoWrap
+                                        elide: Text.ElideRight
+                                        Layout.fillWidth: true
                                     }
                                 }
                             }
                         }
-                        Rectangle { Layout.fillWidth: true; height: 1; color: root.borderColor }
+                    }
+                }
 
-                        // 数据行
-                        ListView {
-                            Layout.fillWidth: true; Layout.fillHeight: true; clip: true; model: evalResultModel; spacing: 0
-                            delegate: Rectangle {
-                                width: ListView.view ? ListView.view.width : 0; height: 40
-                                color: index % 2 === 0 ? Theme.panel : "transparent"
-                                Rectangle { width: parent.width; height: 1; color: root.borderColor; anchors.bottom: parent.bottom }
-                                property var _vals: JSON.parse(metricValuesJson || "[]")
+                // 评估比对表格
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    color: "transparent"
+                    visible: root.evaluationWorkbenchExpanded
 
-                                Flickable {
-                                    anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12
-                                    contentWidth: dataRow.implicitWidth
-                                    clip: true; boundsBehavior: Flickable.StopAtBounds
-                                    Row {
-                                        id: dataRow; spacing: 8; anchors.verticalCenter: parent.verticalCenter
-                                        Label { text: modelName; color: root.primaryColor; font.pixelSize: 13; font.bold: true; width: 120; elide: Text.ElideRight }
-                                        Repeater {
-                                            model: root.evalMetricHeaders.length
-                                            Label {
-                                                text: index < _vals.length ? _vals[index] : "-"
-                                                color: root.textColor; font.pixelSize: 13; font.family: "Courier"; font.bold: true
-                                                width: Math.max(75, String(root.evalMetricHeaders[index] || "").length * 10)
-                                                horizontalAlignment: Text.AlignRight
+                    ColumnLayout {
+                        anchors.fill: parent
+                        spacing: 10
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Text { text: "评估结果"; color: root.textColor; font.pixelSize: 14; font.bold: true }
+                            Text { text: evalResultModel.count > 0 ? ("共 " + evalResultModel.count + " 条结果") : "执行评估后在这里查看指标结果"; color: root.textMuted; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
+                        }
+
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            color: root.bgDark
+                            radius: 6
+                            border.color: root.borderColor
+                            border.width: 1
+
+                            Text {
+                                visible: evalResultModel.count === 0
+                                text: root.isEvaluating ? "⏳ 正在执行评估比对..." : "请先在上方勾选训练权重，然后点击启动评估比对"
+                                color: root.isEvaluating ? root.primaryColor : root.textMuted
+                                font.pixelSize: 13
+                                font.family: "Courier"
+                                anchors.centerIn: parent
+                            }
+
+                            ColumnLayout { anchors.fill: parent; spacing: 0; visible: evalResultModel.count > 0
+                                // 表头 - 动态列 (可横向滚动)
+                                Rectangle { Layout.fillWidth: true; height: 40; color: Qt.rgba(255, 255, 255, 0.02)
+                                    Flickable {
+                                        id: evalHeaderFlick
+                                        anchors.fill: parent
+                                        contentWidth: headerRow.implicitWidth + 24
+                                        contentX: root.evalTableContentX
+                                        clip: true; boundsBehavior: Flickable.StopAtBounds
+                                        interactive: true
+                                        onContentXChanged: {
+                                            if (dragging || flicking) root.evalTableContentX = contentX
+                                        }
+                                        Row {
+                                            id: headerRow; anchors.leftMargin: 12; anchors.verticalCenter: parent.verticalCenter
+                                            spacing: 8
+                                            Label { text: "模型 / 权重"; color: root.textMuted; font.pixelSize: 12; font.bold: true; width: 180 }
+                                            Repeater {
+                                                model: evalMetricHeaders
+                                                Label {
+                                                    text: String(modelData).length > 10 ? String(modelData).substring(0, 10) + "…" : modelData
+                                                    color: root.textMuted; font.pixelSize: 11; font.bold: true
+                                                    width: Math.max(75, String(modelData).length * 10)
+                                                    elide: Text.ElideRight; horizontalAlignment: Text.AlignRight
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                Rectangle { Layout.fillWidth: true; height: 1; color: root.borderColor }
+
+                                // 数据行
+                                ListView {
+                                    Layout.fillWidth: true; Layout.fillHeight: true; clip: true; model: evalResultModel; spacing: 0
+                                    delegate: Rectangle {
+                                        width: ListView.view ? ListView.view.width : 0; height: 40
+                                        color: index % 2 === 0 ? Theme.panel : "transparent"
+                                        Rectangle { width: parent.width; height: 1; color: root.borderColor; anchors.bottom: parent.bottom }
+                                        property var _vals: JSON.parse(metricValuesJson || "[]")
+
+                                        Flickable {
+                                            anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12
+                                            contentWidth: dataRow.implicitWidth
+                                            contentX: root.evalTableContentX
+                                            clip: true; boundsBehavior: Flickable.StopAtBounds
+                                            interactive: false
+                                            Row {
+                                                id: dataRow; spacing: 8; anchors.verticalCenter: parent.verticalCenter
+                                                Label { text: displayName || modelName; color: root.primaryColor; font.pixelSize: 13; font.bold: true; width: 180; elide: Text.ElideRight }
+                                                Repeater {
+                                                    model: root.evalMetricHeaders.length
+                                                    Label {
+                                                        text: index < _vals.length ? _vals[index] : "-"
+                                                        color: root.textColor; font.pixelSize: 13; font.family: "Courier"; font.bold: true
+                                                        width: Math.max(75, String(root.evalMetricHeaders[index] || "").length * 10)
+                                                        horizontalAlignment: Text.AlignRight
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -1424,7 +1835,7 @@ Item {
                 }
 
                 // 底部保存/清空
-                RowLayout { Layout.fillWidth: true; Layout.preferredHeight: 36; Layout.topMargin: 4; spacing: 15
+                RowLayout { Layout.fillWidth: true; Layout.preferredHeight: 36; Layout.topMargin: 4; spacing: 15; visible: root.evaluationWorkbenchExpanded
                     Item { Layout.fillWidth: true }
                     Rectangle { width: 150; height: 36; radius: 4; color: root.bgDark; border.color: root.borderColor; border.width: 1; opacity: evalResultModel.count > 0 ? 1.0 : 0.4
                         RowLayout { anchors.centerIn: parent; spacing: 5
@@ -1432,7 +1843,7 @@ Item {
                             Text { text: "清空评估面板"; color: root.dangerColor; font.pixelSize: 12; font.bold: true }
                         }
                         MouseArea { anchors.fill: parent; cursorShape: evalResultModel.count > 0 ? Qt.PointingHandCursor : Qt.ForbiddenCursor; enabled: evalResultModel.count > 0
-                            onClicked: { taskQueueModel.clear(); evalResultModel.clear(); root.saveToAppState() }
+                            onClicked: { taskQueueModel.clear(); evalResultModel.clear(); activeEvalSourceModel.clear(); root.pendingEvalTaskIds = []; root.isEvaluating = false; root.saveToAppState() }
                         }
                     }
                     Rectangle { width: 160; height: 36; radius: 4
@@ -1450,6 +1861,11 @@ Item {
                 }
             }
             }
+        }
+
+        Item {
+            Layout.fillHeight: true
+            visible: !root.trainingWorkbenchExpanded && !root.evaluationWorkbenchExpanded
         }
     }
 
@@ -1556,32 +1972,31 @@ Item {
     }
 
     function canRunEvaluation() {
-        if (root.isTraining) return false
-        var hasCompleted = false
-        for (var i = 0; i < taskQueueModel.count; i++) {
-            if (taskQueueModel.get(i).isSelected && taskQueueModel.get(i).trainStatus === 2) hasCompleted = true
+        if (root.isTraining || root.isEvaluating) return false
+        for (var i = 0; i < weightOptionModel.count; i++) {
+            if (weightOptionModel.get(i).isSelected) return true
         }
-        return hasCompleted
+        return false
     }
 
     function startEvaluation() {
         evalResultModel.clear()
         root.pendingEvalTaskIds = []
+        activeEvalSourceModel.clear()
 
-        var totalTasks = taskQueueModel.count
-        var selectedDone = 0
+        var totalWeights = weightOptionModel.count
+        var selectedWeights = 0
         var noEvalBind = 0
         var noCheckpoint = 0
         var startedCount = 0
 
-        for (var i = 0; i < taskQueueModel.count; i++) {
-            var t = taskQueueModel.get(i)
+        for (var i = 0; i < weightOptionModel.count; i++) {
+            var t = weightOptionModel.get(i)
             if (!t.isSelected) continue
-            if (t.trainStatus !== 2) continue
             if (!t.taskId || t.taskId <= 0) continue
-            selectedDone++
+            selectedWeights++
 
-            var scId = root.findScenarioId(t.scenario)
+            var scId = Number(t.scenarioId || root.findScenarioId(t.scenario))
             var evalAlgoId = 0
             var trainingAlgoKey = t.algoKey || root.algorithmKeyById(t.algoId || 0)
             var evalKey = root.trainingToEvalKey[trainingAlgoKey || ""]
@@ -1593,11 +2008,7 @@ Item {
                 continue
             }
 
-            var checkpointPath = ""
-            var rj = t.resultJson || {}
-            if (rj.artifacts && rj.artifacts.length > 0) {
-                checkpointPath = rj.artifacts[0] || ""
-            }
+            var checkpointPath = t.checkpointPath || ""
             if (!checkpointPath) {
                 noCheckpoint++
                 continue
@@ -1606,11 +2017,19 @@ Item {
             var evalParams = {}
             evalParams.model_checkpoint_path = checkpointPath
 
-            var evalResult = backendService.createEvaluationTask(scId, t.datasetId, t.datasetId, evalAlgoId, evalParams)
+            var evalResult = backendService.createEvaluationTask(scId, t.datasetId || 0, t.datasetId || 0, evalAlgoId, evalParams)
             if (evalResult && evalResult.status === "success") {
-                taskQueueModel.setProperty(i, "evalTaskId", evalResult.id || 0)
                 backendService.startEvaluationTask(evalResult.id)
                 root.pendingEvalTaskIds = root.pendingEvalTaskIds.concat([evalResult.id || 0])
+                activeEvalSourceModel.append({
+                    evalTaskId: evalResult.id || 0,
+                    trainingTaskId: t.taskId || 0,
+                    scenario: t.scenario || "",
+                    dataset: t.dataset || "",
+                    algo: t.algo || "",
+                    checkpointName: t.checkpointName || "",
+                    checkpointPath: checkpointPath
+                })
                 startedCount++
             } else {
                 root.showToast("⚠️ 创建评估任务失败: " + (evalResult ? (evalResult.message || "未知") : "无响应"))
@@ -1619,9 +2038,10 @@ Item {
 
         if (startedCount > 0) {
             root.isEvaluating = true
+            root.saveToAppState()
         } else {
-            var reason = "总任务:" + totalTasks + " 已完成选中:" + selectedDone
-            if (selectedDone === 0) reason += " (请勾选已完成训练的任务)"
+            var reason = "可选权重:" + totalWeights + " 已选:" + selectedWeights
+            if (selectedWeights === 0) reason += " (请先勾选左侧训练权重)"
             else if (noEvalBind > 0) reason += " 缺评估绑定:" + noEvalBind
             else if (noCheckpoint > 0) reason += " 缺模型文件:" + noCheckpoint
             root.showToast("⚠️ 无可评估任务 - " + reason)
@@ -1756,5 +2176,6 @@ Item {
                 }
             }
         }
+
     }
 }

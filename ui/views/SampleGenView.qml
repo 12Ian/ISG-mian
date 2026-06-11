@@ -35,6 +35,7 @@ Item {
     property int totalCount: 1000
     property real progress: totalCount > 0 ? currentCount / totalCount : 0
     property int currentTaskId: 0
+    property int currentTargetDatasetId: 0
     property int lastFailureTaskId: 0
     property string generationErrorMessage: ""
 
@@ -488,6 +489,7 @@ Item {
                     var pct = task.progress || 0
                     root.progress = pct / 100.0
                     root.currentCount = Math.floor(root.progress * root.totalCount)
+                    root.currentTargetDatasetId = task.target_dataset_id || root.currentTargetDatasetId
                     if (targetName) {
                         root.currentTargetDatasetName = targetName
                     }
@@ -921,12 +923,24 @@ Item {
                     background: Rectangle { color: root.primaryColor; radius: 4 }
                     contentItem: Text { text: parent.text; color: "black"; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                     onClicked: {
-                        if (root.currentTaskId > 0) {
+                        var newDatasetName = saveDatasetNameInput.text.trim()
+                        if (root.currentTaskId <= 0 || root.currentTargetDatasetId <= 0) {
+                            root.showToast("⚠️ 没有可保存的生成任务")
+                            return
+                        }
+                        if (newDatasetName === "") {
+                            root.showToast("⚠️ 请输入生成数据集名称")
+                            return
+                        }
+                        var result = backendService.updateDataset(root.currentTargetDatasetId, newDatasetName, "")
+                        if (result && result.status === "success") {
+                            root.currentTargetDatasetName = newDatasetName
                             backendService.getDatasets(1, 100, "")
                             backendService.getEnhancementTasks(0, "")
                             root.showToast("✅ 生成结果已保存")
                         } else {
-                            root.showToast("⚠️ 没有可保存的生成任务")
+                            root.showToast("⚠️ " + ((result && result.message) ? result.message : "保存失败"))
+                            return
                         }
                         savePopup.close()
                         newGenerationTaskPopup.close()
@@ -934,6 +948,8 @@ Item {
                         root.currentCount = 0
                         root.isCompleted = false
                         root.currentTaskId = 0
+                        root.currentTargetDatasetId = 0
+                        root.currentTargetDatasetName = ""
                     }
                 }
             }
@@ -1312,6 +1328,7 @@ Item {
                                             return
                                         }
                                         root.currentTaskId = taskResult.id || 0
+                                        root.currentTargetDatasetId = taskResult.target_dataset_id || 0
                                         root.lastFailureTaskId = 0
                                         root.currentTargetDatasetName = taskResult.target_dataset_name || ""
                                         root.currentCount = 0
@@ -1642,6 +1659,8 @@ Item {
                                         root.currentCount = 0
                                         root.isCompleted = false
                                         root.currentTaskId = 0
+                                        root.currentTargetDatasetId = 0
+                                        root.currentTargetDatasetName = ""
                                     }
                                 }
                             }
@@ -1689,6 +1708,8 @@ Item {
                     root.currentCount = 0
                     root.isCompleted = false
                     root.currentTaskId = 0
+                    root.currentTargetDatasetId = 0
+                    root.currentTargetDatasetName = ""
                     backendService.getDatasets(1, 100, "")
                     newGenerationTaskPopup.open()
                 }
