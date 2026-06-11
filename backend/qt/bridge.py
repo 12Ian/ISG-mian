@@ -443,6 +443,54 @@ class BackendBridge:
                 })
             else:
                 self.facade.algorithm_service.create_algorithm(dict(algo))
+        self._merge_legacy_algorithm_aliases()
+
+    def _merge_legacy_algorithm_aliases(self) -> None:
+        from ..models import (
+            Algorithm,
+            AlgorithmParameter,
+            CleaningSuggestion,
+            EvaluationResult,
+            GenerationOutput,
+            Task,
+        )
+
+        aliases = {"图片低分辨率清洗": "cleaning.image_resolution_filter"}
+        with self.facade.session_factory() as session:
+            for legacy_key, target_key in aliases.items():
+                legacy = session.query(Algorithm).filter(Algorithm.key == legacy_key).first()
+                target = session.query(Algorithm).filter(Algorithm.key == target_key).first()
+                if legacy is None or target is None or legacy.id == target.id:
+                    continue
+
+                for model in (Task, CleaningSuggestion, GenerationOutput, EvaluationResult):
+                    session.query(model).filter(model.algorithm_id == legacy.id).update(
+                        {model.algorithm_id: target.id},
+                        synchronize_session=False,
+                    )
+                self._replace_algorithm_id_in_task_payloads(session, legacy.id, target.id)
+                session.query(AlgorithmParameter).filter(AlgorithmParameter.algorithm_id == legacy.id).delete(
+                    synchronize_session=False
+                )
+                session.delete(legacy)
+            session.commit()
+
+    def _replace_algorithm_id_in_task_payloads(self, session, legacy_id: int, target_id: int) -> None:
+        from ..models import Task
+
+        for task in session.query(Task).all():
+            changed = False
+            parameters = dict(task.parameters_json or {})
+            payload = dict(task.payload_json or {})
+            for container in (parameters, payload):
+                algorithm_ids = list(container.get("algorithm_ids", []))
+                replaced_ids = [target_id if item == legacy_id else item for item in algorithm_ids]
+                if replaced_ids != algorithm_ids:
+                    container["algorithm_ids"] = replaced_ids
+                    changed = True
+            if changed:
+                task.parameters_json = parameters
+                task.payload_json = payload
 
     def reflect_parameters(self, script_path: str) -> dict:
         """从 .py 脚本反射参数列表。"""

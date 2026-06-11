@@ -1,4 +1,4 @@
-"""Image cleaning plugin that flags low-resolution or unreadable images."""
+"""Image cleaning plugin that filters low-resolution or unreadable images."""
 
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ PARAMETERS: list[dict[str, Any]] = [
         "min": 0,
         "max": 102400,
         "options": [],
-        "description": "文件体积低于该值时也会提示人工复核",
+        "description": "文件体积低于该值时也会直接过滤",
         "required": False,
     },
 ]
@@ -47,9 +47,9 @@ PARAMETERS: list[dict[str, Any]] = [
 def run(payload: dict[str, Any], context: Any) -> dict[str, Any]:
     parameters = payload.get("parameters", {}) or {}
     samples = payload.get("input", {}).get("samples", []) or []
-    min_width = max(1, int(parameters.get("min_width", 640) or 640))
-    min_height = max(1, int(parameters.get("min_height", 480) or 480))
-    min_file_kb = max(0, int(parameters.get("min_file_kb", 20) or 20))
+    min_width = max(1, int(_parameter_value(parameters, "min_width", 640)))
+    min_height = max(1, int(_parameter_value(parameters, "min_height", 480)))
+    min_file_kb = max(0, int(_parameter_value(parameters, "min_file_kb", 20)))
 
     if not samples:
         return {"ok": True, "suggestions": [], "logs": []}
@@ -74,13 +74,14 @@ def run(payload: dict[str, Any], context: Any) -> dict[str, Any]:
                 {
                     "sample_id": sample["id"],
                     "issue_type": "image_unreadable",
-                    "suggested_action": "review",
+                    "suggested_action": "delete",
                     "confidence": 0.99,
-                    "message": "图片头信息无法解析，建议人工检查文件是否损坏",
+                    "message": "图片头信息无法解析，已标记为过滤删除",
                     "details": {
                         "file_path": str(sample_path),
                         "file_size_kb": file_kb,
                         "detected_format": _detect_image_type(sample_path) or "unknown",
+                        "processing_result": "filtered_out",
                     },
                 }
             )
@@ -110,7 +111,7 @@ def run(payload: dict[str, Any], context: Any) -> dict[str, Any]:
             {
                 "sample_id": sample["id"],
                 "issue_type": "image_low_resolution",
-                "suggested_action": "review",
+                "suggested_action": "delete",
                 "confidence": confidence,
                 "message": "；".join(message_parts),
                 "details": {
@@ -122,6 +123,7 @@ def run(payload: dict[str, Any], context: Any) -> dict[str, Any]:
                     "file_size_kb": file_kb,
                     "min_file_kb": min_file_kb,
                     "detected_format": _detect_image_type(sample_path) or "unknown",
+                    "processing_result": "filtered_out",
                 },
             }
         )
@@ -134,6 +136,11 @@ def _sample_path(sample: dict[str, Any]) -> Path | None:
     if not raw:
         return None
     return Path(str(raw))
+
+
+def _parameter_value(parameters: dict[str, Any], key: str, default: Any) -> Any:
+    value = parameters.get(key)
+    return default if value is None else value
 
 
 def _read_image_size(path: Path) -> tuple[int | None, int | None]:
