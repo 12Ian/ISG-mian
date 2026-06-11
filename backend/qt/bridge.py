@@ -517,6 +517,21 @@ class BackendBridge:
         except Exception as exc:
             return _normalize_error(exc)
 
+    def download_algorithm_plugin_spec(self, target_path: str) -> dict:
+        try:
+            src = Path(__file__).resolve().parents[2] / "docs" / "ISG 算法插件开发规范 v1.0.pdf"
+            if not src.is_file():
+                return {"ok": False, "error_code": "NOT_FOUND", "message": f"未找到插件规范文档: {src}"}
+
+            dest = Path(target_path).expanduser()
+            if dest.suffix.lower() != ".pdf":
+                dest = dest.with_suffix(".pdf")
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dest)
+            return {"ok": True, "path": str(dest)}
+        except Exception as exc:
+            return _normalize_error(exc)
+
     def get_operation_logs(self, page: int, page_size: int, resource_type: str = "") -> dict:
         try:
             return self.facade.settings_service.list_operation_logs(page, page_size, resource_type)

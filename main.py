@@ -318,6 +318,13 @@ class BackendService(QObject):
             return {"status": "success"}
         return {"status": "error", "message": "无法打开插件规范文档"}
 
+    @Slot(str, result=dict)
+    def downloadAlgorithmPluginSpec(self, targetPath: str) -> dict:
+        result = self._bridge.download_algorithm_plugin_spec(targetPath)
+        if result.get("ok"):
+            return {"status": "success", "path": result.get("path", "")}
+        return {"status": "error", "message": result.get("message", "插件规范下载失败")}
+
     @Slot(int, result=dict)
     def startEnhancementTask(self, taskId: int) -> dict:
         self._run_generation_in_background(taskId)

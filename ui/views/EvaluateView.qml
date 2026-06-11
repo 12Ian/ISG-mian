@@ -1365,11 +1365,24 @@ Item {
         onClicked: root.viewMode = "history"
     }
 
-    ColumnLayout {
+    Flickable {
+        id: evaluationWorkbenchFlickable
         anchors.fill: parent; anchors.margins: 20
         anchors.topMargin: 66
-        spacing: (!root.trainingWorkbenchExpanded && !root.evaluationWorkbenchExpanded) ? 8 : 15
         visible: root.viewMode === "evaluating"
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+        contentHeight: Math.max(evaluationWorkbenchContent.implicitHeight, height)
+
+        ScrollBar.vertical: ScrollBar {
+            policy: ScrollBar.AlwaysOn
+            interactive: true
+        }
+
+        ColumnLayout {
+        id: evaluationWorkbenchContent
+        width: parent.width - 12
+        spacing: (!root.trainingWorkbenchExpanded && !root.evaluationWorkbenchExpanded) ? 8 : 15
 
         Rectangle {
             Layout.fillWidth: true
@@ -1866,6 +1879,7 @@ Item {
         Item {
             Layout.fillHeight: true
             visible: !root.trainingWorkbenchExpanded && !root.evaluationWorkbenchExpanded
+        }
         }
     }
 
