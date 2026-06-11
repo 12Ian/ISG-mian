@@ -7,7 +7,7 @@ from .._compat import slots_dataclass
 from pathlib import Path
 
 from ..errors import NotFoundError, ValidationError
-from ..models import Sample
+from ..models import Dataset, Sample
 from ..storage import FileIndexer
 from .base import ServiceBase
 
@@ -89,7 +89,17 @@ class DatasetService(ServiceBase):
     def update_dataset(self, dataset_id: int, name: str, type_name: str) -> dict:
         with self.session_factory() as session:
             dataset = self._require_dataset(session, dataset_id, include_deleted=True)
-            dataset.name = (name or dataset.name).strip() or dataset.name
+            clean_name = (name or dataset.name).strip()
+            if not clean_name:
+                raise ValidationError("Dataset name is required.")
+            duplicate = (
+                session.query(Dataset)
+                .filter(Dataset.id != dataset.id, Dataset.name == clean_name, Dataset.is_deleted.is_(False))
+                .first()
+            )
+            if duplicate:
+                raise ValidationError(f"Dataset name '{clean_name}' already exists.")
+            dataset.name = clean_name
             if type_name:
                 dataset.modality = type_name
             self.log_repository.add(
