@@ -1388,11 +1388,11 @@ Item {
                 Text { text: root.trainingWorkbenchExpanded ? "▼" : "▶"; color: root.primaryColor; font.pixelSize: 14; font.bold: true }
                 Text { text: "模型训练任务"; color: root.textColor; font.pixelSize: 16; font.bold: true }
                 Item { Layout.fillWidth: true }
-                MouseArea {
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: root.trainingWorkbenchExpanded = !root.trainingWorkbenchExpanded
-                }
+            }
+            MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.trainingWorkbenchExpanded = !root.trainingWorkbenchExpanded
             }
         }
 
