@@ -32,7 +32,7 @@ Item {
         anchors.topMargin: -16
         anchors.rightMargin: -16
         title: "算法配置帮助"
-        body: "本页用于查看、注册、修改和卸载算法插件，是生成、清洗、训练和评估算法的统一配置入口。\n\n1. 左侧按算法大类和数据模态分组展示插件，例如生成算法下会继续分为图像增强方法、音频增强方法、文本增强方法等。点击分组可展开或折叠。\n2. 点击某个算法后，右侧会显示算法名称、所属类别、脚本或模块挂载路径、接口简述、使用说明和参数快照。\n3. “插件规范”按钮会打开本项目的算法插件开发规范 PDF，可用于确认 run(payload, context) 入口、PARAMETERS 参数声明和输出格式。\n4. “注册新插件环境”用于接入新的 Python 插件。选择脚本后系统会自动反射 PARAMETERS，生成参数配置表；填写名称、类别、模态和说明后确认注册。\n5. “调参修改”用于修改已有算法的参数定义、名称、类别、模态、脚本路径或模块路径。内置模块算法会保留 module_path，脚本插件会复制并保存 script_path。\n6. 参数表支持新增、删除和编辑参数名、显示标签、类型、默认值、数值范围和下拉选项。保存后，数据生成/清洗/评估页面会按这些参数渲染动态配置控件。\n7. “卸载环境”会删除算法注册记录。删除前请确认没有正在运行的任务依赖该算法。\n8. 调整完成后建议回到对应业务页面刷新算法列表，确认新参数和新插件已经生效。"
+        body: "本页用于查看、注册、修改和卸载算法插件，是生成、清洗、训练和评估算法的统一配置入口。\n\n1. 左侧按算法大类和数据模态分组展示插件，例如生成算法下会继续分为图像增强方法、音频增强方法、文本增强方法等。点击分组可展开或折叠。\n2. 点击某个算法后，右侧会显示算法名称、所属类别、脚本或模块挂载路径、接口简述、使用说明和参数快照。\n3. “插件规范”按钮会弹出本项目的算法插件开发规范窗口，可下拉查看 run(payload, context) 入口、PARAMETERS 参数声明和输出格式。\n4. “注册新插件环境”用于接入新的 Python 插件。选择脚本后系统会自动反射 PARAMETERS，生成参数配置表；填写名称、类别、模态和说明后确认注册。\n5. “调参修改”用于修改已有算法的参数定义、名称、类别、模态、脚本路径或模块路径。内置模块算法会保留 module_path，脚本插件会复制并保存 script_path。\n6. 参数表支持新增、删除和编辑参数名、显示标签、类型、默认值、数值范围和下拉选项。保存后，数据生成/清洗/评估页面会按这些参数渲染动态配置控件。\n7. “卸载环境”会删除算法注册记录。删除前请确认没有正在运行的任务依赖该算法。\n8. 调整完成后建议回到对应业务页面刷新算法列表，确认新参数和新插件已经生效。"
     }
 
     // 状态控制
@@ -50,6 +50,79 @@ Item {
     property int evaluationCount: 0
     property int trainingCount: 0
     property int totalAlgoCount: 0
+    property string pluginSpecText: "ISG 算法插件开发规范 v1.0\n\n" +
+        "一、插件基本要求\n" +
+        "1. 插件必须是一个 Python .py 文件，注册后由系统反射参数并在界面生成配置项。\n" +
+        "2. 插件必须声明模块级 PARAMETERS 列表；无参数插件也要写 PARAMETERS = []。\n" +
+        "3. 插件必须实现 run(payload, context) 函数，并返回标准 dict。\n\n" +
+        "二、PARAMETERS 参数声明\n" +
+        "每个参数建议包含以下字段：\n" +
+        "name: 参数变量名，英文小写加下划线，例如 blur_threshold。\n" +
+        "type: 参数类型，支持 string、int、float、bool、select。\n" +
+        "label: 界面显示名称，建议使用简短中文。\n" +
+        "default: 默认值，类型必须和 type 匹配。\n" +
+        "min/max: 数值参数的最小值和最大值，可选。\n" +
+        "options: select 类型的候选项列表。\n" +
+        "description: 参数说明，可选。\n" +
+        "required: 是否必填，默认 false。\n\n" +
+        "三、run 函数签名\n" +
+        "def run(payload: dict, context) -> dict:\n" +
+        "    parameters = payload.get(\"parameters\", {}) or {}\n" +
+        "    input_info = payload.get(\"input\", {}) or {}\n" +
+        "    output_info = payload.get(\"output\", {}) or {}\n\n" +
+        "四、payload 常用字段\n" +
+        "algorithm_key: 当前算法唯一标识。\n" +
+        "parameters: 用户在界面填写的参数字典，key 对应 PARAMETERS 中的 name。\n" +
+        "input.dataset_id: 源数据集 ID。\n" +
+        "input.dataset_path: 源数据集目录。\n" +
+        "input.samples: 输入样本列表，每个样本包含 id、path、sample_path、relative_path、labels 等信息。\n" +
+        "output.output_dir: 本次任务的临时输出目录，插件应把生成文件写到这里。\n" +
+        "target_count: 期望生成数量。\n\n" +
+        "五、context 常用方法\n" +
+        "context.set_progress(percent, message): 上报进度。\n" +
+        "context.log(level, message, payload): 写入任务日志，level 可为 info、warn、error。\n" +
+        "context.is_cancel_requested(): 检查用户是否取消任务，长任务应周期性检查。\n\n" +
+        "六、生成类插件成功返回格式\n" +
+        "{\n" +
+        "    \"ok\": True,\n" +
+        "    \"outputs\": [\n" +
+        "        {\n" +
+        "            \"source_sample_id\": 1,\n" +
+        "            \"output_path\": \"生成文件绝对路径\",\n" +
+        "            \"relative_path\": \"建议写入目标数据集的相对路径\",\n" +
+        "            \"metadata\": {\"method\": \"算法方法名\", \"parameters\": {...}},\n" +
+        "            \"status\": \"created\"\n" +
+        "        }\n" +
+        "    ],\n" +
+        "    \"logs\": []\n" +
+        "}\n\n" +
+        "七、清洗建议类插件成功返回格式\n" +
+        "{\n" +
+        "    \"ok\": True,\n" +
+        "    \"suggestions\": [\n" +
+        "        {\n" +
+        "            \"sample_id\": 1,\n" +
+        "            \"issue_type\": \"blur\",\n" +
+        "            \"suggested_action\": \"repair\",\n" +
+        "            \"confidence\": 0.85,\n" +
+        "            \"message\": \"问题说明\",\n" +
+        "            \"details\": {\"output_path\": \"可选修复文件路径\"}\n" +
+        "        }\n" +
+        "    ]\n" +
+        "}\n\n" +
+        "八、失败返回格式\n" +
+        "{\n" +
+        "    \"ok\": False,\n" +
+        "    \"error_code\": \"NO_INPUT_SAMPLES\",\n" +
+        "    \"message\": \"错误原因\"\n" +
+        "}\n\n" +
+        "九、开发注意事项\n" +
+        "1. 输出文件必须真实存在，否则任务持久化会失败。\n" +
+        "2. 生成图片、音频、文本时，应尽量保留 source_sample_id，便于界面追踪源样本。\n" +
+        "3. 参数读取时要做类型转换，例如 int(...)、float(...)、bool 转换函数。\n" +
+        "4. 不要在插件中直接操作数据库或界面，所有结果通过返回值交给系统处理。\n" +
+        "5. 长时间循环时要检查 context.is_cancel_requested()，被取消时返回 CANCELLED。\n" +
+        "6. 插件路径、输出路径可能包含中文，读写文件时要使用 pathlib.Path。\n"
 
     function findAlgoIndexById(algoId) {
         for (var i = 0; i < algoListModel.count; i++) {
@@ -230,6 +303,75 @@ Item {
         toastMsg.open()
         toastAnim.restart()
         toastCloseTimer.restart()
+    }
+
+    Popup {
+        id: pluginSpecPopup
+        modal: true
+        focus: true
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        x: Math.round((root.width - width) / 2)
+        y: Math.round((root.height - height) / 2)
+        width: Math.min(root.width - 80, 860)
+        height: Math.min(root.height - 80, 680)
+        padding: 0
+        background: Rectangle {
+            color: root.panelBg
+            radius: 8
+            border.color: root.borderColor
+            border.width: 1
+        }
+        contentItem: ColumnLayout {
+            spacing: 0
+
+            Rectangle {
+                Layout.fillWidth: true
+                height: 56
+                color: root.bgDark
+                radius: 8
+                border.color: root.borderColor
+                border.width: 1
+
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: 18
+                    anchors.rightMargin: 10
+                    spacing: 12
+
+                    Label {
+                        text: "插件规范"
+                        color: root.textColor
+                        font.pixelSize: 18
+                        font.bold: true
+                        Layout.fillWidth: true
+                    }
+
+                    Button {
+                        text: "关闭"
+                        onClicked: pluginSpecPopup.close()
+                    }
+                }
+            }
+
+            ScrollView {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+                ScrollBar.vertical.policy: ScrollBar.AlwaysOn
+
+                TextArea {
+                    text: root.pluginSpecText
+                    readOnly: true
+                    wrapMode: TextEdit.Wrap
+                    selectByMouse: true
+                    color: root.textColor
+                    font.pixelSize: 14
+                    font.family: "Microsoft YaHei"
+                    padding: 18
+                    background: Rectangle { color: "transparent" }
+                }
+            }
+        }
     }
 
     function categoryLabel(category) {
@@ -1054,9 +1196,7 @@ Item {
                     verticalAlignment: Text.AlignVCenter
                 }
                 onClicked: {
-                    var result = backendService.openAlgorithmPluginSpec()
-                    if (result.status === "success") root.showToast("✅ 已打开插件规范")
-                    else root.showToast("⚠️ " + (result.message || "插件规范打开失败"))
+                    pluginSpecPopup.open()
                 }
             }
 
