@@ -9,6 +9,7 @@ from ..models import Algorithm, Dataset, GenerationOutput, Sample
 from ..plugins import PluginRunner
 from ..storage import FileIndexer
 from .base import ServiceBase
+from .sample_ordering import interleave_by_top_folder
 
 
 @slots_dataclass
@@ -46,6 +47,8 @@ class GenerationService(ServiceBase):
                 .order_by(Sample.id.asc())
                 .all()
             )
+            source_samples = [sample for sample in source_samples if self._is_generation_input_sample(sample, source_dataset.modality)]
+            source_samples = interleave_by_top_folder(source_samples)
             if not source_samples:
                 raise ValidationError("Source dataset must contain at least one active sample.")
 
@@ -145,6 +148,8 @@ class GenerationService(ServiceBase):
                 .order_by(Sample.id.asc())
                 .all()
             )
+            source_samples = [sample for sample in source_samples if self._is_generation_input_sample(sample, source_dataset.modality)]
+            source_samples = interleave_by_top_folder(source_samples)
             if not source_samples:
                 raise ValidationError("Source dataset must contain at least one active sample.")
 
@@ -198,58 +203,28 @@ class GenerationService(ServiceBase):
                     f"{target_count - produced_count} samples skipped. Continuing with available outputs."
                 )
 
-            created_outputs: list[dict] = []
             for algorithm_id, outputs in pending_outputs:
-                persisted_outputs = self._persist_generation_outputs(
+                self._persist_generation_outputs(
                     task_id=task_id,
                     target_dataset_id=target_dataset.id,
                     algorithm_id=algorithm_id,
                     outputs=outputs,
                 )
-                created_outputs.extend(persisted_outputs)
 
-            # 把原始样本也复制进扩增数据集，实现"叠加"
-            with self.session_factory() as session:
-                source_samples = session.query(Sample).filter(
-                    Sample.dataset_id == source_dataset.id,
-                    Sample.status != "deleted"
-                ).all()
-                copied_count = 0
-                for ss in source_samples:
-                    src_path = Path(ss.file_path)
-                    if not src_path.is_file():
-                        continue
-                    dest = self.file_indexer.copy_into_dataset(
-                        src_path,
-                        Path(target_dataset.storage_path) / "raw",
-                        ss.relative_path or src_path.name
-                    )
-                    self.dataset_repository.create_sample(
-                        session,
-                        dataset_id=target_dataset.id,
-                        source_sample_id=ss.id,
-                        name=dest.name,
-                        modality=target_dataset.modality,
-                        file_path=str(dest),
-                        relative_path=dest.relative_to(Path(target_dataset.storage_path) / "raw").as_posix(),
-                        sha256=None,
-                        mime_type=self.file_indexer.detect_mime_type(dest),
-                        extension=dest.suffix.lower(),
-                        size_bytes=dest.stat().st_size,
-                        status="raw",
-                        metadata_json={"inherited_from_source": True, "source_sample_id": ss.id},
-                        labels_json=list(ss.labels_json or []),
-                    )
-                    copied_count += 1
-                session.commit()
-                created_outputs.append({"type": "source_copy", "count": copied_count})
+            source_copied_count = 0
+            if source_dataset.modality == "image":
+                source_copied_count = self._persist_source_image_outputs(
+                    task_id=task_id,
+                    target_dataset_id=target_dataset.id,
+                    source_samples=source_samples,
+                )
 
-            total_count = produced_count + copied_count
+            total_count = produced_count + source_copied_count
             self.task_manager.complete(
                 task_id,
                 result_json={
                     "generated_count": produced_count,
-                    "source_copied_count": copied_count,
+                    "source_copied_count": source_copied_count,
                     "total_count": total_count,
                     "target_dataset_id": target_dataset.id,
                 },
@@ -259,7 +234,7 @@ class GenerationService(ServiceBase):
                 "data": {
                     "task_id": task_id,
                     "generated_count": produced_count,
-                    "source_copied_count": copied_count,
+                    "source_copied_count": source_copied_count,
                     "total_count": total_count,
                     "target_dataset_id": target_dataset.id,
                 },
@@ -390,6 +365,73 @@ class GenerationService(ServiceBase):
             session.commit()
         return persisted_items
 
+    def _persist_source_image_outputs(self, *, task_id: int, target_dataset_id: int, source_samples: list[Sample]) -> int:
+        if not source_samples:
+            return 0
+
+        copied_count = 0
+        with self.session_factory() as session:
+            target_dataset = session.query(Dataset).filter(Dataset.id == target_dataset_id).first()
+            if target_dataset is None:
+                raise NotFoundError(f"Dataset {target_dataset_id} not found.")
+
+            generated_root = Path(target_dataset.storage_path) / "generated"
+            for source_sample in source_samples:
+                source_path = Path(source_sample.file_path or "")
+                if not source_path.is_file():
+                    continue
+
+                labels = list(source_sample.labels_json or [])
+                metadata = dict(source_sample.metadata_json or {})
+                metadata.update(
+                    {
+                        "result_type": "source",
+                        "is_original": True,
+                        "source_sample_id": source_sample.id,
+                    }
+                )
+                requested_relative_path = Path("source") / (source_sample.relative_path or source_path.name)
+                copied = self.file_indexer.copy_into_dataset(source_path, generated_root, requested_relative_path.as_posix())
+                final_relative_path = copied.relative_to(generated_root).as_posix()
+                output_sample = self.dataset_repository.create_sample(
+                    session,
+                    dataset_id=target_dataset.id,
+                    source_sample_id=source_sample.id,
+                    name=copied.name,
+                    modality=target_dataset.modality,
+                    file_path=str(copied),
+                    relative_path=final_relative_path,
+                    sha256=self.file_indexer.compute_sha256(copied),
+                    mime_type=self.file_indexer.detect_mime_type(copied),
+                    extension=copied.suffix.lower(),
+                    size_bytes=copied.stat().st_size,
+                    status="generated",
+                    metadata_json=metadata,
+                    labels_json=labels,
+                )
+                session.add(
+                    GenerationOutput(
+                        task_id=task_id,
+                        source_sample_id=source_sample.id,
+                        output_sample_id=output_sample.id,
+                        algorithm_id=None,
+                        status="source",
+                        metadata_json=metadata,
+                    )
+                )
+                copied_count += 1
+
+            self._refresh_dataset_stats(session, target_dataset)
+            self.task_repository.add_task_log(
+                session,
+                task_id=task_id,
+                level="info",
+                message="Source image samples copied into generation outputs",
+                payload_json={"source_copied_count": copied_count, "target_dataset_id": target_dataset.id},
+            )
+            session.commit()
+        return copied_count
+
     def _refresh_dataset_stats(self, session, dataset: Dataset) -> None:
         total_samples = self.dataset_repository.dataset_sample_count(session, dataset.id)
         size_bytes = self.dataset_repository.dataset_total_size(session, dataset.id)
@@ -410,11 +452,21 @@ class GenerationService(ServiceBase):
             "path": sample.file_path,
             "sample_path": sample.file_path,
             "sample_type": sample.modality,
+            "relative_path": sample.relative_path,
             "metadata": sample.metadata_json,
             "labels": sample.labels_json or [],
             "source_sample_id": sample.source_sample_id,
             "status": sample.status,
         }
+
+    def _is_generation_input_sample(self, sample: Sample, modality: str) -> bool:
+        path = Path(sample.file_path or "")
+        if not path.is_file():
+            return False
+        if modality != "image":
+            return True
+        image_extensions = {".bmp", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp"}
+        return path.suffix.lower() in image_extensions
 
     def _serialize_generation_output(self, session, row: GenerationOutput) -> dict:
         source_sample = session.query(Sample).filter(Sample.id == row.source_sample_id).first()

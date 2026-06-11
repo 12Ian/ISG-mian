@@ -10,25 +10,47 @@ from ._image_io import read_image, write_image
 
 PARAMETERS = [
     {
-        "name": 'diffusion_steps',
-        "type": 'int',
-        "label": '扩散步数',
-        "default": 1000,
-        "min": 10,
-        "max": 5000,
+        "name": "diffusion_steps",
+        "type": "int",
+        "label": "扩散步数",
+        "default": 40,
+        "min": 5,
+        "max": 200,
         "options": [],
-        "description": '扩散过程的最大时间步数',
+        "description": "基于原图加噪再去噪的推理步数",
         "required": False,
     },
     {
-        "name": 'cfg_guidance_scale',
-        "type": 'float',
-        "label": 'CFG引导强度',
-        "default": 7.5,
+        "name": "cfg_guidance_scale",
+        "type": "float",
+        "label": "去噪引导强度",
+        "default": 1.0,
         "min": 0.0,
-        "max": 20.0,
+        "max": 5.0,
         "options": [],
-        "description": '无分类器引导的引导强度',
+        "description": "去噪预测强度，过高会偏离原图",
+        "required": False,
+    },
+    {
+        "name": "noise_strength",
+        "type": "float",
+        "label": "加噪强度",
+        "default": 0.25,
+        "min": 0.0,
+        "max": 0.8,
+        "options": [],
+        "description": "从原图扩散扰动的强度，越大变化越明显",
+        "required": False,
+    },
+    {
+        "name": "blend_strength",
+        "type": "float",
+        "label": "去噪融合强度",
+        "default": 0.55,
+        "min": 0.0,
+        "max": 1.0,
+        "options": [],
+        "description": "扩散去噪结果与原图的融合比例",
         "required": False,
     },
 ]
@@ -40,7 +62,7 @@ def run(payload: dict, context) -> dict:
         import torch.nn as nn
         import torch.optim as optim
     except ImportError:
-        return {"ok": False, "error_code": "MISSING_DEPENDENCY", "message": "Missing PyTorch"}
+        return _fallback(payload, context, Path(payload.get("output", {}).get("output_dir") or "."), payload.get("input", {}).get("samples", []) or [], max(1, int(payload.get("target_count") or 1)), "diffusion", payload.get("parameters", {}) or {})
 
     parameters = payload.get("parameters", {}) or {}
     device = _resolve_device(torch)
@@ -52,17 +74,16 @@ def run(payload: dict, context) -> dict:
         return {"ok": False, "error_code": "NO_INPUT_SAMPLES"}
 
     target_count = max(1, int(payload.get("target_count") or len(samples)))
-    cfg_scale = float(parameters.get("cfg_scale", parameters.get("CFG引导阶数", 1.0)) or 1.0)
-    inference_steps = int(parameters.get("inference_steps", parameters.get("扩散步数上限", 50)) or 50)
-    lr = float(parameters.get("lr", parameters.get("学习率", 0.0001)) or 0.0001)
-    image_size = 32
-    max_images = int(parameters.get("max_images", 32))
-    max_images = max(2, min(max_images, 64))
-    T = 200
+    cfg_scale = _clamp_float(parameters.get("cfg_guidance_scale", parameters.get("cfg_scale", 1.0)), 0.0, 5.0)
+    inference_steps = _clamp_int(parameters.get("diffusion_steps", parameters.get("inference_steps", 40)), 5, 200)
+    lr = _clamp_float(parameters.get("learning_rate", parameters.get("lr", 0.0001)), 1e-6, 0.1)
+    noise_strength = _clamp_float(parameters.get("noise_strength", 0.25), 0.0, 0.8)
+    blend_strength = _clamp_float(parameters.get("blend_strength", 0.55), 0.0, 1.0)
+    image_size = 64
+    max_images = max(2, min(_clamp_int(parameters.get("max_images", 32), 2, 64), 64))
+    total_steps = 200
 
-    beta_start = 1e-4
-    beta_end = 0.02
-    betas = torch.linspace(beta_start, beta_end, T, device=device)
+    betas = torch.linspace(1e-4, 0.02, total_steps, device=device)
     alphas = 1.0 - betas
     alphas_cumprod = torch.cumprod(alphas, dim=0)
 
@@ -74,14 +95,14 @@ def run(payload: dict, context) -> dict:
     batch_size = min(16, n)
     model = _build_model(device).to(device)
     opt = optim.Adam(model.parameters(), lr=lr)
-    train_steps = max(20, min(120, n * 3))
+    train_steps = max(20, min(120, n * 3, inference_steps * 2))
 
     for step in range(train_steps):
         if context.is_cancel_requested():
             return {"ok": False, "error_code": "CANCELLED", "message": "Cancelled"}
         idx = torch.randint(0, n, (batch_size,), device=device)
         x0 = tensors[idx]
-        t = torch.randint(0, T, (batch_size,), device=device)
+        t = torch.randint(0, total_steps, (batch_size,), device=device)
         noise = torch.randn_like(x0)
         a_bar = alphas_cumprod[t].view(-1, 1, 1, 1)
         x_t = torch.sqrt(a_bar) * x0 + torch.sqrt(1.0 - a_bar) * noise
@@ -89,46 +110,64 @@ def run(payload: dict, context) -> dict:
         opt.zero_grad()
         loss.backward()
         opt.step()
-        context.set_progress(step * 50 / train_steps, f"Diffusion train {step+1}/{train_steps}")
+        context.set_progress(step * 50 / train_steps, f"Diffusion train {step + 1}/{train_steps}")
 
-    inference_steps = max(1, min(inference_steps, 50, T))
     model.eval()
-    labeled_samples = [s for s in samples if (s.get("labels") or s.get("labels_json") or [])]
-    if not labeled_samples:
-        labeled_samples = samples
     outputs = []
     for index in range(target_count):
         if context.is_cancel_requested():
             return {"ok": False, "error_code": "CANCELLED", "message": "Cancelled"}
+        source_sample = samples[index % len(samples)]
+        x0 = _read_single_image(source_sample, image_size, device)
+        if x0 is None:
+            continue
+
         with torch.no_grad():
-            x = torch.randn(1, 3, image_size, image_size, device=device)
-            for i in reversed(range(inference_steps)):
-                t_val = int(i * (T - 1) / max(1, inference_steps - 1))
-                t_tensor = torch.tensor([t_val], device=device, dtype=torch.long)
-                a_t = alphas[t_val].view(1, 1, 1, 1)
-                a_bar_t = alphas_cumprod[t_val].view(1, 1, 1, 1)
+            start_t = max(1, min(total_steps - 1, int(noise_strength * (total_steps - 1))))
+            noise = torch.randn_like(x0)
+            a_bar_start = alphas_cumprod[start_t].view(1, 1, 1, 1)
+            x = torch.sqrt(a_bar_start) * x0 + torch.sqrt(1.0 - a_bar_start) * noise
+            schedule = np.linspace(start_t, 0, num=min(inference_steps, start_t + 1), dtype=np.int64)
+            for t_val in schedule:
+                t_tensor = torch.tensor([int(t_val)], device=device, dtype=torch.long)
+                a_t = alphas[int(t_val)].view(1, 1, 1, 1)
+                a_bar_t = alphas_cumprod[int(t_val)].view(1, 1, 1, 1)
                 beta_t = 1.0 - a_t
                 pred = model(x, t_tensor) * cfg_scale
                 coef = (1.0 - a_t) / torch.sqrt(1.0 - a_bar_t)
                 mean = (1.0 / torch.sqrt(a_t)) * (x - coef * pred)
-                x = mean + (torch.sqrt(beta_t) * torch.randn_like(x) if t_val > 0 else 0)
-        img = _to_bgr(x[0])
-        out = output_dir / f"diffusion_{index:04d}.jpg"
+                x = mean + (torch.sqrt(beta_t) * torch.randn_like(x) if int(t_val) > 0 else 0)
+            x = (x0 * (1.0 - blend_strength) + x * blend_strength).clamp(-1.0, 1.0)
+
+        img = _to_original_size_bgr(x[0], source_sample)
+        out = output_dir / f"{_sample_stem(source_sample)}_diffusion_{index:04d}.jpg"
         if not write_image(out, img):
             return {"ok": False, "error_code": "IMAGE_WRITE_ERROR", "message": f"Cannot write image: {out}"}
-        outputs.append({
-            "source_sample_id": labeled_samples[index % len(labeled_samples)].get("id"),
-            "output_path": str(out),
-            "relative_path": out.name,
-            "metadata": {"method": "diffusion", "algorithm_key": payload.get("algorithm_key", "generation.image.diffusion")},
-            "status": "created",
-        })
-        context.set_progress(50 + (index + 1) * 50 / target_count, f"Diffusion gen {index+1}/{target_count}")
+        outputs.append(
+            {
+                "source_sample_id": source_sample.get("id"),
+                "output_path": str(out),
+                "relative_path": out.name,
+                "metadata": {
+                    "method": "diffusion",
+                    "algorithm_key": payload.get("algorithm_key", "generation.image.diffusion"),
+                    "diffusion_steps": inference_steps,
+                    "cfg_guidance_scale": cfg_scale,
+                    "noise_strength": noise_strength,
+                    "blend_strength": blend_strength,
+                },
+                "status": "created",
+            }
+        )
+        context.set_progress(50 + (index + 1) * 50 / target_count, f"Diffusion gen {index + 1}/{target_count}")
     return {"ok": True, "outputs": outputs, "logs": []}
 
 
 def _fallback(payload, context, output_dir, samples, target_count, method, parameters):
-    steps = int(parameters.get("扩散步数上限", 50))
+    output_dir.mkdir(parents=True, exist_ok=True)
+    steps = _clamp_int(parameters.get("diffusion_steps", 40), 5, 200)
+    noise_strength = _clamp_float(parameters.get("noise_strength", 0.25), 0.0, 0.8)
+    blend_strength = _clamp_float(parameters.get("blend_strength", 0.55), 0.0, 1.0)
     outputs = []
     for index in range(target_count):
         if context.is_cancel_requested():
@@ -138,58 +177,108 @@ def _fallback(payload, context, output_dir, samples, target_count, method, param
         img = read_image(p)
         if img is None:
             continue
-        for _ in range(max(1, steps // 10)):
-            noise = np.random.normal(0, 0.1, img.shape)
-            img = np.clip(img + noise, 0, 255).astype(np.uint8)
-        out = output_dir / f"{method}_{index:04d}.jpg"
+        original = img.astype(np.float32)
+        noisy = original.copy()
+        for _ in range(max(1, steps // 20)):
+            noise = np.random.normal(0, noise_strength * 24.0, noisy.shape)
+            noisy = np.clip(noisy + noise, 0, 255)
+            noisy = cv2.bilateralFilter(noisy.astype(np.uint8), 5, 35, 35).astype(np.float32)
+        img = np.clip(original * (1.0 - blend_strength) + noisy * blend_strength, 0, 255).astype(np.uint8)
+        out = output_dir / f"{_sample_stem(sample)}_{method}_{index:04d}.jpg"
         if not write_image(out, img):
             return {"ok": False, "error_code": "IMAGE_WRITE_ERROR", "message": f"Cannot write image: {out}"}
-        outputs.append({
-            "source_sample_id": sample.get("id"),
-            "output_path": str(out),
-            "relative_path": out.name,
-            "metadata": {"method": method, "fallback": True},
-            "status": "created",
-        })
-        context.set_progress((index + 1) * 100 / target_count, f"{method} fb {index+1}/{target_count}")
+        outputs.append(
+            {
+                "source_sample_id": sample.get("id"),
+                "output_path": str(out),
+                "relative_path": out.name,
+                "metadata": {
+                    "method": method,
+                    "fallback": True,
+                    "diffusion_steps": steps,
+                    "noise_strength": noise_strength,
+                    "blend_strength": blend_strength,
+                },
+                "status": "created",
+            }
+        )
+        context.set_progress((index + 1) * 100 / target_count, f"{method} fb {index + 1}/{target_count}")
     return {"ok": True, "outputs": outputs, "logs": ["fallback mode"]}
 
 
 def _read_images(samples, image_size, max_images, device):
     import torch
+
     tensors = []
-    for s in samples[:max_images]:
-        p = str(Path(s.get("sample_path") or s.get("path") or ""))
-        img = read_image(p)
-        if img is None:
-            continue
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        img = cv2.resize(img, (image_size, image_size), interpolation=cv2.INTER_AREA)
-        x = torch.from_numpy(img).permute(2, 0, 1).to(device=device, dtype=torch.float32) / 255.0
-        x = x * 2.0 - 1.0
-        tensors.append(x)
+    for sample in samples[:max_images]:
+        x = _read_single_image(sample, image_size, device)
+        if x is not None:
+            tensors.append(x[0])
     return torch.stack(tensors, dim=0) if len(tensors) >= 2 else None
+
+
+def _read_single_image(sample, image_size, device):
+    import torch
+
+    p = str(Path(sample.get("sample_path") or sample.get("path") or ""))
+    img = read_image(p)
+    if img is None:
+        return None
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    img = cv2.resize(img, (image_size, image_size), interpolation=cv2.INTER_AREA)
+    x = torch.from_numpy(img).permute(2, 0, 1).to(device=device, dtype=torch.float32) / 255.0
+    return (x * 2.0 - 1.0).unsqueeze(0)
 
 
 def _to_bgr(x):
     import torch
+
     x = x.detach().cpu().clamp(-1.0, 1.0)
     x = (x + 1.0) / 2.0
     x = (x * 255.0).to(torch.uint8).permute(1, 2, 0).numpy()
     return cv2.cvtColor(x, cv2.COLOR_RGB2BGR)
 
 
+def _to_original_size_bgr(x, sample):
+    img = _to_bgr(x)
+    source = read_image(Path(sample.get("sample_path") or sample.get("path") or ""))
+    if source is None:
+        return img
+    h, w = source.shape[:2]
+    return cv2.resize(img, (w, h), interpolation=cv2.INTER_LINEAR)
+
+
+def _sample_stem(sample):
+    return Path(sample.get("sample_path") or sample.get("path") or "sample").stem or "sample"
+
+
+def _clamp_float(value, low, high):
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        parsed = low
+    return max(low, min(parsed, high))
+
+
+def _clamp_int(value, low, high):
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = low
+    return max(low, min(parsed, high))
+
+
 def _build_model(device):
     import torch
     import torch.nn as nn
-    import numpy as _np
+
     base_ch = 64
     time_dim = 128
 
     def _temb(t, dim):
         half = dim // 2
-        esc = _np.log(10000.0) / (half - 1)
-        emb = torch.exp(torch.arange(half, device=device, dtype=torch.float32) * -esc)
+        scale = np.log(10000.0) / (half - 1)
+        emb = torch.exp(torch.arange(half, device=device, dtype=torch.float32) * -scale)
         emb = t.float().unsqueeze(1) * emb.unsqueeze(0)
         return torch.cat([torch.sin(emb), torch.cos(emb)], dim=1)
 
@@ -202,6 +291,7 @@ def _build_model(device):
             self.tmlp = nn.Sequential(nn.Linear(time_dim, base_ch * 2), nn.ReLU(inplace=True), nn.Linear(base_ch * 2, base_ch * 2))
             self.up = nn.ConvTranspose2d(base_ch * 2, base_ch, 4, 2, 1)
             self.cout = nn.Conv2d(base_ch, 3, 3, 1, 1)
+
         def forward(self, xt, t):
             h1 = torch.relu(self.c1(xt))
             h2 = torch.relu(self.c2(h1))
@@ -209,6 +299,7 @@ def _build_model(device):
             temb = _temb(t, time_dim)
             h2 = h2 + self.tmlp(temb).unsqueeze(-1).unsqueeze(-1)
             return self.cout(torch.relu(self.up(h2)))
+
     return NoisePredictor()
 
 

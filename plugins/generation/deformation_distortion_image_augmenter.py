@@ -13,7 +13,7 @@ PARAMETERS = [
         "name": 'elastic_strength',
         "type": 'float',
         "label": '弹性形变强度',
-        "default": 0.0,
+        "default": 8.0,
         "min": 0.0,
         "max": 50.0,
         "options": [],
@@ -35,7 +35,7 @@ PARAMETERS = [
         "name": 'distortion_k1',
         "type": 'float',
         "label": '径向畸变k1',
-        "default": 0.0,
+        "default": 0.18,
         "min": -1.0,
         "max": 1.0,
         "options": [],
@@ -46,7 +46,7 @@ PARAMETERS = [
         "name": 'distortion_k2',
         "type": 'float',
         "label": '径向畸变k2',
-        "default": 0.0,
+        "default": 0.03,
         "min": -1.0,
         "max": 1.0,
         "options": [],
@@ -67,10 +67,10 @@ def run(payload: dict, context) -> dict:
         return {"ok": False, "error_code": "NO_INPUT_SAMPLES", "message": "未提供源样本。"}
 
     target_count = max(1, int(payload.get("target_count") or len(samples)))
-    elastic_strength = float(parameters.get("elastic_strength", parameters.get("弹性强度", 0.0)) or 0.0)
+    elastic_strength = float(parameters.get("elastic_strength", parameters.get("弹性强度", 8.0)) or 8.0)
     elastic_sigma = float(parameters.get("elastic_gaussian_kernel", parameters.get("elastic_sigma", parameters.get("弹性高斯核", 10.0))) or 10.0)
-    k1 = float(parameters.get("distortion_k1", parameters.get("k1", parameters.get("畸变系数k1", 0.0))) or 0.0)
-    k2 = float(parameters.get("distortion_k2", parameters.get("k2", parameters.get("畸变系数k2", 0.0))) or 0.0)
+    k1 = float(parameters.get("distortion_k1", parameters.get("k1", parameters.get("畸变系数k1", 0.18))) or 0.18)
+    k2 = float(parameters.get("distortion_k2", parameters.get("k2", parameters.get("畸变系数k2", 0.03))) or 0.03)
 
     outputs = []
     for index in range(target_count):
@@ -97,8 +97,8 @@ def run(payload: dict, context) -> dict:
             dy = (np.random.rand(h, w).astype(np.float32) * 2 - 1)
             dx = cv2.GaussianBlur(dx, (51, 51), sigma)
             dy = cv2.GaussianBlur(dy, (51, 51), sigma)
-            dx = dx * alpha / 100.0
-            dy = dy * alpha / 100.0
+            dx = dx * alpha
+            dy = dy * alpha
             x, y = np.meshgrid(np.arange(w), np.arange(h))
             map_x = (x + dx).astype(np.float32)
             map_y = (y + dy).astype(np.float32)

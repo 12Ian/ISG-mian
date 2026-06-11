@@ -9,6 +9,7 @@ from ..plugins import PluginRunner
 from ..errors import NotFoundError, ValidationError
 from ..storage import FileIndexer
 from .base import ServiceBase
+from .sample_ordering import interleave_by_top_folder
 
 
 @slots_dataclass
@@ -96,6 +97,7 @@ class CleaningService(ServiceBase):
                 algorithms.append(algorithm)
 
             samples = session.query(Sample).filter(Sample.dataset_id == dataset.id).order_by(Sample.id.asc()).all()
+            samples = interleave_by_top_folder(samples)
 
         plugin_context = context or self.task_manager.build_context(task_id)
         all_suggestions: list[dict] = []
@@ -353,6 +355,7 @@ class CleaningService(ServiceBase):
             "path": sample.file_path,
             "sample_path": sample.file_path,
             "sample_type": sample.modality,
+            "relative_path": sample.relative_path,
             "sha256": sample.sha256,
             "metadata": sample.metadata_json,
             "status": sample.status,

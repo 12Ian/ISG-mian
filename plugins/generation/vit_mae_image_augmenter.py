@@ -13,9 +13,9 @@ PARAMETERS = [
         "name": 'mask_ratio',
         "type": 'float',
         "label": '掩码比例',
-        "default": 0.75,
-        "min": 0.1,
-        "max": 0.95,
+        "default": 0.35,
+        "min": 0.05,
+        "max": 0.9,
         "options": [],
         "description": '图像patch掩码比例',
         "required": False,
@@ -35,9 +35,9 @@ PARAMETERS = [
         "name": 'training_steps',
         "type": 'int',
         "label": '训练步数',
-        "default": 100,
+        "default": 120,
         "min": 10,
-        "max": 10000,
+        "max": 500,
         "options": [],
         "description": '模拟训练迭代步数',
         "required": False,
@@ -51,6 +51,17 @@ PARAMETERS = [
         "max": 32,
         "options": [],
         "description": 'ViT patch划分尺寸',
+        "required": False,
+    },
+    {
+        "name": "blend_strength",
+        "type": "float",
+        "label": "重建融合强度",
+        "default": 0.65,
+        "min": 0.0,
+        "max": 1.0,
+        "options": [],
+        "description": "Transformer重建区域与原图的融合比例",
         "required": False,
     },
 ]
@@ -71,11 +82,12 @@ def run(payload: dict, context) -> dict:
     if not samples:
         return {"ok": False, "error_code": "NO_INPUT_SAMPLES"}
     target_count = max(1, int(payload.get("target_count") or len(samples)))
-    mask_ratio = max(0.0, min(float(parameters.get("mask_ratio", 0.75) or 0.75), 0.95))
-    train_cap = max(5, min(int(parameters.get("train_cap", 100) or 100), 300))
-    ps = int(parameters.get("ps", 4) or 4)
-    lr = float(parameters.get("lr", 0.0001) or 0.0001)
-    image_size = 32
+    mask_ratio = _clamp_float(parameters.get("mask_ratio", 0.35), 0.05, 0.9)
+    train_cap = _clamp_int(parameters.get("training_steps", parameters.get("train_cap", 120)), 10, 500)
+    ps = _clamp_int(parameters.get("patch_size", parameters.get("ps", 4)), 2, 16)
+    lr = _clamp_float(parameters.get("learning_rate", parameters.get("lr", 0.0001)), 1e-6, 0.1)
+    blend_strength = _clamp_float(parameters.get("blend_strength", 0.65), 0.0, 1.0)
+    image_size = 64
     if image_size % ps != 0:
         return {"ok": False, "error_code": "INVALID_PATCH_SIZE"}
     max_images = max(2, min(64, int(parameters.get("max_images", 32))))
@@ -109,15 +121,14 @@ def run(payload: dict, context) -> dict:
         loss.backward()
         opt.step()
         context.set_progress(step * 50 / steps, f"ViT-MAE train {step+1}/{steps}")
-    labeled_samples = [s for s in samples if (s.get("labels") or s.get("labels_json") or [])]
-    if not labeled_samples:
-        labeled_samples = samples
     outputs = []
     for index in range(target_count):
         if context.is_cancel_requested():
             return {"ok": False, "error_code": "CANCELLED"}
-        ci = int(np.random.randint(0, tensors.size(0)))
-        x0 = tensors[ci:ci+1]
+        source_sample = samples[index % len(samples)]
+        x0 = _read_single_img(source_sample, image_size, device)
+        if x0 is None:
+            continue
         m = torch.rand(1, npatch, device=device) < mask_ratio
         if m.all():
             m = torch.rand(1, npatch, device=device) < min(0.5, mask_ratio)
@@ -127,17 +138,25 @@ def run(payload: dict, context) -> dict:
         tokens = tokens + pos
         h = encoder(tokens)
         pred = hd(h)
-        out_p = torch.where(m.unsqueeze(-1), pred, patches)
+        blended_pred = patches * (1.0 - blend_strength) + pred * blend_strength
+        out_p = torch.where(m.unsqueeze(-1), blended_pred, patches)
         x_rec = _unpatch(out_p, ps, nps, image_size).clamp(-1.0, 1.0)
-        img = _to_bgr(x_rec[0])
-        out_f = output_dir / f"vit_mae_{index:04d}.jpg"
+        img = _to_original_size_bgr(x_rec[0], source_sample)
+        out_f = output_dir / f"{_sample_stem(source_sample)}_vit_mae_{index:04d}.jpg"
         if not write_image(out_f, img):
             return {"ok": False, "error_code": "IMAGE_WRITE_ERROR", "message": f"Cannot write image: {out_f}"}
         outputs.append({
-            "source_sample_id": labeled_samples[index % len(labeled_samples)].get("id"),
+            "source_sample_id": source_sample.get("id"),
             "output_path": str(out_f),
             "relative_path": out_f.name,
-            "metadata": {"method": "vit_mae"},
+            "metadata": {
+                "method": "vit_mae",
+                "mask_ratio": mask_ratio,
+                "patch_size": ps,
+                "training_steps": steps,
+                "learning_rate": lr,
+                "blend_strength": blend_strength,
+            },
             "status": "created",
         })
         context.set_progress(50 + (index+1)*50/target_count, f"ViT-MAE gen {index+1}/{target_count}")
@@ -145,7 +164,8 @@ def run(payload: dict, context) -> dict:
 
 
 def _fb(payload, context, output_dir, samples, target_count, method, parameters):
-    ps = int(parameters.get("ps", 4) or 4)
+    ps = _clamp_int(parameters.get("patch_size", parameters.get("ps", 4)), 2, 16)
+    mask_ratio = _clamp_float(parameters.get("mask_ratio", 0.35), 0.05, 0.9)
     outputs = []
     for index in range(target_count):
         if context.is_cancel_requested():
@@ -159,22 +179,17 @@ def _fb(payload, context, output_dir, samples, target_count, method, parameters)
         if h < ps or w < ps:
             out = cv2.GaussianBlur(img, (3, 3), 0)
         else:
-            imr = cv2.resize(img, (32, 32), interpolation=cv2.INTER_AREA)
-            pse = ps if 32 % ps == 0 else 4
-            blocks = [[imr[y:y+pse, x:x+pse].copy() for x in range(0, 32, pse)] for y in range(0, 32, pse)]
-            for _ in range(8):
-                y1, x1 = np.random.randint(0, len(blocks)), np.random.randint(0, len(blocks[0]))
-                y2, x2 = np.random.randint(0, len(blocks)), np.random.randint(0, len(blocks[0]))
-                blocks[y1][x1], blocks[y2][x2] = blocks[y2][x2], blocks[y1][x1]
-            out = np.zeros_like(imr)
-            for yy in range(0, 32, pse):
-                for xx in range(0, 32, pse):
-                    out[yy:yy+pse, xx:xx+pse] = blocks[yy//pse][xx//pse]
-            out = cv2.GaussianBlur(out, (3, 3), 0)
-        of = output_dir / f"{method}_{index:04d}.jpg"
+            out = img.copy()
+            patch = max(2, ps * max(1, min(h, w) // 64))
+            blurred = cv2.GaussianBlur(img, (3, 3), 0)
+            for yy in range(0, h, patch):
+                for xx in range(0, w, patch):
+                    if np.random.random() < mask_ratio:
+                        out[yy:yy + patch, xx:xx + patch] = blurred[yy:yy + patch, xx:xx + patch]
+        of = output_dir / f"{_sample_stem(s)}_{method}_{index:04d}.jpg"
         if not write_image(of, out):
             return {"ok": False, "error_code": "IMAGE_WRITE_ERROR", "message": f"Cannot write image: {of}"}
-        outputs.append({"source_sample_id": s.get("id"), "output_path": str(of), "relative_path": of.name, "metadata": {"method": method, "fallback": True}, "status": "created"})
+        outputs.append({"source_sample_id": s.get("id"), "output_path": str(of), "relative_path": of.name, "metadata": {"method": method, "fallback": True, "mask_ratio": mask_ratio, "patch_size": ps}, "status": "created"})
         context.set_progress((index+1)*100/target_count, f"{method} fb {index+1}/{target_count}")
     return {"ok": True, "outputs": outputs, "logs": ["fallback mode"]}
 
@@ -183,15 +198,22 @@ def _read_img(samples, image_size, max_images, device):
     import torch
     tensors = []
     for s in samples[:max_images]:
-        p = str(Path(s.get("sample_path") or s.get("path") or ""))
-        img = read_image(p)
-        if img is None:
-            continue
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        img = cv2.resize(img, (image_size, image_size), interpolation=cv2.INTER_AREA)
-        x = torch.from_numpy(img).permute(2, 0, 1).to(device=device, dtype=torch.float32) / 255.0
-        tensors.append(x * 2.0 - 1.0)
+        x = _read_single_img(s, image_size, device)
+        if x is not None:
+            tensors.append(x[0])
     return torch.stack(tensors, dim=0) if len(tensors) >= 2 else None
+
+
+def _read_single_img(sample, image_size, device):
+    import torch
+    p = str(Path(sample.get("sample_path") or sample.get("path") or ""))
+    img = read_image(p)
+    if img is None:
+        return None
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    img = cv2.resize(img, (image_size, image_size), interpolation=cv2.INTER_AREA)
+    x = torch.from_numpy(img).permute(2, 0, 1).to(device=device, dtype=torch.float32) / 255.0
+    return (x * 2.0 - 1.0).unsqueeze(0)
 
 
 def _to_bgr(x):
@@ -200,6 +222,35 @@ def _to_bgr(x):
     x = (x + 1.0) / 2.0
     x = (x * 255.0).to(torch.uint8).permute(1, 2, 0).numpy()
     return cv2.cvtColor(x, cv2.COLOR_RGB2BGR)
+
+
+def _to_original_size_bgr(x, sample):
+    img = _to_bgr(x)
+    source = read_image(Path(sample.get("sample_path") or sample.get("path") or ""))
+    if source is None:
+        return img
+    h, w = source.shape[:2]
+    return cv2.resize(img, (w, h), interpolation=cv2.INTER_LINEAR)
+
+
+def _sample_stem(sample):
+    return Path(sample.get("sample_path") or sample.get("path") or "sample").stem or "sample"
+
+
+def _clamp_float(value, low, high):
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        parsed = low
+    return max(low, min(parsed, high))
+
+
+def _clamp_int(value, low, high):
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = low
+    return max(low, min(parsed, high))
 
 
 def _patch(x, ps, nps):

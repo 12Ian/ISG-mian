@@ -7,58 +7,58 @@ import numpy as np
 
 PARAMETERS = [
     {
-        "name": 'volume_scale',
-        "type": 'float',
-        "label": '音量缩放',
-        "default": 1.0,
+        "name": "volume_scale",
+        "type": "float",
+        "label": "音量缩放",
+        "default": 1.35,
         "min": 0.0,
         "max": 5.0,
         "options": [],
-        "description": '线性音量缩放系数',
+        "description": "线性音量缩放系数",
         "required": False,
     },
     {
-        "name": 'mute_probability',
-        "type": 'float',
-        "label": '静音触发概率',
-        "default": 0.5,
+        "name": "mute_probability",
+        "type": "float",
+        "label": "静音触发概率",
+        "default": 0.9,
         "min": 0.0,
         "max": 1.0,
         "options": [],
-        "description": '每个静音段的触发概率',
+        "description": "每个样本插入静音段的概率",
         "required": False,
     },
     {
-        "name": 'mute_count',
-        "type": 'int',
-        "label": '静音段数量',
-        "default": 1,
+        "name": "mute_count",
+        "type": "int",
+        "label": "静音段数量",
+        "default": 2,
         "min": 0,
         "max": 10,
         "options": [],
-        "description": '随机插入的静音段数量',
+        "description": "随机插入的静音段数量",
         "required": False,
     },
     {
-        "name": 'min_sec',
-        "type": 'float',
-        "label": '最短静音(秒)',
+        "name": "min_sec",
+        "type": "float",
+        "label": "最短静音秒数",
         "default": 0.05,
         "min": 0.01,
         "max": 1.0,
         "options": [],
-        "description": '单个静音段最短时长',
+        "description": "单个静音段最短时长",
         "required": False,
     },
     {
-        "name": 'max_sec',
-        "type": 'float',
-        "label": '最长静音(秒)',
-        "default": 0.2,
+        "name": "max_sec",
+        "type": "float",
+        "label": "最长静音秒数",
+        "default": 0.35,
         "min": 0.05,
         "max": 2.0,
         "options": [],
-        "description": '单个静音段最长时长',
+        "description": "单个静音段最长时长",
         "required": False,
     },
 ]
@@ -80,11 +80,13 @@ def run(payload: dict, context) -> dict:
         return {"ok": False, "error_code": "NO_INPUT_SAMPLES"}
 
     target_count = max(1, int(payload.get("target_count") or len(samples)))
-    gain = max(0.0, float(parameters.get("gain", parameters.get("音量缩放", 1.0)) or 1.0))
-    sil_prob = float(parameters.get("sil_prob", parameters.get("静音概率", 0.5)) or 0.5)
-    sil_times = max(1, int(parameters.get("sil_times", parameters.get("静音次数", 1)) or 1))
-    sil_min = float(parameters.get("sil_min", parameters.get("静音最短秒", 0.05)) or 0.05)
-    sil_max = float(parameters.get("sil_max", parameters.get("静音最长秒", 0.2)) or 0.2)
+    gain = _clamp_float(parameters.get("volume_scale", parameters.get("gain", 1.35)), 0.0, 5.0)
+    mute_probability = _clamp_float(parameters.get("mute_probability", parameters.get("sil_prob", 0.9)), 0.0, 1.0)
+    mute_count = _clamp_int(parameters.get("mute_count", parameters.get("sil_times", 2)), 0, 10)
+    min_sec = _clamp_float(parameters.get("min_sec", parameters.get("sil_min", 0.05)), 0.01, 1.0)
+    max_sec = _clamp_float(parameters.get("max_sec", parameters.get("sil_max", 0.35)), 0.05, 2.0)
+    if min_sec > max_sec:
+        min_sec, max_sec = max_sec, min_sec
 
     outputs = []
     for index in range(target_count):
@@ -96,26 +98,48 @@ def run(payload: dict, context) -> dict:
             y, sr = librosa.load(str(sp), sr=None, mono=True)
         except Exception:
             continue
-        T = len(y)
 
-        y_out = y * gain
-
-        if np.random.rand() < sil_prob:
-            for _ in range(sil_times):
-                seg = int(np.random.uniform(sil_min, sil_max) * sr)
-                seg = max(1, min(seg, T))
-                start = int(np.random.randint(0, max(1, T - seg)))
+        y_out = np.clip(y.astype(np.float32) * gain, -1.0, 1.0)
+        if mute_count > 0 and np.random.rand() < mute_probability:
+            total = len(y_out)
+            for _ in range(mute_count):
+                seg = int(np.random.uniform(min_sec, max_sec) * sr)
+                seg = max(1, min(seg, total))
+                start = int(np.random.randint(0, max(1, total - seg)))
                 y_out[start:start + seg] = 0.0
 
         out = output_dir / f"{sp.stem}_energy_{index:04d}.wav"
         sf.write(str(out), y_out, sr)
-        outputs.append({
-            "source_sample_id": sample.get("id"),
-            "output_path": str(out),
-            "relative_path": out.name,
-            "metadata": {"method": "energy_amplitude", "gain": gain},
-            "status": "created",
-        })
-        context.set_progress((index + 1) * 100 / target_count, f"Energy/amp {index+1}/{target_count}")
+        outputs.append(
+            {
+                "source_sample_id": sample.get("id"),
+                "output_path": str(out),
+                "relative_path": out.name,
+                "metadata": {
+                    "method": "energy_amplitude",
+                    "volume_scale": gain,
+                    "mute_probability": mute_probability,
+                    "mute_count": mute_count,
+                },
+                "status": "created",
+            }
+        )
+        context.set_progress((index + 1) * 100 / target_count, f"Energy/amp {index + 1}/{target_count}")
 
     return {"ok": True, "outputs": outputs, "logs": []}
+
+
+def _clamp_float(value, low, high):
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        parsed = low
+    return max(low, min(parsed, high))
+
+
+def _clamp_int(value, low, high):
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = low
+    return max(low, min(parsed, high))

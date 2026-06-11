@@ -32,7 +32,7 @@ Item {
         anchors.topMargin: -16
         anchors.rightMargin: -16
         title: "算法配置帮助"
-        body: "在本页注册、修改或卸载自定义算法插件。左侧选择算法，右侧查看脚本路径、接口说明、使用说明和参数快照；完整规范见 docs/ALGORITHM_USAGE_GUIDE.md。"
+        body: "本页用于查看、注册、修改和卸载算法插件，是生成、清洗、训练和评估算法的统一配置入口。\n\n1. 左侧按算法大类和数据模态分组展示插件，例如生成算法下会继续分为图像增强方法、音频增强方法、文本增强方法等。点击分组可展开或折叠。\n2. 点击某个算法后，右侧会显示算法名称、所属类别、脚本或模块挂载路径、接口简述、使用说明和参数快照。\n3. “插件规范”按钮会打开本项目的算法插件开发规范 PDF，可用于确认 run(payload, context) 入口、PARAMETERS 参数声明和输出格式。\n4. “注册新插件环境”用于接入新的 Python 插件。选择脚本后系统会自动反射 PARAMETERS，生成参数配置表；填写名称、类别、模态和说明后确认注册。\n5. “调参修改”用于修改已有算法的参数定义、名称、类别、模态、脚本路径或模块路径。内置模块算法会保留 module_path，脚本插件会复制并保存 script_path。\n6. 参数表支持新增、删除和编辑参数名、显示标签、类型、默认值、数值范围和下拉选项。保存后，数据生成/清洗/评估页面会按这些参数渲染动态配置控件。\n7. “卸载环境”会删除算法注册记录。删除前请确认没有正在运行的任务依赖该算法。\n8. 调整完成后建议回到对应业务页面刷新算法列表，确认新参数和新插件已经生效。"
     }
 
     // 状态控制
@@ -108,9 +108,10 @@ Item {
         id: algoItemDelegate
         Rectangle {
             width: parent ? parent.width : 260
-            height: 64
+            height: model.isHeader ? 30 : 64
             radius: 0
             color: {
+                if (model.isHeader) return Qt.rgba(29/255, 78/255, 216/255, 0.06)
                 if (model.id === root.selectedAlgoId) return Qt.rgba(29/255, 78/255, 216/255, 0.10)
                 if (itemMa.containsMouse) return root.tableHoverBg
                 return "transparent"
@@ -122,13 +123,26 @@ Item {
                 id: itemMa
                 anchors.fill: parent
                 hoverEnabled: true
+                enabled: !model.isHeader
                 onClicked: root.selectedAlgoId = model.id
+            }
+
+            Text {
+                anchors.left: parent.left
+                anchors.leftMargin: 14
+                anchors.verticalCenter: parent.verticalCenter
+                text: model.subCategory || model.name || ""
+                color: root.devAccentColor
+                font.pixelSize: 11
+                font.bold: true
+                visible: model.isHeader
             }
 
             RowLayout {
                 anchors.fill: parent
                 anchors.margins: 10
                 spacing: 12
+                visible: !model.isHeader
 
                 Rectangle {
                     width: 34; height: 34; radius: 5
@@ -253,6 +267,75 @@ Item {
         return "图像增强方法"
     }
 
+    function modalityOrder(modality) {
+        if (modality === "image") return 0
+        if (modality === "audio") return 1
+        if (modality === "text") return 2
+        if (modality === "tabular") return 3
+        if (modality === "video") return 4
+        return 5
+    }
+
+    function categoryOrder(category) {
+        if (category === "cleaning") return 0
+        if (category === "generation") return 1
+        if (category === "evaluation") return 2
+        if (category === "training") return 3
+        return 4
+    }
+
+    function isUserPlugin(item) {
+        var script = String(item.script_path || "")
+        return script !== ""
+    }
+
+    function normalizeParamType(typeName) {
+        var t = String(typeName || "string")
+        if (t === "number") return "float"
+        if (t === "integer") return "int"
+        return t
+    }
+
+    function isScriptPath(value) {
+        var path = String(value || "")
+        return path.toLowerCase().indexOf(".py") !== -1 || path.indexOf("/") !== -1 || path.indexOf("\\") !== -1
+    }
+
+    function compareAlgorithms(a, b) {
+        var ac = root.categoryOrder(a.category)
+        var bc = root.categoryOrder(b.category)
+        if (ac !== bc) return ac - bc
+
+        var am = root.modalityOrder(a.modality)
+        var bm = root.modalityOrder(b.modality)
+        if (am !== bm) return am - bm
+
+        var au = root.isUserPlugin(a) ? 0 : 1
+        var bu = root.isUserPlugin(b) ? 0 : 1
+        if (au !== bu) return au - bu
+
+        return String(a.name || "").localeCompare(String(b.name || ""), "zh-Hans-CN")
+    }
+
+    function appendGroupedEntry(model, entry, lastSubCategory) {
+        if (lastSubCategory !== entry.subCategory) {
+            model.append({
+                isHeader: true,
+                id: -1,
+                name: entry.subCategory,
+                category: entry.category,
+                subCategory: entry.subCategory,
+                modality: entry.modality,
+                script: "",
+                desc: "",
+                paramsJson: "[]",
+                enabled: false
+            })
+        }
+        model.append(entry)
+        return entry.subCategory
+    }
+
     function loadAlgorithms() {
         backendService.getAlgorithms("", "")
     }
@@ -293,7 +376,6 @@ Item {
             category: category,
             modality: modality,
             entry_type: "python_function",
-            script_path: inputScriptPath.text.trim(),
             callable_name: "run",
             description: inputDesc.text,
             input_contract: {"dataset_required": true, "sample_required": true},
@@ -315,8 +397,13 @@ Item {
             evaluationAlgoModel.clear()
             trainingAlgoModel.clear()
             var cCount = 0, gCount = 0, eCount = 0, tCount = 0
-            for (var i = 0; i < items.length; i++) {
-                var item = items[i]
+            var sortedItems = (items || []).slice().sort(root.compareAlgorithms)
+            var lastCleaningSub = ""
+            var lastGenerationSub = ""
+            var lastEvaluationSub = ""
+            var lastTrainingSub = ""
+            for (var i = 0; i < sortedItems.length; i++) {
+                var item = sortedItems[i]
                 var params = []
                 var sourceParams = item.parameters || []
                 for (var p = 0; p < sourceParams.length; p++) {
@@ -325,7 +412,7 @@ Item {
                         "n": sp.name || "",
                         "label": sp.label || sp.name || "",
                         "v": String(sp.default_value !== undefined ? sp.default_value : ""),
-                        "type": sp.type || "string",
+                        "type": root.normalizeParamType(sp.type),
                         "min": String(sp.min_value !== undefined && sp.min_value !== null ? sp.min_value : ""),
                         "max": String(sp.max_value !== undefined && sp.max_value !== null ? sp.max_value : ""),
                         "options": sp.options || [],
@@ -340,22 +427,25 @@ Item {
                     subCategory: root.subtypeLabel(item.category, item.modality),
                     modality: item.modality,
                     script: item.script_path || item.module_path || "",
+                    scriptPath: item.script_path || "",
+                    modulePath: item.module_path || "",
                     desc: item.description || "",
                     paramsJson: JSON.stringify(params),
-                    enabled: item.status === "enabled"
+                    enabled: item.status === "enabled",
+                    isHeader: false
                 }
                 algoListModel.append(entry)
                 if (item.category === "cleaning") {
-                    cleaningAlgoModel.append(entry)
+                    lastCleaningSub = root.appendGroupedEntry(cleaningAlgoModel, entry, lastCleaningSub)
                     cCount++
                 } else if (item.category === "generation") {
-                    generationAlgoModel.append(entry)
+                    lastGenerationSub = root.appendGroupedEntry(generationAlgoModel, entry, lastGenerationSub)
                     gCount++
                 } else if (item.category === "evaluation") {
-                    evaluationAlgoModel.append(entry)
+                    lastEvaluationSub = root.appendGroupedEntry(evaluationAlgoModel, entry, lastEvaluationSub)
                     eCount++
                 } else {
-                    trainingAlgoModel.append(entry)
+                    lastTrainingSub = root.appendGroupedEntry(trainingAlgoModel, entry, lastTrainingSub)
                     tCount++
                 }
             }
@@ -364,8 +454,8 @@ Item {
             root.evaluationCount = eCount
             root.trainingCount = tCount
             root.totalAlgoCount = items.length
-            if (items.length > 0 && root.selectedAlgoId === -1) {
-                root.selectedAlgoId = items[0].id
+            if (sortedItems.length > 0 && root.selectedAlgoId === -1) {
+                root.selectedAlgoId = sortedItems[0].id
             }
         }
     }
@@ -399,7 +489,7 @@ Item {
                         "n": p.name || "",
                         "label": p.label || p.name || "",
                         "v": String(p.default !== undefined ? p.default : ""),
-                        "type": p.type || "string",
+                        "type": root.normalizeParamType(p.type),
                         "min": String(p.min !== undefined && p.min !== null ? p.min : ""),
                         "max": String(p.max !== undefined && p.max !== null ? p.max : ""),
                         "options": p.options || [],
@@ -671,7 +761,7 @@ Item {
 
                                 delegate: Rectangle {
                                     width: paramListView.width
-                                    height: (model.type === "int" || model.type === "float" || model.type === "select") ? 82 : 50
+                                    height: (root.normalizeParamType(model.type) === "int" || root.normalizeParamType(model.type) === "float" || root.normalizeParamType(model.type) === "select") ? 82 : 50
                                     color: index % 2 === 0 ? "transparent" : root.tableHoverBg
 
                                     ColumnLayout {
@@ -708,6 +798,7 @@ Item {
                                                 model: ["string", "int", "float", "bool", "select"]
                                                 currentIndex: {
                                                     var t = model.type || "string"
+                                                    t = root.normalizeParamType(t)
                                                     if (t === "int") return 1
                                                     if (t === "float") return 2
                                                     if (t === "bool") return 3
@@ -743,17 +834,17 @@ Item {
                                         RowLayout {
                                             Layout.fillWidth: true
                                             Layout.preferredHeight: 30
-                                            visible: model.type === "int" || model.type === "float" || model.type === "select"
+                                            visible: root.normalizeParamType(model.type) === "int" || root.normalizeParamType(model.type) === "float" || root.normalizeParamType(model.type) === "select"
                                             spacing: 6
 
                                             // int/float: min + max
                                             Text {
-                                                visible: model.type === "int" || model.type === "float"
+                                                visible: root.normalizeParamType(model.type) === "int" || root.normalizeParamType(model.type) === "float"
                                                 text: "min"; color: root.textMuted; font.pixelSize: 10
                                                 Layout.preferredWidth: 24
                                             }
                                             Rectangle {
-                                                visible: model.type === "int" || model.type === "float"
+                                                visible: root.normalizeParamType(model.type) === "int" || root.normalizeParamType(model.type) === "float"
                                                 Layout.preferredWidth: 65; height: 24; color: "transparent"; border.color: root.borderColor; border.width: 1; radius: 3
                                                 TextInput {
                                                     text: model.min; color: root.textMuted; font.pixelSize: 10; anchors.fill: parent; leftPadding: 4; verticalAlignment: TextInput.AlignVCenter
@@ -761,12 +852,12 @@ Item {
                                                 }
                                             }
                                             Text {
-                                                visible: model.type === "int" || model.type === "float"
+                                                visible: root.normalizeParamType(model.type) === "int" || root.normalizeParamType(model.type) === "float"
                                                 text: "max"; color: root.textMuted; font.pixelSize: 10
                                                 Layout.preferredWidth: 28
                                             }
                                             Rectangle {
-                                                visible: model.type === "int" || model.type === "float"
+                                                visible: root.normalizeParamType(model.type) === "int" || root.normalizeParamType(model.type) === "float"
                                                 Layout.preferredWidth: 65; height: 24; color: "transparent"; border.color: root.borderColor; border.width: 1; radius: 3
                                                 TextInput {
                                                     text: model.max; color: root.textMuted; font.pixelSize: 10; anchors.fill: parent; leftPadding: 4; verticalAlignment: TextInput.AlignVCenter
@@ -776,12 +867,12 @@ Item {
 
                                             // select: options
                                             Text {
-                                                visible: model.type === "select"
+                                                visible: root.normalizeParamType(model.type) === "select"
                                                 text: "选项"; color: root.textMuted; font.pixelSize: 10
                                                 Layout.preferredWidth: 28
                                             }
                                             Rectangle {
-                                                visible: model.type === "select"
+                                                visible: root.normalizeParamType(model.type) === "select"
                                                 Layout.fillWidth: true; height: 24; color: "transparent"; border.color: root.borderColor; border.width: 1; radius: 3
                                                 TextInput {
                                                     text: model.options; color: root.textMuted; font.pixelSize: 10; anchors.fill: parent; leftPadding: 4; verticalAlignment: TextInput.AlignVCenter
@@ -883,17 +974,23 @@ Item {
                         }
                         var pJsonStr = JSON.stringify(pArray)
 
-                        // 复制 .py 到 plugins/user/（如已在目录中则跳过）
-                        var scriptPath = inputScriptPath.text.trim()
-                        var importResult = backendService.importPluginFile(scriptPath)
-                        if (!importResult.ok) {
-                            root.showToast("⚠️ 文件复制失败: " + (importResult.message || "未知错误"))
-                            return
-                        }
-                        scriptPath = importResult.path
-
                         var payload = root.buildAlgorithmPayload(pJsonStr)
-                        payload.script_path = scriptPath
+                        var inputPath = inputScriptPath.text.trim()
+                        var currentData = root.pendingEditIndex === -1 ? null : algoListModel.get(root.pendingEditIndex)
+                        var isScriptPlugin = root.pendingEditIndex === -1 || root.isScriptPath(inputPath) || (currentData && currentData.scriptPath !== "")
+
+                        if (isScriptPlugin) {
+                            var importResult = backendService.importPluginFile(inputPath)
+                            if (!importResult.ok) {
+                                root.showToast("⚠️ 文件复制失败: " + (importResult.message || "未知错误"))
+                                return
+                            }
+                            payload.script_path = importResult.path
+                            payload.module_path = ""
+                        } else {
+                            payload.module_path = inputPath
+                            payload.script_path = ""
+                        }
 
                         var result = root.pendingEditIndex === -1
                             ? backendService.createAlgorithm(payload)
