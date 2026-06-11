@@ -1324,22 +1324,45 @@ Item {
                         RowLayout { anchors.fill: parent; anchors.leftMargin: 20; anchors.rightMargin: 20; spacing: 10
                             Label { text: "📁 " + model.dataset; color: Theme.text; font.pixelSize: 13; Layout.preferredWidth: 160; elide: Text.ElideRight }
                             Label { text: model.algo; color: root.primaryColor; font.pixelSize: 13; font.bold: true; Layout.preferredWidth: 140; elide: Text.ElideRight }
-                            Label {
-                                property var _detailObj: { try { return JSON.parse(model.detailsJson || "{}") } catch(e) { return {} } }
-                                property var _metricText: {
-                                    var str = "";
-                                    var keys = Object.keys(_detailObj);
-                                    var hiddenTrainingKeys = ["taskId", "status", "outputDir", "artifactPath", "progressMessage", "summary", "checkpoint"]
-                                    for (var mi = 0; mi < keys.length; mi++) {
-                                        if (keys[mi] === "dataset" || keys[mi] === "algo") continue;
-                                        if (root.currentHistoryItem && root.currentHistoryItem.historyType === "training" && hiddenTrainingKeys.indexOf(keys[mi]) !== -1) continue;
-                                        if (str !== "") str += " | ";
-                                        str += keys[mi] + ": " + _detailObj[keys[mi]];
-                                    }
-                                    return str || "暂无指标";
+                            Flickable {
+                                id: metricFlick
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+                                clip: true
+                                contentWidth: metricText.implicitWidth
+                                contentHeight: height
+                                flickableDirection: Flickable.HorizontalFlick
+                                boundsBehavior: Flickable.StopAtBounds
+                                interactive: contentWidth > width
+
+                                ScrollBar.horizontal: ScrollBar {
+                                    policy: metricFlick.contentWidth > metricFlick.width ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff
                                 }
-                                text: _metricText; color: root.textColor; font.pixelSize: 12; font.family: "Courier"; font.bold: true
-                                Layout.fillWidth: true; elide: Text.ElideRight
+
+                                Text {
+                                    id: metricText
+                                    property var _detailObj: { try { return JSON.parse(model.detailsJson || "{}") } catch(e) { return {} } }
+                                    property var _metricText: {
+                                        var str = "";
+                                        var keys = Object.keys(_detailObj);
+                                        var hiddenTrainingKeys = ["taskId", "status", "outputDir", "artifactPath", "progressMessage", "summary", "checkpoint"]
+                                        for (var mi = 0; mi < keys.length; mi++) {
+                                            if (keys[mi] === "dataset" || keys[mi] === "algo") continue;
+                                            if (root.currentHistoryItem && root.currentHistoryItem.historyType === "training" && hiddenTrainingKeys.indexOf(keys[mi]) !== -1) continue;
+                                            if (str !== "") str += " | ";
+                                            str += keys[mi] + ": " + _detailObj[keys[mi]];
+                                        }
+                                        return str || "暂无指标";
+                                    }
+                                    x: 0
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    text: _metricText
+                                    color: root.textColor
+                                    font.pixelSize: 12
+                                    font.family: "Courier"
+                                    font.bold: true
+                                    wrapMode: Text.NoWrap
+                                }
                             }
                         }
                     }
