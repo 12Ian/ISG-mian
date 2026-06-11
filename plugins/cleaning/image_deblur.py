@@ -1,4 +1,4 @@
-"""Image deblur cleaning plugin. Uses Laplacian variance to detect blur and sharpens via unsharp masking."""
+"""Image deblur cleaning plugin. Filters out images whose blur score falls below the threshold."""
 
 from pathlib import Path
 from typing import Optional
@@ -13,29 +13,29 @@ PARAMETERS = [
         "min": 1,
         "max": 1000,
         "options": [],
-        "description": 'Laplacian方差低于此值时判定为模糊',
+        "description": 'Laplacian方差低于此值时直接过滤图片',
         "required": False,
     },
     {
-        "name": 'apply',
-        "type": 'bool',
-        "label": '写入修复结果',
-        "default": True,
-        "min": None,
-        "max": None,
-        "options": [],
-        "description": '是否将去模糊后的图像写入磁盘',
-        "required": False,
-    },
-    {
-        "name": 'sharpen_amount',
+        "name": 'min_confidence',
         "type": 'float',
-        "label": '锐化强度',
-        "default": 1.2,
-        "min": 0.1,
-        "max": 3.0,
+        "label": '最低置信度',
+        "default": 0.2,
+        "min": 0.0,
+        "max": 1.0,
         "options": [],
-        "description": '反锐化掩模强度，值越大边缘增强越明显',
+        "description": '仅当模糊判定置信度不低于该值时才过滤',
+        "required": False,
+    },
+    {
+        "name": 'laplacian_ksize',
+        "type": 'int',
+        "label": '拉普拉斯核大小',
+        "default": 3,
+        "min": 1,
+        "max": 7,
+        "options": [],
+        "description": '计算模糊分数时使用的拉普拉斯卷积核大小，必须为奇数',
         "required": False,
     },
 ]
@@ -44,10 +44,9 @@ PARAMETERS = [
 def run(payload: dict, context) -> dict:
     parameters = payload.get("parameters", {}) or {}
     samples = payload.get("input", {}).get("samples", []) or []
-    output_dir = Path(payload.get("output", {}).get("output_dir", "."))
     blur_threshold = float(parameters.get("blur_threshold", 100))
-    apply_changes = bool(parameters.get("apply", True))
-    sharpen_amount = max(0.1, min(float(parameters.get("sharpen_amount", 1.2)), 3.0))
+    min_confidence = float(parameters.get("min_confidence", 0.2))
+    laplacian_ksize = _odd_kernel_size(parameters.get("laplacian_ksize", 3), default=3, minimum=1, maximum=7)
 
     if not samples:
         return {"ok": True, "suggestions": [], "logs": []}
@@ -64,24 +63,28 @@ def run(payload: dict, context) -> dict:
         if not sample_path or not sample_path.is_file():
             continue
 
-        score = _blur_score(sample_path)
+        score = _blur_score(sample_path, laplacian_ksize)
         if score is None:
             continue
 
         if score < blur_threshold:
             confidence = _clamp(1.0 - score / max(blur_threshold, 1.0))
-            output_path = ""
-            if apply_changes:
-                output_path = _deblur_and_save(sample_path, output_dir, sharpen_amount)
+            if confidence < min_confidence:
+                continue
             suggestions.append({
                 "sample_id": sample["id"],
                 "issue_type": "image_blur",
-                "suggested_action": "repair",
+                "suggested_action": "delete",
                 "confidence": confidence,
                 "message": f"Laplacian blur score {score:.1f} < threshold {blur_threshold:.0f}",
-                "details": {"blur_score": score, "blur_threshold": blur_threshold,
-                            "sharpen_amount": sharpen_amount,
-                            "output_file_path": output_path, "processing_result": "deblurred"},
+                "details": {
+                    "blur_score": score,
+                    "blur_threshold": blur_threshold,
+                    "min_confidence": min_confidence,
+                    "laplacian_ksize": laplacian_ksize,
+                    "sample_path": str(sample_path),
+                    "processing_result": "filtered_out",
+                },
             })
 
     return {"ok": True, "suggestions": suggestions, "logs": []}
@@ -94,7 +97,7 @@ def _sample_path(sample: dict):
     return Path(path)
 
 
-def _blur_score(path: Path) -> Optional[float]:
+def _blur_score(path: Path, laplacian_ksize: int) -> Optional[float]:
     try:
         import cv2
     except Exception:
@@ -103,28 +106,9 @@ def _blur_score(path: Path) -> Optional[float]:
         img = _read_image(path, cv2.IMREAD_GRAYSCALE)
         if img is None:
             return None
-        return float(cv2.Laplacian(img, cv2.CV_64F).var())
+        return float(cv2.Laplacian(img, cv2.CV_64F, ksize=laplacian_ksize).var())
     except Exception:
         return None
-
-
-def _deblur_and_save(path: Path, output_dir: Path, sharpen_amount: float) -> str:
-    try:
-        import cv2
-    except Exception:
-        return ""
-    try:
-        img = _read_image(path, cv2.IMREAD_COLOR)
-        if img is None:
-            return ""
-        blurred = cv2.GaussianBlur(img, (0, 0), 3)
-        sharpened = cv2.addWeighted(img, 1.0 + sharpen_amount, blurred, -sharpen_amount, 0)
-        output_dir.mkdir(parents=True, exist_ok=True)
-        out_path = output_dir / f"deblurred_{path.name}"
-        _write_image(out_path, sharpened)
-        return str(out_path)
-    except Exception:
-        return ""
 
 
 def _read_image(path: Path, flags):
@@ -139,17 +123,16 @@ def _read_image(path: Path, flags):
         return None
 
 
-def _write_image(path: Path, image) -> bool:
-    try:
-        import cv2
-        success, encoded = cv2.imencode(path.suffix or ".jpg", image)
-        if not success:
-            return False
-        path.write_bytes(encoded.tobytes())
-        return True
-    except Exception:
-        return False
-
-
 def _clamp(v: float) -> float:
     return round(max(0.0, min(1.0, v)), 4)
+
+
+def _odd_kernel_size(value, *, default: int, minimum: int, maximum: int) -> int:
+    try:
+        size = int(value)
+    except Exception:
+        size = default
+    size = max(minimum, min(maximum, size))
+    if size % 2 == 0:
+        size = size + 1 if size < maximum else size - 1
+    return max(minimum, min(maximum, size))

@@ -258,6 +258,45 @@ def test_bridge_get_algorithms_keeps_empty_modality_as_unfiltered_query(tmp_path
     }
 
 
+def test_seed_default_algorithms_merges_legacy_resolution_cleaner(tmp_path):
+    from backend import (
+        BackendPaths,
+        BackendServiceFacade,
+        create_backend_engine,
+        create_session_factory,
+        initialize_backend_database,
+    )
+    from backend.qt.bridge import BackendBridge
+
+    paths = BackendPaths(root=tmp_path / "backend-root")
+    engine = create_backend_engine(paths.database_path)
+    initialize_backend_database(engine)
+    facade = BackendServiceFacade.build(paths=paths, session_factory=create_session_factory(engine))
+    bridge = BackendBridge(facade=facade)
+
+    facade.algorithm_service.create_algorithm(
+        {
+            "key": "图片低分辨率清洗",
+            "name": "图片低分辨率清洗",
+            "category": "cleaning",
+            "modality": "image",
+            "entry_type": "python_function",
+            "script_path": str(paths.plugins_dir / "user" / "desktop_image_resolution_cleaner.py"),
+            "callable_name": "run",
+            "input_contract": {"dataset_required": True, "sample_required": True},
+            "output_contract": {"produces": ["suggestions"]},
+            "parameters": [],
+        }
+    )
+
+    bridge.seed_default_algorithms()
+    algorithms = bridge.get_algorithms("cleaning", "image")
+
+    resolution_algorithms = [item for item in algorithms if item["name"] == "图片低分辨率清洗"]
+    assert len(resolution_algorithms) == 1
+    assert resolution_algorithms[0]["key"] == "cleaning.image_resolution_filter"
+
+
 def test_bridge_get_task_logs_serializes_repository_dict_rows(tmp_path):
     from backend import (
         BackendPaths,

@@ -3,6 +3,17 @@ from pathlib import Path
 import pytest
 
 
+_SMALL_PNG_BYTES = (
+    b"\x89PNG\r\n\x1a\n"
+    b"\x00\x00\x00\rIHDR"
+    b"\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00"
+    b"\x90wS\xde"
+    b"\x00\x00\x00\x0cIDATx\x9cc\xf8\xcf\xc0\x00\x00\x03\x01\x01\x00"
+    b"\xc9\xfe\x92\xef"
+    b"\x00\x00\x00\x00IEND\xaeB`\x82"
+)
+
+
 def build_services(tmp_path):
     from backend import BackendPaths, BackendServiceFacade, create_backend_engine, create_session_factory, initialize_backend_database
 
@@ -423,6 +434,64 @@ def test_builtin_duplicate_detector_finds_duplicates_from_imported_file_hashes(t
     assert suggestions["items"][0]["details"]["sha256"]
 
 
+def test_resolution_cleaner_filters_non_compliant_images_when_storing_dataset(tmp_path):
+    facade, _paths = build_services(tmp_path)
+    dataset = facade.dataset_service.create_dataset("image-filter-ds", "image", "")
+
+    small_image = tmp_path / "too_small.png"
+    large_image = tmp_path / "good.png"
+    small_image.write_bytes(_SMALL_PNG_BYTES)
+    large_image.write_bytes(_SMALL_PNG_BYTES)
+
+    dataset_id = dataset["data"]["id"]
+    facade.dataset_service.import_files(dataset_id, [str(small_image), str(large_image)])
+
+    imported_samples = facade.dataset_service.list_samples(dataset_id, 1, 20, "")["items"]
+    sample_by_name = {item["name"]: item for item in imported_samples}
+    large_sample_path = Path(sample_by_name["good.png"]["file_path"])
+    patched_large = large_sample_path.read_bytes()
+    patched_large = patched_large[:16] + b"\x00\x00\x03\x20\x00\x00\x02\x58" + patched_large[24:]
+    large_sample_path.write_bytes(patched_large)
+
+    algorithm_id = facade.algorithm_service.create_algorithm(
+        {
+            "key": "user.desktop_image_resolution_cleaner",
+            "name": "桌面图片分辨率过滤",
+            "category": "cleaning",
+            "modality": "image",
+            "entry_type": "python_function",
+            "module_path": "plugins.user.desktop_image_resolution_cleaner",
+            "callable_name": "run",
+            "input_contract": {"dataset_required": True, "sample_required": True},
+            "output_contract": {"produces": ["suggestions"]},
+            "parameters": [
+                {"name": "min_width", "label": "最小宽度", "type": "integer", "required": False, "default_value": 640},
+                {"name": "min_height", "label": "最小高度", "type": "integer", "required": False, "default_value": 480},
+                {"name": "min_file_kb", "label": "最小文件大小(KB)", "type": "integer", "required": False, "default_value": 0},
+            ],
+        }
+    )["data"]["id"]
+
+    task_id = facade.cleaning_service.create_task(
+        dataset_id,
+        [algorithm_id],
+        {"min_width": 640, "min_height": 480, "min_file_kb": 0},
+    )["data"]["task_id"]
+    facade.task_manager.start(task_id)
+    run_result = facade.cleaning_service.run_task(task_id)
+    suggestions = facade.cleaning_service.list_suggestions(task_id, None, 1, 20)
+    stored = facade.cleaning_service.store_cleaned_dataset(task_id, "image-filter-ds-cleaned")
+    stored_samples = facade.dataset_service.list_samples(stored["data"]["dataset"]["id"], 1, 20, "")
+
+    assert run_result["ok"] is True
+    assert suggestions["total"] == 1
+    assert suggestions["items"][0]["suggested_action"] == "delete"
+    assert suggestions["items"][0]["sample"]["name"] == "too_small.png"
+    assert stored["data"]["stored_count"] == 1
+    assert stored["data"]["skipped_count"] == 1
+    assert [item["name"] for item in stored_samples["items"]] == ["good.png"]
+
+
 def write_pgm(path, pixels):
     height = len(pixels)
     width = len(pixels[0])
@@ -519,6 +588,66 @@ def test_image_near_duplicate_cleaning_algorithm_is_seeded_and_runs_through_back
     assert item["confidence"] >= 0.75
     assert item["suggested_action"] == "delete"
     assert item["details"]["processing_result"] == "near_duplicate_detected"
+
+
+def test_seeded_image_denoise_algorithm_exposes_noise_threshold_only(tmp_path):
+    from backend.seed_data import DEFAULT_ALGORITHMS
+
+    facade, _paths = build_services(tmp_path)
+    for payload in DEFAULT_ALGORITHMS:
+        facade.algorithm_service.create_algorithm(dict(payload))
+
+    algorithms = {item["key"]: item for item in facade.algorithm_service.get_algorithms("cleaning", "image")}
+    resolution = algorithms["cleaning.image_resolution_filter"]
+    denoise = algorithms["cleaning.image_denoise"]
+    deblur = algorithms["cleaning.image_deblur"]
+
+    assert [item["name"] for item in resolution["parameters"]] == ["min_width", "min_height", "min_file_kb"]
+    assert [item["name"] for item in denoise["parameters"]] == ["noise_threshold", "min_confidence", "median_kernel_size"]
+    assert denoise["parameters"][0]["default_value"] == 12.0
+    assert denoise["parameters"][1]["default_value"] == 0.2
+    assert denoise["parameters"][2]["default_value"] == 3
+    assert denoise["output_contract"]["artifact_types"] == []
+    assert [item["name"] for item in deblur["parameters"]] == ["blur_threshold", "min_confidence", "laplacian_ksize"]
+    assert deblur["output_contract"]["artifact_types"] == []
+
+
+def test_image_denoise_plugin_returns_delete_for_noisy_sample(monkeypatch):
+    from plugins.cleaning import image_denoise
+
+    class DummyPath:
+        def __init__(self, raw):
+            self.raw = raw
+
+        def is_file(self):
+            return True
+
+        def __str__(self):
+            return self.raw
+
+    class Context:
+        def is_cancel_requested(self):
+            return False
+
+        def set_progress(self, value, message):
+            self.progress = (value, message)
+
+    monkeypatch.setattr(image_denoise, "_sample_path", lambda sample: DummyPath(sample["sample_path"]))
+    monkeypatch.setattr(image_denoise, "_noise_score", lambda path, kernel_size: 18.0)
+
+    result = image_denoise.run(
+        {
+            "parameters": {"noise_threshold": 12.0, "min_confidence": 0.2, "median_kernel_size": 5},
+            "input": {"samples": [{"id": 7, "sample_path": "C:/tmp/noisy.png"}]},
+        },
+        Context(),
+    )
+
+    assert result["ok"] is True
+    assert len(result["suggestions"]) == 1
+    assert result["suggestions"][0]["suggested_action"] == "delete"
+    assert result["suggestions"][0]["details"]["processing_result"] == "filtered_out"
+    assert result["suggestions"][0]["details"]["median_kernel_size"] == 5
 
 
 def test_cleaning_apply_delete_marks_source_and_blocks_later_repair(tmp_path):
