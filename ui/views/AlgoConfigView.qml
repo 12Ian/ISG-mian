@@ -32,7 +32,7 @@ Item {
         anchors.topMargin: -16
         anchors.rightMargin: -16
         title: "算法配置帮助"
-        body: "本页用于查看、注册、修改和卸载算法插件，是生成、清洗、训练和评估算法的统一配置入口。\n\n1. 左侧按算法大类和数据模态分组展示插件，例如生成算法下会继续分为图像增强方法、音频增强方法、文本增强方法等。点击分组可展开或折叠。\n2. 点击某个算法后，右侧会显示算法名称、所属类别、脚本或模块挂载路径、接口简述、使用说明和参数快照。\n3. “插件规范”按钮会弹出本项目的算法插件开发规范窗口，可下拉查看 run(payload, context) 入口、PARAMETERS 参数声明和输出格式。\n4. “注册新插件环境”用于接入新的 Python 插件。选择脚本后系统会自动反射 PARAMETERS，生成参数配置表；填写名称、类别、模态和说明后确认注册。\n5. “调参修改”用于修改已有算法的参数定义、名称、类别、模态、脚本路径或模块路径。内置模块算法会保留 module_path，脚本插件会复制并保存 script_path。\n6. 参数表支持新增、删除和编辑参数名、显示标签、类型、默认值、数值范围和下拉选项。保存后，数据生成/清洗/评估页面会按这些参数渲染动态配置控件。\n7. “卸载环境”会删除算法注册记录。删除前请确认没有正在运行的任务依赖该算法。\n8. 调整完成后建议回到对应业务页面刷新算法列表，确认新参数和新插件已经生效。"
+        body: "本页用于查看、注册、修改和卸载算法插件，是生成、清洗、训练和评估算法的统一配置入口。\n\n1. 左侧按算法大类和数据模态分组展示插件，可通过顶部下拉框筛选全部、清洗、生成、评估或训练算法；点击分组可展开或折叠。\n2. 点击某个算法后，右侧会显示算法名称、所属类别、脚本或模块挂载路径、接口简述、使用说明和参数快照。\n3. “插件规范”按钮会弹出本项目的算法插件开发规范窗口，可下拉查看 run(payload, context) 入口、PARAMETERS 参数声明和输出格式。\n4. “注册新插件环境”用于接入新的 Python 插件。选择脚本后系统会自动反射 PARAMETERS，生成参数配置表；填写名称、类别、模态和说明后确认注册。\n5. “调参修改”用于修改已有算法的参数定义、名称、类别、模态、脚本路径或模块路径。内置模块算法会保留 module_path，脚本插件会复制并保存 script_path。\n6. 参数表支持新增、删除和编辑参数名、显示标签、类型、默认值、数值范围和下拉选项。保存后，数据生成/清洗/评估页面会按这些参数渲染动态配置控件。\n7. “卸载环境”会删除算法注册记录。删除前请确认没有正在运行的任务依赖该算法。\n8. 调整完成后建议回到对应业务页面刷新算法列表，确认新参数和新插件已经生效。"
     }
 
     // 状态控制
@@ -50,6 +50,7 @@ Item {
     property int evaluationCount: 0
     property int trainingCount: 0
     property int totalAlgoCount: 0
+    property string algoCategoryFilter: "全部算法"
     property string pluginSpecText: "ISG 算法插件开发规范 v1.0\n\n" +
         "一、插件基本要求\n" +
         "1. 插件必须是一个 Python .py 文件，注册后由系统反射参数并在界面生成配置项。\n" +
@@ -138,6 +139,32 @@ Item {
         if (idx === -1) return ""
         var d = algoListModel.get(idx)
         return d[field] !== undefined ? d[field] : ""
+    }
+
+    function showCategorySection(categoryLabel) {
+        return root.algoCategoryFilter === "全部算法" || root.algoCategoryFilter === categoryLabel
+    }
+
+    function firstAlgoIdForCategory(categoryLabel) {
+        for (var i = 0; i < algoListModel.count; i++) {
+            var item = algoListModel.get(i)
+            if (!item.isHeader && item.category === categoryLabel) return item.id
+        }
+        return -1
+    }
+
+    function applyAlgoCategoryFilter(categoryLabel) {
+        root.algoCategoryFilter = categoryLabel || "全部算法"
+        if (root.algoCategoryFilter === "全部算法") return
+
+        if (root.algoCategoryFilter === "清洗算法") root.cleaningExpanded = true
+        if (root.algoCategoryFilter === "生成算法") root.generationExpanded = true
+        if (root.algoCategoryFilter === "评估算法") root.evaluationExpanded = true
+        if (root.algoCategoryFilter === "训练算法") root.trainingExpanded = true
+
+        if (root.selectedAlgoIndex !== -1 && root.selectedAlgoField("category") === root.algoCategoryFilter) return
+        var firstId = root.firstAlgoIdForCategory(root.algoCategoryFilter)
+        if (firstId !== -1) root.selectedAlgoId = firstId
     }
 
     // ================= 背景 =================
@@ -882,11 +909,10 @@ Item {
                                 Rectangle { width: parent.width; height: 1; color: root.borderColor; anchors.bottom: parent.bottom }
                                 RowLayout {
                                     anchors.fill: parent; anchors.leftMargin: 10; anchors.rightMargin: 10; spacing: 6
-                                    Text { text: "参数名"; color: root.textMuted; font.pixelSize: 11; font.bold: true; Layout.preferredWidth: 90 }
-                                    Text { text: "标签"; color: root.textMuted; font.pixelSize: 11; font.bold: true; Layout.preferredWidth: 90 }
+                                    Text { text: "参数名"; color: root.textMuted; font.pixelSize: 11; font.bold: true; Layout.fillWidth: true }
+                                    Text { text: "标签"; color: root.textMuted; font.pixelSize: 11; font.bold: true; Layout.fillWidth: true }
                                     Text { text: "类型"; color: root.textMuted; font.pixelSize: 11; font.bold: true; Layout.preferredWidth: 70 }
-                                    Text { text: "默认值"; color: root.textMuted; font.pixelSize: 11; font.bold: true; Layout.fillWidth: true }
-                                    Item { Layout.preferredWidth: 32 }
+                                    Text { text: "操作"; color: root.textMuted; font.pixelSize: 11; font.bold: true; Layout.preferredWidth: 32; horizontalAlignment: Text.AlignHCenter }
                                 }
                             }
 
@@ -903,7 +929,7 @@ Item {
 
                                 delegate: Rectangle {
                                     width: paramListView.width
-                                    height: (root.normalizeParamType(model.type) === "int" || root.normalizeParamType(model.type) === "float" || root.normalizeParamType(model.type) === "select") ? 82 : 50
+                                    height: (root.normalizeParamType(model.type) === "int" || root.normalizeParamType(model.type) === "float" || root.normalizeParamType(model.type) === "select") ? 110 : 76
                                     color: index % 2 === 0 ? "transparent" : root.tableHoverBg
 
                                     ColumnLayout {
@@ -919,17 +945,17 @@ Item {
                                             spacing: 6
                                             // 参数名
                                             Rectangle {
-                                                Layout.preferredWidth: 90; height: 28; color: "transparent"; border.color: root.borderColor; border.width: 1; radius: 3
+                                                Layout.fillWidth: true; Layout.minimumWidth: 82; height: 28; color: "transparent"; border.color: root.borderColor; border.width: 1; radius: 3
                                                 TextInput {
-                                                    text: model.n; color: root.textColor; font.pixelSize: 11; anchors.fill: parent; leftPadding: 5; verticalAlignment: TextInput.AlignVCenter
+                                                    text: model.n; color: root.textColor; font.pixelSize: 11; anchors.fill: parent; leftPadding: 5; rightPadding: 5; clip: true; verticalAlignment: TextInput.AlignVCenter
                                                     onTextChanged: editingParamsModel.setProperty(index, "n", text)
                                                 }
                                             }
                                             // 显示标签
                                             Rectangle {
-                                                Layout.preferredWidth: 90; height: 28; color: "transparent"; border.color: root.borderColor; border.width: 1; radius: 3
+                                                Layout.fillWidth: true; Layout.minimumWidth: 82; height: 28; color: "transparent"; border.color: root.borderColor; border.width: 1; radius: 3
                                                 TextInput {
-                                                    text: model.label; color: root.textColor; font.pixelSize: 11; anchors.fill: parent; leftPadding: 5; verticalAlignment: TextInput.AlignVCenter
+                                                    text: model.label; color: root.textColor; font.pixelSize: 11; anchors.fill: parent; leftPadding: 5; rightPadding: 5; clip: true; verticalAlignment: TextInput.AlignVCenter
                                                     onTextChanged: editingParamsModel.setProperty(index, "label", text)
                                                 }
                                             }
@@ -956,6 +982,7 @@ Item {
                                             }
                                             // 默认值
                                             Rectangle {
+                                                visible: false
                                                 Layout.fillWidth: true; height: 28; color: "transparent"; border.color: root.borderColor; border.width: 1; radius: 3
                                                 TextInput {
                                                     text: model.v; color: root.devAccentColor; font.pixelSize: 11; anchors.fill: parent; leftPadding: 5; verticalAlignment: TextInput.AlignVCenter
@@ -975,6 +1002,23 @@ Item {
                                         // 第二行：min/max (int/float) 或 options (select)
                                         RowLayout {
                                             Layout.fillWidth: true
+                                            Layout.preferredHeight: 28
+                                            spacing: 6
+                                            Text {
+                                                text: "默认值"; color: root.textMuted; font.pixelSize: 10
+                                                Layout.preferredWidth: 44
+                                            }
+                                            Rectangle {
+                                                Layout.fillWidth: true; height: 24; color: "transparent"; border.color: root.borderColor; border.width: 1; radius: 3
+                                                TextInput {
+                                                    text: model.v; color: root.devAccentColor; font.pixelSize: 10; anchors.fill: parent; leftPadding: 5; rightPadding: 5; clip: true; verticalAlignment: TextInput.AlignVCenter
+                                                    onTextChanged: editingParamsModel.setProperty(index, "v", text)
+                                                }
+                                            }
+                                        }
+
+                                        RowLayout {
+                                            Layout.fillWidth: true
                                             Layout.preferredHeight: 30
                                             visible: root.normalizeParamType(model.type) === "int" || root.normalizeParamType(model.type) === "float" || root.normalizeParamType(model.type) === "select"
                                             spacing: 6
@@ -989,7 +1033,7 @@ Item {
                                                 visible: root.normalizeParamType(model.type) === "int" || root.normalizeParamType(model.type) === "float"
                                                 Layout.preferredWidth: 65; height: 24; color: "transparent"; border.color: root.borderColor; border.width: 1; radius: 3
                                                 TextInput {
-                                                    text: model.min; color: root.textMuted; font.pixelSize: 10; anchors.fill: parent; leftPadding: 4; verticalAlignment: TextInput.AlignVCenter
+                                                    text: model.min; color: root.textMuted; font.pixelSize: 10; anchors.fill: parent; leftPadding: 4; rightPadding: 4; clip: true; verticalAlignment: TextInput.AlignVCenter
                                                     onTextChanged: editingParamsModel.setProperty(index, "min", text)
                                                 }
                                             }
@@ -1002,7 +1046,7 @@ Item {
                                                 visible: root.normalizeParamType(model.type) === "int" || root.normalizeParamType(model.type) === "float"
                                                 Layout.preferredWidth: 65; height: 24; color: "transparent"; border.color: root.borderColor; border.width: 1; radius: 3
                                                 TextInput {
-                                                    text: model.max; color: root.textMuted; font.pixelSize: 10; anchors.fill: parent; leftPadding: 4; verticalAlignment: TextInput.AlignVCenter
+                                                    text: model.max; color: root.textMuted; font.pixelSize: 10; anchors.fill: parent; leftPadding: 4; rightPadding: 4; clip: true; verticalAlignment: TextInput.AlignVCenter
                                                     onTextChanged: editingParamsModel.setProperty(index, "max", text)
                                                 }
                                             }
@@ -1017,7 +1061,7 @@ Item {
                                                 visible: root.normalizeParamType(model.type) === "select"
                                                 Layout.fillWidth: true; height: 24; color: "transparent"; border.color: root.borderColor; border.width: 1; radius: 3
                                                 TextInput {
-                                                    text: model.options; color: root.textMuted; font.pixelSize: 10; anchors.fill: parent; leftPadding: 4; verticalAlignment: TextInput.AlignVCenter
+                                                    text: model.options; color: root.textMuted; font.pixelSize: 10; anchors.fill: parent; leftPadding: 4; rightPadding: 4; clip: true; verticalAlignment: TextInput.AlignVCenter
                                                     onTextChanged: editingParamsModel.setProperty(index, "options", text.split(",").map(function(s) { return s.trim() }).filter(function(s) { return s !== "" }))
                                                 }
                                             }
@@ -1028,19 +1072,19 @@ Item {
 
                             // 底部新增参数区
                             Rectangle {
-                                Layout.fillWidth: true; height: 50; color: Theme.rowAlt
+                                Layout.fillWidth: true; height: 58; color: Theme.rowAlt
                                 Rectangle { width: parent.width; height: 1; color: root.borderColor; anchors.top: parent.top }
                                 RowLayout {
                                     anchors.fill: parent; anchors.leftMargin: 10; anchors.rightMargin: 10; spacing: 6
                                     TextField {
                                         id: newParamName; Layout.preferredWidth: 80; Layout.preferredHeight: 28
-                                        color: root.textColor; font.pixelSize: 11; leftPadding: 5; verticalAlignment: TextInput.AlignVCenter
+                                        color: root.textColor; font.pixelSize: 11; leftPadding: 5; rightPadding: 5; verticalAlignment: TextInput.AlignVCenter; clip: true
                                         placeholderText: "参数名"; placeholderTextColor: root.textMuted
                                         background: Rectangle { color: root.panelBg; border.color: root.borderColor; border.width: 1; radius: 3 }
                                     }
                                     TextField {
                                         id: newParamLabel; Layout.preferredWidth: 80; Layout.preferredHeight: 28
-                                        color: root.textColor; font.pixelSize: 11; leftPadding: 5; verticalAlignment: TextInput.AlignVCenter
+                                        color: root.textColor; font.pixelSize: 11; leftPadding: 5; rightPadding: 5; verticalAlignment: TextInput.AlignVCenter; clip: true
                                         placeholderText: "标签"; placeholderTextColor: root.textMuted
                                         background: Rectangle { color: root.panelBg; border.color: root.borderColor; border.width: 1; radius: 3 }
                                     }
@@ -1053,7 +1097,7 @@ Item {
                                     }
                                     TextField {
                                         id: newParamVal; Layout.fillWidth: true; Layout.preferredHeight: 28
-                                        color: root.devAccentColor; font.pixelSize: 11; leftPadding: 5; verticalAlignment: TextInput.AlignVCenter
+                                        color: root.devAccentColor; font.pixelSize: 11; leftPadding: 5; rightPadding: 5; verticalAlignment: TextInput.AlignVCenter; clip: true
                                         placeholderText: "默认值"; placeholderTextColor: root.textMuted
                                         background: Rectangle { color: root.panelBg; border.color: root.borderColor; border.width: 1; radius: 3 }
                                     }
@@ -1254,25 +1298,47 @@ Item {
                 }
 
                 Flickable {
+                    id: algoListFlickable
                     anchors.fill: parent
-                    contentHeight: Math.max(sectionColumn.implicitHeight, 52 + root.totalAlgoCount * 68 + 200)
+                    contentHeight: Math.max(sectionColumn.implicitHeight, 96 + root.totalAlgoCount * 68 + 200)
                     clip: true
                     boundsBehavior: Flickable.StopAtBounds
                     visible: algoListModel.count > 0
 
+                    ScrollBar.vertical: ScrollBar {
+                        policy: ScrollBar.AlwaysOn
+                        interactive: true
+                    }
+
                     ColumnLayout {
                         id: sectionColumn
-                        width: parent.width
+                        width: parent.width - 12
                         spacing: 0
 
                         // ---- 统计概览 ----
                         Rectangle {
                             Layout.fillWidth: true
-                            Layout.preferredHeight: 52
+                            Layout.preferredHeight: 96
                             color: Qt.rgba(29/255, 78/255, 216/255, 0.06)
 
+                            ComboBox {
+                                id: algoCategoryFilterCombo
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                anchors.top: parent.top
+                                anchors.leftMargin: 10
+                                anchors.rightMargin: 10
+                                anchors.topMargin: 10
+                                height: 32
+                                model: ["全部算法", "清洗算法", "生成算法", "评估算法", "训练算法"]
+                                currentIndex: Math.max(0, model.indexOf(root.algoCategoryFilter))
+                                onActivated: root.applyAlgoCategoryFilter(currentText)
+                            }
+
                             RowLayout {
-                                anchors.centerIn: parent
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                anchors.bottom: parent.bottom
+                                anchors.bottomMargin: 11
                                 spacing: 16
                                 Text {
                                     text: "总计 " + root.totalAlgoCount
@@ -1310,6 +1376,7 @@ Item {
 
                         // ===== 清洗算法 =====
                         Rectangle {
+                            visible: root.showCategorySection("清洗算法")
                             Layout.fillWidth: true; height: 38
                             color: root.cleaningExpanded ? Qt.rgba(47/255, 133/255, 90/255, 0.04) : "transparent"
                             MouseArea {
@@ -1334,17 +1401,18 @@ Item {
                             }
                         }
                         Column {
-                            visible: root.cleaningExpanded
+                            visible: root.showCategorySection("清洗算法") && root.cleaningExpanded
                             Layout.fillWidth: true
                             Repeater {
                                 model: cleaningAlgoModel
                                 delegate: algoItemDelegate
                             }
                         }
-                        Rectangle { Layout.fillWidth: true; height: 1; color: root.borderColor }
+                        Rectangle { visible: root.showCategorySection("清洗算法"); Layout.fillWidth: true; height: 1; color: root.borderColor }
 
                         // ===== 生成算法 =====
                         Rectangle {
+                            visible: root.showCategorySection("生成算法")
                             Layout.fillWidth: true; height: 38
                             color: root.generationExpanded ? Qt.rgba(194/255, 125/255, 14/255, 0.04) : "transparent"
                             MouseArea {
@@ -1369,17 +1437,18 @@ Item {
                             }
                         }
                         Column {
-                            visible: root.generationExpanded
+                            visible: root.showCategorySection("生成算法") && root.generationExpanded
                             Layout.fillWidth: true
                             Repeater {
                                 model: generationAlgoModel
                                 delegate: algoItemDelegate
                             }
                         }
-                        Rectangle { Layout.fillWidth: true; height: 1; color: root.borderColor }
+                        Rectangle { visible: root.showCategorySection("生成算法"); Layout.fillWidth: true; height: 1; color: root.borderColor }
 
                         // ===== 评估算法 =====
                         Rectangle {
+                            visible: root.showCategorySection("评估算法")
                             Layout.fillWidth: true; height: 38
                             color: root.evaluationExpanded ? Qt.rgba(29/255, 78/255, 216/255, 0.04) : "transparent"
                             MouseArea {
@@ -1404,17 +1473,18 @@ Item {
                             }
                         }
                         Column {
-                            visible: root.evaluationExpanded
+                            visible: root.showCategorySection("评估算法") && root.evaluationExpanded
                             Layout.fillWidth: true
                             Repeater {
                                 model: evaluationAlgoModel
                                 delegate: algoItemDelegate
                             }
                         }
-                        Rectangle { Layout.fillWidth: true; height: 1; color: root.borderColor }
+                        Rectangle { visible: root.showCategorySection("评估算法"); Layout.fillWidth: true; height: 1; color: root.borderColor }
 
                         // ===== 训练算法 =====
                         Rectangle {
+                            visible: root.showCategorySection("训练算法")
                             Layout.fillWidth: true; height: 38
                             color: root.trainingExpanded ? Qt.rgba(180/255, 83/255, 9/255, 0.04) : "transparent"
                             MouseArea {
@@ -1439,7 +1509,7 @@ Item {
                             }
                         }
                         Column {
-                            visible: root.trainingExpanded
+                            visible: root.showCategorySection("训练算法") && root.trainingExpanded
                             Layout.fillWidth: true
                             Repeater {
                                 model: trainingAlgoModel
