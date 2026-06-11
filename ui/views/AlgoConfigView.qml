@@ -374,6 +374,14 @@ Item {
                     }
 
                     Button {
+                        text: "下载PDF"
+                        onClicked: {
+                            pluginSpecSaveDialog.selectedFile = "ISG 算法插件开发规范.pdf"
+                            pluginSpecSaveDialog.open()
+                        }
+                    }
+
+                    Button {
                         text: "关闭"
                         onClicked: pluginSpecPopup.close()
                     }
@@ -669,6 +677,22 @@ Item {
             } else {
                 root.showToast("⚠️ 参数反射失败: " + (result.error || result.message || "未知错误"))
             }
+        }
+    }
+
+    // ================= 弹窗：插件规范 PDF 保存 =================
+    FileDialog {
+        id: pluginSpecSaveDialog
+        title: "保存插件规范 PDF"
+        fileMode: FileDialog.SaveFile
+        nameFilters: ["PDF 文档 (*.pdf)"]
+        selectedFile: "ISG 算法插件开发规范.pdf"
+        onAccepted: {
+            var path = selectedFile.toString()
+            var cleanPath = decodeURIComponent(path.replace(/^(file:\/{2,3})/, ""))
+            var result = backendService.downloadAlgorithmPluginSpec(cleanPath)
+            if (result.status === "success") root.showToast("✅ 插件规范已下载")
+            else root.showToast("⚠️ " + (result.message || "插件规范下载失败"))
         }
     }
 
