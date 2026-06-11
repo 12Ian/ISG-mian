@@ -138,10 +138,21 @@ def _openmax(wb_model, categories, input_score, eu_weight, alpha=10,
              distance_type="eucos", if_logit=False):
     """OpenMax 概率重校准: 利用 Weibull 模型对 Softmax 分数做开放集修正。"""
     import numpy as np
-    ranked_list = input_score.argsort().ravel()[::-1][:alpha]
-    alpha_weights = [((alpha + 1) - i) / float(alpha) for i in range(1, alpha + 1)]
+
+    # alpha 不能超过当前有效类别数，否则 omega 赋值会出现长度不匹配。
+    effective_alpha = min(
+        int(alpha),
+        int(input_score.shape[-1]) if input_score.ndim > 0 else 0,
+        len(categories),
+    )
     omega = np.zeros(input_score.shape[-1])
-    omega[ranked_list] = alpha_weights
+    if effective_alpha > 0:
+        ranked_list = input_score.argsort().ravel()[::-1][:effective_alpha]
+        alpha_weights = [
+            ((effective_alpha + 1) - i) / float(effective_alpha)
+            for i in range(1, effective_alpha + 1)
+        ]
+        omega[ranked_list] = alpha_weights
 
     scores, scores_u = [], []
     for ch, input_score_channel in enumerate(input_score):
