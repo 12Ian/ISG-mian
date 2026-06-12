@@ -1496,10 +1496,6 @@ class DatasetService(ServiceBase):
             return "audio"
         if extension in {".txt", ".csv", ".json", ".md", ".log", ".yaml", ".yml", ".xml", ".py", ".js", ".html", ".css", ".cfg", ".ini", ".toml"} or mime_type.startswith("text/"):
             return "text"
-        if sample.modality == "image":
-            return "image"
-        if sample.modality == "audio":
-            return "audio"
-        if sample.modality == "text":
-            return "text"
+        # 不依赖 modality 兜底：未知扩展名返回 "file"
+        # 防止 .npy/.cache 等非媒体文件被误判为图片导致 QML 解码错误
         return "file"

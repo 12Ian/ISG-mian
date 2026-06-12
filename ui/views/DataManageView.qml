@@ -54,13 +54,19 @@ Item {
     Connections {
         target: backendService
         function onDatasetsUpdated(data) {
+            var items = []
             if (data && data.items) {
-                root.allDatasets = data.items
+                items = data.items
             } else if (Array.isArray(data)) {
-                root.allDatasets = data
-            } else {
-                root.allDatasets = []
+                items = data
             }
+            // 预计算缓存字段，避免 filter / delegate 渲染时重复调用 datasetStage()
+            for (var i = 0; i < items.length; i++) {
+                var item = items[i]
+                item._stage = root.datasetStage(item)
+                item._cleanName = (item.name || "").split("|Status:")[0]
+            }
+            root.allDatasets = items
             root.filterData()
         }
 
@@ -123,11 +129,12 @@ Item {
     }
 
     function filterData() {
+        var q = searchQuery.toLowerCase()
         displayedDatasets = allDatasets.filter(function(item) {
-            var n = (item.name || "").split("|Status:")[0] // 兼容处理历史数据
-            var matchSearch = n.toLowerCase().indexOf(searchQuery.toLowerCase()) !== -1
+            var cleanName = item._cleanName || (item.name || "").split("|Status:")[0]
+            var matchSearch = cleanName.toLowerCase().indexOf(q) !== -1
             var matchCategory = currentCategory === "全部" || item.type === currentCategory
-            var matchStage = currentStage === "all" || datasetStage(item) === currentStage
+            var matchStage = currentStage === "all" || (item._stage || datasetStage(item)) === currentStage
             return matchSearch && matchCategory && matchStage
         })
     }
@@ -153,11 +160,17 @@ Item {
     }
 
     function stageLabel(item) {
-        var stage = datasetStage(item)
+        var stage = item._stage || datasetStage(item)
         if (stage === "cleaned") return "清洗数据集"
         if (stage === "generated") return "生成数据集"
         if (stage === "test") return "测试数据集"
         return "原始数据集"
+    }
+
+    // 防止后端误判非图片扩展名导致 QML 解码失败
+    function isImageExtension(path) {
+        var ext = String(path).toLowerCase().split('.').pop()
+        return ["jpg","jpeg","png","bmp","gif","webp","tif","tiff"].indexOf(ext) >= 0
     }
 
     function sampleToFileRow(sample) {
@@ -176,6 +189,7 @@ Item {
             else if (bytes < 1073741824) sizeText = (bytes / 1048576).toFixed(1) + " MB"
             else sizeText = (bytes / 1073741824).toFixed(2) + " GB"
         }
+        var labelsText = labelTexts.length > 0 ? labelTexts.join(", ") : "-"
         return {
             sampleId: sample.id || -1,
             name: sample.name || sample.relative_path || "未命名样本",
@@ -184,7 +198,9 @@ Item {
             modified: sample.modified || sample.updated_at || "",
             previewKind: sample.preview_kind || "",
             filePath: sample.file_path || "",
-            labels: labelTexts
+            labels: labelTexts,
+            _labelsText: labelsText,
+            _isImage: root.isImageExtension(sample.file_path || sample.relative_path || "")
         }
     }
 
@@ -388,9 +404,18 @@ Item {
                     border.color: Theme.border
                     radius: 4
                 }
-                onTextChanged: {
-                    searchQuery = text
-                    filterData()
+                // 防抖：每次输入重启 250ms 定时器，停止打字后才执行过滤
+                onTextChanged: searchDebounceTimer.restart()
+            }
+
+            // 搜索防抖定时器 —— 避免每次按键都触发全量过滤+列表重建
+            Timer {
+                id: searchDebounceTimer
+                interval: 250
+                repeat: false
+                onTriggered: {
+                    root.searchQuery = searchInput.text
+                    root.filterData()
                 }
             }
 
@@ -475,7 +500,7 @@ Item {
                             spacing: 10
 
                             Label {
-                                text: (modelData.name || "未命名").split("|Status:")[0]
+                                text: modelData._cleanName || (modelData.name || "未命名").split("|Status:")[0]
                                 color: Theme.text
                                 font.pixelSize: 14
                                 font.bold: true
@@ -729,86 +754,88 @@ Item {
                 }
             }
 
-            // 内容区域：文件夹 + 文件
-            ScrollView {
+            // 内容区域：文件夹 + 文件（文件列表使用 ListView 虚拟化以支持大数据量）
+            ColumnLayout {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 visible: !root.samplePreviewVisible
-                clip: true
-                ScrollBar.vertical.policy: ScrollBar.AsNeeded
+                spacing: 0
 
-                ColumnLayout {
-                    width: parent ? parent.width - 8 : 0
-                    spacing: 0
+                // ".." 返回上级 (根目录不显示)
+                Rectangle {
+                    id: backRow
+                    visible: currentDirPath !== ""
+                    Layout.fillWidth: true
+                    height: 40
+                    color: Theme.rowAlt
+                    MouseArea {
+                        anchors.fill: parent; hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onEntered: backRow.color = Theme.hover
+                        onExited: backRow.color = Theme.rowAlt
+                        onClicked: root.navigateToBreadcrumb(currentDirPath.split("/").length - 2)
+                    }
+                    RowLayout {
+                        anchors.fill: parent; anchors.leftMargin: 16; spacing: 10
+                        Text { text: "📁"; font.pixelSize: 16 }
+                        Label { text: ".. 返回上级"; color: "#93C5FD"; font.pixelSize: 14; font.bold: true }
+                    }
+                }
 
-                    // ".." 返回上级 (根目录不显示)
-                    Rectangle {
-                        id: backRow
-                        visible: currentDirPath !== ""
+                // 文件夹列表（通常数量少，Repeater 即可）
+                Repeater {
+                    model: currentDirDirs
+                    delegate: Rectangle {
+                        id: folderDelegate
                         Layout.fillWidth: true
-                        height: 40
-                        color: Theme.rowAlt
+                        height: 42
+                        color: index % 2 === 0 ? Theme.rowAlt : "transparent"
                         MouseArea {
                             anchors.fill: parent; hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
-                            onEntered: backRow.color = Theme.hover
-                            onExited: backRow.color = Theme.rowAlt
-                            onClicked: root.navigateToBreadcrumb(currentDirPath.split("/").length - 2)
+                            onEntered: folderDelegate.color = Theme.hover
+                            onExited: folderDelegate.color = index % 2 === 0 ? Theme.rowAlt : "transparent"
+                            onClicked: root.navigateToDir(modelData)
                         }
                         RowLayout {
-                            anchors.fill: parent; anchors.leftMargin: 16; spacing: 10
-                            Text { text: "📁"; font.pixelSize: 16 }
-                            Label { text: ".. 返回上级"; color: "#93C5FD"; font.pixelSize: 14; font.bold: true }
+                            anchors.fill: parent; anchors.leftMargin: 16; anchors.rightMargin: 16; spacing: 10
+                            Text { text: "📁"; font.pixelSize: 18 }
+                            Label { text: modelData; color: "#93C5FD"; font.pixelSize: 14; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
+                            Label { text: "文件夹"; color: Theme.muted; font.pixelSize: 12 }
                         }
                     }
+                }
 
-                    // 文件夹列表
-                    Repeater {
-                        model: currentDirDirs
-                        delegate: Rectangle {
-                            id: folderDelegate
-                            Layout.fillWidth: true
-                            height: 42
-                            color: index % 2 === 0 ? Theme.rowAlt : "transparent"
-                            MouseArea {
-                                anchors.fill: parent; hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onEntered: folderDelegate.color = Theme.hover
-                                onExited: folderDelegate.color = index % 2 === 0 ? Theme.rowAlt : "transparent"
-                                onClicked: root.navigateToDir(modelData)
-                            }
-                            RowLayout {
-                                anchors.fill: parent; anchors.leftMargin: 16; anchors.rightMargin: 16; spacing: 10
-                                Text { text: "📁"; font.pixelSize: 18 }
-                                Label { text: modelData; color: "#93C5FD"; font.pixelSize: 14; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
-                                Label { text: "文件夹"; color: Theme.muted; font.pixelSize: 12 }
-                            }
+                // 文件列表 → ListView 虚拟化，支持上千文件流畅滚动
+                ListView {
+                    id: fileListView
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    clip: true
+                    model: currentDirFiles
+                    cacheBuffer: 300
+                    spacing: 0
+                    boundsBehavior: Flickable.StopAtBounds
+                    ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+
+                    delegate: Rectangle {
+                        width: fileListView.width
+                        height: 40
+                        color: index % 2 === 0 ? Theme.rowAlt : "transparent"
+                        MouseArea {
+                            anchors.fill: parent; hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onEntered: parent.color = Theme.hover
+                            onExited: parent.color = index % 2 === 0 ? Theme.rowAlt : "transparent"
+                            onClicked: root.openSamplePreview(modelData)
                         }
-                    }
-
-                    // 文件列表
-                    Repeater {
-                        model: currentDirFiles
-                        delegate: Rectangle {
-                            id: fileDelegate
-                            Layout.fillWidth: true
-                            height: 40
-                            color: index % 2 === 0 ? Theme.rowAlt : "transparent"
-                            MouseArea {
-                                anchors.fill: parent; hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onEntered: fileDelegate.color = Theme.hover
-                                onExited: fileDelegate.color = index % 2 === 0 ? Theme.rowAlt : "transparent"
-                                onClicked: root.openSamplePreview(modelData)
-                            }
-                            RowLayout {
-                                anchors.fill: parent; anchors.leftMargin: 16; anchors.rightMargin: 16; spacing: 10
-                                Text { text: "📄"; font.pixelSize: 14 }
-                                Label { text: modelData.name; color: Theme.text; font.pixelSize: 13; Layout.fillWidth: true; elide: Text.ElideRight }
-                                Label { text: modelData.labels && modelData.labels.length > 0 ? modelData.labels.join(", ") : "-"; color: modelData.labels && modelData.labels.length > 0 ? "#4DD0E1" : Theme.muted; font.pixelSize: 12; Layout.preferredWidth: 120; elide: Text.ElideRight }
-                                Label { text: modelData.type || ""; color: Theme.muted; font.pixelSize: 12; Layout.preferredWidth: 60 }
-                                Label { text: modelData.size || ""; color: Theme.muted; font.pixelSize: 12; Layout.preferredWidth: 80 }
-                            }
+                        RowLayout {
+                            anchors.fill: parent; anchors.leftMargin: 16; anchors.rightMargin: 16; spacing: 10
+                            Text { text: "📄"; font.pixelSize: 14 }
+                            Label { text: modelData.name; color: Theme.text; font.pixelSize: 13; Layout.fillWidth: true; elide: Text.ElideRight }
+                            Label { text: modelData._labelsText || "-"; color: modelData.labels && modelData.labels.length > 0 ? "#4DD0E1" : Theme.muted; font.pixelSize: 12; Layout.preferredWidth: 120; elide: Text.ElideRight }
+                            Label { text: modelData.type || ""; color: Theme.muted; font.pixelSize: 12; Layout.preferredWidth: 60 }
+                            Label { text: modelData.size || ""; color: Theme.muted; font.pixelSize: 12; Layout.preferredWidth: 80 }
                         }
                     }
                 }
@@ -862,8 +889,8 @@ Item {
                         Image {
                             anchors.fill: parent
                             anchors.margins: 12
-                            visible: root.previewKind === "image" && root.previewSource !== ""
-                            source: root.previewKind === "image" ? root.previewSource : ""
+                            visible: root.previewKind === "image" && root.previewSource !== "" && root.isImageExtension(root.previewSource)
+                            source: (root.previewKind === "image" && root.isImageExtension(root.previewSource)) ? root.previewSource : ""
                             fillMode: Image.PreserveAspectFit
                             asynchronous: true
                         }
@@ -1413,4 +1440,5 @@ Item {
             }
         }
     }
+
 }

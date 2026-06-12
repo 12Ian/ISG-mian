@@ -37,6 +37,7 @@ class BackendService(QObject):
     datasetsUpdated = Signal(dict)
     datasetSamplesUpdated = Signal(dict)
     datasetDirectoryUpdated = Signal(dict)
+    datasetDirectoryLoading = Signal(bool)
     datasetPreviewSamplesUpdated = Signal(dict)
     samplePreviewUpdated = Signal(dict)
     datasetStatsUpdated = Signal(dict)
@@ -130,8 +131,17 @@ class BackendService(QObject):
 
     @Slot(int, str)
     def getDatasetDirectory(self, datasetId: int, path: str):
-        result = self._bridge.get_dataset_directory(datasetId, path)
-        self.datasetDirectoryUpdated.emit(result)
+        """异步加载目录内容，避免大数据集阻塞 UI 线程"""
+        self.datasetDirectoryLoading.emit(True)
+        def worker():
+            try:
+                result = self._bridge.get_dataset_directory(datasetId, path)
+                self.datasetDirectoryUpdated.emit(result)
+            except Exception as exc:
+                self.datasetDirectoryUpdated.emit({"ok": False, "message": str(exc)})
+            finally:
+                self.datasetDirectoryLoading.emit(False)
+        threading.Thread(target=worker, daemon=True).start()
 
     @Slot(int, int, str)
     def getDatasetPreviewSamples(self, datasetId: int, limit: int, status: str):
