@@ -855,6 +855,11 @@ Item {
         }
     }
 
+    Component.onDestruction: {
+        toastCloseTimer.stop()
+        evalPollTimer.stop()
+    }
+
     function showToast(msg) {
         root.toastMessage = msg
         toastMsg.open()
@@ -1175,7 +1180,7 @@ Item {
                                         Button {
                                             text: "删除"; Layout.preferredWidth: 90; Layout.preferredHeight: 30
                                             background: Rectangle { color: parent.hovered ? "#BE123C" : "transparent"; border.color: root.dangerColor; border.width: 1; radius: 4 }
-                                            contentItem: Text { text: parent.text; color: parent.parent.hovered ? "white" : root.dangerColor; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                            contentItem: Text { text: parent.text; color: parent.hovered ? "white" : root.dangerColor; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                                             onClicked: { root.pendingDeleteIndex = historyIndex; deleteConfirmPopup.open() }
                                         }
                                     }
@@ -1286,7 +1291,7 @@ Item {
                                         Button {
                                             text: "删除"; Layout.preferredWidth: 90; Layout.preferredHeight: 30
                                             background: Rectangle { color: parent.hovered ? "#BE123C" : "transparent"; border.color: root.dangerColor; border.width: 1; radius: 4 }
-                                            contentItem: Text { text: parent.text; color: parent.parent.hovered ? "white" : root.dangerColor; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                            contentItem: Text { text: parent.text; color: parent.hovered ? "white" : root.dangerColor; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                                             onClicked: { root.pendingDeleteIndex = historyIndex; deleteConfirmPopup.open() }
                                         }
                                     }
@@ -1599,6 +1604,7 @@ Item {
                             Rectangle { width: 1; height: 16; color: root.borderColor }
                             Text { text: "训练任务队列"; color: root.textColor; font.pixelSize: 15; font.bold: true }
                             Item { Layout.fillWidth: true }
+                            // canStartTraining / startSelectedTraining 定义在文件底部「状态判断函数」区域
                             Rectangle { width: 130; height: 32; radius: 4
                                 visible: !root.isTraining
                                 color: root.canStartTraining() ? root.primaryColor : root.bgDark

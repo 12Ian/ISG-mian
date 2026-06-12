@@ -192,8 +192,10 @@ class AlgorithmService(ServiceBase):
 
     def _merge_validation_rules(self, payload: dict, existing: dict | None = None) -> dict:
         rules = dict(existing or {})
-        if "validation_rules" in payload and isinstance(payload["validation_rules"], dict):
-            rules.update(payload["validation_rules"])
+        # 兼容两种键名：QML UI 传入 "validation_rules"，种子数据使用 "validation_rules_json"
+        vr = payload.get("validation_rules") or payload.get("validation_rules_json")
+        if isinstance(vr, dict):
+            rules.update(vr)
         for field_name in ["runtime_artifact_path", "dataset_path", "label_path", "test_path", "model_path"]:
             if payload.get(field_name):
                 rules[field_name] = payload[field_name]

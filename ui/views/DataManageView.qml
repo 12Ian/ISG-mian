@@ -194,6 +194,30 @@ Item {
         return "file:///" + clean
     }
 
+    // QML 内联 URL 解码（Qt 5.15 JS 引擎无 decodeURIComponent）
+    function _urlDecode(str) {
+        var result = str
+        result = result.replace(/%20/g, " ")
+        result = result.replace(/%23/g, "#")
+        result = result.replace(/%25/g, "%")
+        result = result.replace(/%26/g, "&")
+        result = result.replace(/%2B/g, "+")
+        result = result.replace(/%2C/g, ",")
+        result = result.replace(/%2F/g, "/")
+        result = result.replace(/%3A/g, ":")
+        result = result.replace(/%3B/g, ";")
+        result = result.replace(/%3D/g, "=")
+        result = result.replace(/%3F/g, "?")
+        result = result.replace(/%40/g, "@")
+        result = result.replace(/%5B/g, "[")
+        result = result.replace(/%5D/g, "]")
+        // 处理 %XX 形式的其他编码
+        result = result.replace(/%([0-9A-Fa-f]{2})/g, function(match, hex) {
+            return String.fromCharCode(parseInt(hex, 16))
+        })
+        return result
+    }
+
     function localPathFromUrl(url) {
         var value = String(url || "")
         if (value.indexOf("file:///") === 0) {
@@ -207,7 +231,7 @@ Item {
                 value = "/" + value
             }
         }
-        return decodeURIComponent(value)
+        return root._urlDecode(value)
     }
 
     function datasetNameFromPath(path) {
@@ -960,6 +984,11 @@ Item {
             toastMsg.opacity = 0
             toastMsg.close()
         }
+    }
+
+    Component.onDestruction: {
+        toastCloseTimer.stop()
+        previewPlayer.stop()
     }
 
     MediaPlayer {

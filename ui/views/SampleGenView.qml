@@ -575,8 +575,8 @@ Item {
     // ================= 样本预览弹窗 =================
     Popup {
         id: samplePreviewPopup
-        width: Math.min(root.width * 0.9, 760)
-        height: Math.min(root.height * 0.9, 560)
+        width: Math.max(400, Math.min(root.width * 0.9, 760))
+        height: Math.max(300, Math.min(root.height * 0.9, 560))
         x: Math.round((root.width - width) / 2)
         y: Math.round((root.height - height) / 2)
         modal: true
@@ -823,6 +823,12 @@ Item {
         }
     }
 
+    Component.onDestruction: {
+        toastCloseTimer.stop()
+        progressPollTimer.stop()
+        previewPlayer.stop()
+    }
+
     // ================= 生成失败弹窗 =================
     Popup {
         id: generationFailurePopup
@@ -1054,7 +1060,7 @@ Item {
                             var item = generationHistoryModel.get(root.pendingDeleteIndex)
                             if (item && item.taskId > 0) {
                                 var result = backendService.deleteTask(item.taskId)
-                                if (result.status === "success") {
+                                if (result && result.status === "success") {
                                     generationHistoryModel.remove(root.pendingDeleteIndex)
                                     root.updateExportCount()
                                     root.showToast("记录已删除")
@@ -1157,8 +1163,8 @@ Item {
     // ================= 新建生成任务弹窗 =================
     Popup {
         id: newGenerationTaskPopup
-        width: Math.min(1250, root.width * 0.95)
-        height: Math.min(850, root.height * 0.95)
+        width: Math.max(600, Math.min(1250, root.width * 0.95))
+        height: Math.max(500, Math.min(850, root.height * 0.95))
         modal: true
         focus: true
         x: Math.round((root.width - width) / 2)
@@ -1894,7 +1900,7 @@ Item {
                                 text: "删除"
                                 Layout.preferredWidth: 90; Layout.preferredHeight: 30
                                 background: Rectangle { color: parent.hovered ? "#BE123C" : "transparent"; border.color: root.dangerColor; border.width: 1; radius: 4 }
-                                contentItem: Text { text: parent.text; color: parent.parent.hovered ? "white" : root.dangerColor; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                contentItem: Text { text: parent.text; color: parent.hovered ? "white" : root.dangerColor; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                                 onClicked: {
                                     root.pendingDeleteIndex = index
                                     deleteConfirmPopup.open()

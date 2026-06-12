@@ -145,6 +145,10 @@ Item {
         }
     }
 
+    Component.onDestruction: {
+        toastCloseTimer.stop()
+    }
+
     ScrollView {
         anchors.fill: parent
         contentWidth: availableWidth

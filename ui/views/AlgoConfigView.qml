@@ -337,6 +337,10 @@ Item {
         }
     }
 
+    Component.onDestruction: {
+        toastCloseTimer.stop()
+    }
+
     function showToast(msg) {
         root.toastMessage = msg
         toastMsg.open()
@@ -732,7 +736,7 @@ Item {
             var cleanPath = decodeURIComponent(path.replace(/^(file:\/{2,3})/, ""))
             inputScriptPath.text = cleanPath
             var result = backendService.reflectParameters(cleanPath)
-            if (result.ok) {
+            if (result && result.ok) {
                 editingParamsModel.clear()
                 var params = result.parameters || []
                 for (var i = 0; i < params.length; i++) {
@@ -829,7 +833,7 @@ Item {
                     onClicked: {
                         if (root.pendingDeleteIndex !== -1) {
                             var result = backendService.deleteAlgorithm(algoListModel.get(root.pendingDeleteIndex).id)
-                            if (result.ok) {
+                            if (result && result.ok) {
                                 root.selectedAlgoId = -1
                                 root.loadAlgorithms()
                                 root.showToast("🗑️ 算法已成功卸载")
@@ -1324,7 +1328,7 @@ Item {
                             if (result.ok) root.showToast("✅ 底层配置已更新")
                             else root.showToast("⚠️ 配置保存失败: " + (result.message || "未知错误"))
                         }
-                        if (result.ok) {
+                        if (result && result.ok) {
                             root.loadAlgorithms()
                             algoConfigPopup.close()
                         }
@@ -1871,7 +1875,7 @@ Item {
                                 contentItem: Text { text: parent.text; color: "white"; font.pixelSize: 12; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                                 onClicked: {
                                     var result = backendService.saveAlgorithmBinding(root.selectedAlgoField("key"), bindingEvalCombo.currentValue || "")
-                                    if (result.ok) {
+                                    if (result && result.ok) {
                                         root.showToast("✅ 绑定已保存")
                                         var idx = root.selectedAlgoIndex
                                         if (idx >= 0) { algoListModel.setProperty(idx, "boundEvalKey", bindingEvalCombo.currentValue || ""); algoListModel.setProperty(idx, "boundEvalName", bindingEvalCombo.currentText || "") }

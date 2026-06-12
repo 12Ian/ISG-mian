@@ -492,8 +492,8 @@ Item {
     // ================= 样本预览弹窗 =================
     Popup {
         id: samplePreviewPopup
-        width: Math.min(root.width * 0.9, 760)
-        height: Math.min(root.height * 0.9, 560)
+        width: Math.max(400, Math.min(root.width * 0.9, 760))
+        height: Math.max(300, Math.min(root.height * 0.9, 560))
         x: Math.round((root.width - width) / 2)
         y: Math.round((root.height - height) / 2)
         modal: true
@@ -690,6 +690,11 @@ Item {
     MediaPlayer {
         id: previewPlayer
         autoPlay: false
+        audioOutput: previewAudio
+    }
+
+    AudioOutput {
+        id: previewAudio
     }
 
     // ================= 任务进度轮询 =================
@@ -754,6 +759,12 @@ Item {
             toastMsg.opacity = 0
             toastMsg.close()
         }
+    }
+
+    Component.onDestruction: {
+        toastCloseTimer.stop()
+        progressPollTimer.stop()
+        previewPlayer.stop()
     }
 
     function showToast(msg) {
@@ -865,7 +876,7 @@ Item {
                     onClicked: {
                         if (root.currentTaskId > 0) {
                             var result = backendService.storeCleaningTaskResult(root.currentTaskId, saveDatasetNameInput.text)
-                            if (result.status === "success") {
+                            if (result && result.status === "success") {
                                 root.showToast("✅ 清洗结果已保存: " + saveDatasetNameInput.text)
                                 backendService.getCleaningTasks(0, "")
                                 backendService.getDatasets(1, 100, "")
@@ -985,7 +996,7 @@ Item {
                             var item = cleaningHistoryModel.get(root.pendingDeleteIndex)
                             if (item && item.taskId > 0) {
                                 var result = backendService.deleteTask(item.taskId)
-                                if (result.status === "success") {
+                                if (result && result.status === "success") {
                                     cleaningHistoryModel.remove(root.pendingDeleteIndex)
                                     root.updateExportCount()
                                     root.showToast("记录已删除")
@@ -1088,8 +1099,8 @@ Item {
     // ================= 新建清洗任务弹窗 =================
     Popup {
         id: newCleaningTaskPopup
-        width: Math.min(1250, root.width * 0.95)
-        height: Math.min(850, root.height * 0.95)
+        width: Math.max(600, Math.min(1250, root.width * 0.95))
+        height: Math.max(500, Math.min(850, root.height * 0.95))
         modal: true
         focus: true
         x: Math.round((root.width - width) / 2)
@@ -2098,7 +2109,7 @@ Item {
                             root.showToast("❌ 任务名称不能为空")
                         } else {
                             var result = backendService.updateTaskTitle(root.currentHistoryItem.taskId, newTitle)
-                            if (result.status === "success") {
+                            if (result && result.status === "success") {
                                 var updated = result.data || {}
                                 var finalTitle = updated.title || newTitle
                                 var index = root.currentHistoryIndex

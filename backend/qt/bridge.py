@@ -448,7 +448,34 @@ class BackendBridge:
                 continue  # 已有算法不覆盖，保留用户修改
             else:
                 self.facade.algorithm_service.create_algorithm(dict(algo))
+        self._repair_training_validation_rules(existing_map)
         self._merge_legacy_algorithm_aliases()
+
+    def _repair_training_validation_rules(self, existing_map: dict) -> None:
+        """修复已有训练算法的 validation_rules_json：
+        若为空 {} 但种子数据中存在对应的 scenario_key，则补齐。"""
+        from ..seed_data import DEFAULT_ALGORITHMS
+        from ..models import Algorithm
+
+        seed_vr_map = {}
+        for algo in DEFAULT_ALGORITHMS:
+            vr_json = algo.get("validation_rules_json")
+            if algo.get("category") == "training" and isinstance(vr_json, dict) and vr_json.get("scenario_key"):
+                seed_vr_map[algo["key"]] = vr_json
+
+        if not seed_vr_map:
+            return
+
+        with self.facade.session_factory() as session:
+            for algo_key, seed_vr in seed_vr_map.items():
+                existing = session.query(Algorithm).filter(Algorithm.key == algo_key).first()
+                if existing is None:
+                    continue
+                current_vr = existing.validation_rules_json or {}
+                # 仅在当前值为空或缺少 scenario_key 时修复
+                if not isinstance(current_vr, dict) or not current_vr.get("scenario_key"):
+                    existing.validation_rules_json = seed_vr
+            session.commit()
 
     def _merge_legacy_algorithm_aliases(self) -> None:
         from ..models import (
