@@ -163,7 +163,6 @@ Item {
         var stage = item._stage || datasetStage(item)
         if (stage === "cleaned") return "清洗数据集"
         if (stage === "generated") return "生成数据集"
-        if (stage === "test") return "测试数据集"
         return "原始数据集"
     }
 
@@ -369,7 +368,7 @@ Item {
 
             StableComboBox {
                 id: stageCombo
-                model: ["全部", "原始数据集", "清洗数据集", "生成数据集", "测试数据集"]
+                model: ["全部", "原始数据集", "清洗数据集", "生成数据集"]
                 currentIndex: 1
                 Layout.preferredWidth: 130
                 background: Rectangle {
@@ -386,7 +385,6 @@ Item {
                 onCurrentTextChanged: {
                     if (currentText === "清洗数据集") currentStage = "cleaned"
                     else if (currentText === "生成数据集") currentStage = "generated"
-                    else if (currentText === "测试数据集") currentStage = "test"
                     else if (currentText === "原始数据集") currentStage = "raw"
                     else currentStage = "all"
                     filterData()
