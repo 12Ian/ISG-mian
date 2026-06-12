@@ -754,7 +754,7 @@ Item {
                 }
                 root.showToast("✅ 已自动加载 " + params.length + " 个参数")
             } else {
-                root.showToast("⚠️ 参数反射失败: " + (result.error || result.message || "未知错误"))
+                root.showToast("⚠️ 参数反射失败: " + ((result && (result.error || result.message)) ? (result.error || result.message) : "未知错误"))
             }
         }
     }
@@ -769,8 +769,8 @@ Item {
             var path = selectedFile.toString()
             var cleanPath = decodeURIComponent(path.replace(/^(file:\/{2,3})/, ""))
             var result = backendService.downloadAlgorithmPluginSpec(cleanPath)
-            if (result.status === "success") root.showToast("✅ 插件规范已下载")
-            else root.showToast("⚠️ " + (result.message || "插件规范下载失败"))
+            if (result && result.status === "success") root.showToast("✅ 插件规范已下载")
+            else root.showToast("⚠️ " + ((result && result.message) ? result.message : "插件规范下载失败"))
         }
     }
 
@@ -1322,11 +1322,11 @@ Item {
                             ? backendService.createAlgorithm(payload)
                             : backendService.updateAlgorithm(algoListModel.get(root.pendingEditIndex).id, payload)
                         if (root.pendingEditIndex === -1) {
-                            if (result.ok) root.showToast("✅ 新插件引擎已接入")
-                            else root.showToast("⚠️ 插件注册失败: " + (result.message || "未知错误"))
+                            if (result && result.ok) root.showToast("✅ 新插件引擎已接入")
+                            else root.showToast("⚠️ 插件注册失败: " + ((result && result.message) ? result.message : "未知错误"))
                         } else {
-                            if (result.ok) root.showToast("✅ 底层配置已更新")
-                            else root.showToast("⚠️ 配置保存失败: " + (result.message || "未知错误"))
+                            if (result && result.ok) root.showToast("✅ 底层配置已更新")
+                            else root.showToast("⚠️ 配置保存失败: " + ((result && result.message) ? result.message : "未知错误"))
                         }
                         if (result && result.ok) {
                             root.loadAlgorithms()

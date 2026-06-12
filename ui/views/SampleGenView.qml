@@ -1065,7 +1065,7 @@ Item {
                                     root.updateExportCount()
                                     root.showToast("记录已删除")
                                 } else {
-                                    root.showToast("删除失败: " + (result.message || "未知错误"))
+                                    root.showToast("删除失败: " + ((result && result.message) ? result.message : "未知错误"))
                                 }
                             } else {
                                 generationHistoryModel.remove(root.pendingDeleteIndex)

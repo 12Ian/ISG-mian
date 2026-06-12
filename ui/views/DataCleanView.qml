@@ -881,7 +881,7 @@ Item {
                                 backendService.getCleaningTasks(0, "")
                                 backendService.getDatasets(1, 100, "")
                             } else {
-                                root.showToast("⚠️ " + (result.message || "保存失败"))
+                                root.showToast("⚠️ " + ((result && result.message) ? result.message : "保存失败"))
                             }
                         } else {
                             root.showToast("⚠️ 没有可保存的清洗任务")
@@ -1001,7 +1001,7 @@ Item {
                                     root.updateExportCount()
                                     root.showToast("记录已删除")
                                 } else {
-                                    root.showToast("删除失败: " + (result.message || "未知错误"))
+                                    root.showToast("删除失败: " + ((result && result.message) ? result.message : "未知错误"))
                                 }
                             } else {
                                 cleaningHistoryModel.remove(root.pendingDeleteIndex)
@@ -1782,7 +1782,7 @@ Item {
                                 text: "删除"
                                 Layout.preferredWidth: 90; Layout.preferredHeight: 30
                                 background: Rectangle { color: parent.hovered ? "#BE123C" : "transparent"; border.color: root.dangerColor; border.width: 1; radius: 4 }
-                                contentItem: Text { text: parent.text; color: parent.parent.hovered ? "white" : root.dangerColor; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                contentItem: Text { text: parent.text; color: parent.hovered ? "white" : root.dangerColor; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                                 onClicked: {
                                     root.pendingDeleteIndex = index
                                     deleteConfirmPopup.open()
@@ -2124,7 +2124,7 @@ Item {
                                 root.showToast("✅ 任务名称已更新为 " + finalTitle)
                                 backendService.getCleaningTasks(0, "")
                             } else {
-                                root.showToast("❌ " + (result.message || "修改失败"))
+                                root.showToast("❌ " + ((result && result.message) ? result.message : "修改失败"))
                             }
                         }
                         renameTaskPopup.close()

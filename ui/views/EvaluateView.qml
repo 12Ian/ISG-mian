@@ -756,6 +756,8 @@ Item {
     }
     Component.onDestruction: {
         root.saveToAppState()
+        toastCloseTimer.stop()
+        evalPollTimer.stop()
     }
 
     // ================= 全局状态保存/恢复 =================
@@ -853,11 +855,6 @@ Item {
             toastMsg.opacity = 0
             toastMsg.close()
         }
-    }
-
-    Component.onDestruction: {
-        toastCloseTimer.stop()
-        evalPollTimer.stop()
     }
 
     function showToast(msg) {

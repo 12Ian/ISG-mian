@@ -244,7 +244,7 @@ Item {
                                 // 重新获取数据集列表
                                 backendService.getDatasets(1, 10, "");
                             } else {
-                                console.log("数据集创建失败: " + result.message);
+                                console.log("数据集创建失败: " + (result && result.message ? result.message : "未知错误"));
                             }
                         }
                     }
