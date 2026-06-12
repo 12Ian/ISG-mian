@@ -1176,7 +1176,7 @@ Item {
                                     }
                                 }
                             }
-                            ComboBox {
+                            StableComboBox {
                                 id: sourceDataCombo
                                 model: root.sourceDatasets
                                 textRole: "name"

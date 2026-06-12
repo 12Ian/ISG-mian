@@ -779,7 +779,8 @@ Item {
                            algoId: q.algoId, algoKey: q.algoKey, params: q.params,
                            isSelected: q.isSelected, trainStatus: q.trainStatus,
                            trainProgress: q.trainProgress, progressMessage: q.progressMessage,
-                           dbStatus: q.dbStatus, resultJson: q.resultJson, outputDir: q.outputDir})
+                           dbStatus: q.dbStatus, resultJson: q.resultJson, outputDir: q.outputDir,
+                           saved: q.saved || false})
         }
 
         var resArr = []
@@ -1522,7 +1523,7 @@ Item {
             RowLayout { anchors.fill: parent; anchors.margins: 15; spacing: 20
                 ColumnLayout { spacing: 5
                     Text { text: "1. 任务场景"; color: root.textMuted; font.pixelSize: 12; font.bold: true }
-                    ComboBox { id: scenarioCombo; model: scenarioModel; textRole: "name"; Layout.preferredWidth: 160
+                    StableComboBox { id: scenarioCombo; model: scenarioModel; textRole: "name"; Layout.preferredWidth: 160
                         background: Rectangle { color: root.bgDark; border.color: root.borderColor; radius: 4 }
                         contentItem: Text { text: parent.currentText; color: root.textColor; verticalAlignment: Text.AlignVCenter; padding: 10 }
                         onCurrentIndexChanged: root.filterAlgorithmsByScenario()
@@ -1531,7 +1532,7 @@ Item {
                 Text { text: "➡"; color: root.borderColor; font.pixelSize: 16 }
                 ColumnLayout { spacing: 5
                     Text { text: "2. 挂载数据集"; color: root.textMuted; font.pixelSize: 12; font.bold: true }
-                    ComboBox { id: datasetCombo; model: datasetModel; textRole: "name"; Layout.preferredWidth: 160
+                    StableComboBox { id: datasetCombo; model: datasetModel; textRole: "name"; Layout.preferredWidth: 160
                         background: Rectangle { color: root.bgDark; border.color: root.borderColor; radius: 4 }
                         contentItem: Text { text: parent.currentText; color: root.textColor; verticalAlignment: Text.AlignVCenter; padding: 10; elide: Text.ElideRight }
                     }
@@ -1539,7 +1540,7 @@ Item {
                 Text { text: "➡"; color: root.borderColor; font.pixelSize: 16 }
                 ColumnLayout { spacing: 5
                     Text { text: "3. 骨干算法网络"; color: root.textMuted; font.pixelSize: 12; font.bold: true }
-                    ComboBox { id: algoCombo; model: algoModel; textRole: "name"; Layout.preferredWidth: 160
+                    StableComboBox { id: algoCombo; model: algoModel; textRole: "name"; Layout.preferredWidth: 160
                         background: Rectangle { color: root.bgDark; border.color: root.borderColor; radius: 4 }
                         contentItem: Text { text: parent.currentText; color: root.textColor; verticalAlignment: Text.AlignVCenter; padding: 10; elide: Text.ElideRight }
                     }
@@ -2242,7 +2243,7 @@ Item {
                                 Layout.fillWidth: true; verticalAlignment: Text.AlignVCenter
                             }
                             // 有 options = 下拉框
-                            ComboBox {
+                            StableComboBox {
                                 visible: _opts.length > 0
                                 Layout.preferredWidth: 200
                                 model: _opts

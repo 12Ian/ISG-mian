@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import shutil
-from .._compat import slots_dataclass
+from .._compat import slots_dataclass, to_local_isoformat
 
 from .base import ServiceBase
 
@@ -100,7 +100,7 @@ class SettingsService(ServiceBase):
                         "resource_type": item.resource_type or "",
                         "resource_id": item.resource_id or "",
                         "message": item.message,
-                        "created_at": item.created_at.isoformat() if item.created_at else "",
+                        "created_at": to_local_isoformat(item.created_at),
                     }
                     for item in items
                 ],

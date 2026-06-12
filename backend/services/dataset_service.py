@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import shutil
 from dataclasses import field
+from .._compat import to_local_isoformat
 from .._compat import slots_dataclass
 from pathlib import Path
 
@@ -1482,7 +1483,7 @@ class DatasetService(ServiceBase):
             "extension": sample.extension,
             "metadata": sample.metadata_json or {},
             "labels": sample.labels_json or [],
-            "updated_at": sample.updated_at.isoformat() if sample.updated_at else "",
+            "updated_at": to_local_isoformat(sample.updated_at),
         }
 
     def _preview_kind(self, sample) -> str:

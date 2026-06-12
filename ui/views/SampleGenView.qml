@@ -1246,7 +1246,7 @@ Item {
                                     }
                                 }
                             }
-                            ComboBox {
+                            StableComboBox {
                                 id: sourceDataCombo
                                 model: root.sourceDatasets
                                 textRole: "name"
@@ -1483,7 +1483,7 @@ Item {
                                                     width: parent.width; spacing: 6
                                                     Text { text: modelData.label || modelData.n; color: root.textMuted; font.pixelSize: 12 }
                                                     // 有options → 下拉框
-                                                    ComboBox {
+                                                    StableComboBox {
                                                         visible: modelData.options && modelData.options.length > 0
                                                         width: parent.width; height: 36
                                                         model: modelData.options || []

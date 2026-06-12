@@ -299,7 +299,7 @@ Item {
                 color: "#4DD0E1"
             }
 
-            ComboBox {
+            StableComboBox {
                 id: categoryCombo
                 model: ["全部", "图像", "文本", "音频"]
                 Layout.preferredWidth: 120
@@ -327,7 +327,7 @@ Item {
                 color: "#4DD0E1"
             }
 
-            ComboBox {
+            StableComboBox {
                 id: stageCombo
                 model: ["全部", "原始数据集", "清洗数据集", "生成数据集", "测试数据集"]
                 currentIndex: 1
@@ -1029,7 +1029,7 @@ Item {
                 Layout.fillWidth: true
                 spacing: 10
 
-                ComboBox {
+                StableComboBox {
                     id: importModeCombo
                     model: ["导入文件", "导入文件夹"]
                     currentIndex: 1
@@ -1083,7 +1083,7 @@ Item {
                 }
             }
 
-            ComboBox {
+            StableComboBox {
                 id: inputType
                 model: ["图像", "文本", "音频"]
                 currentIndex: 0
@@ -1206,7 +1206,7 @@ Item {
                     Layout.preferredWidth: 80
                     horizontalAlignment: Text.AlignRight
                 }
-                ComboBox {
+                StableComboBox {
                     id: editTypeCombo
                     model: ["图像", "文本", "音频"]
                     Layout.fillWidth: true

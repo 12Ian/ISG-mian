@@ -225,7 +225,7 @@ Item {
                     RowLayout {
                         spacing: 16
                         Text { text: "界面主题"; color: root.textMuted; Layout.preferredWidth: 110 }
-                        ComboBox {
+                        StableComboBox {
                             id: themeSelector
                             model: ["晨光", "海雾", "碧蓝", "海渊", "深海", "夜航"]
                             Layout.preferredWidth: 160

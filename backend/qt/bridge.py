@@ -3,7 +3,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from .._compat import slots_dataclass
+from .._compat import slots_dataclass, to_local_isoformat
 
 from ..service_facade import BackendServiceFacade
 from ..errors import NotFoundError, ValidationError
@@ -661,7 +661,7 @@ class BackendBridge:
             "parameters": task.parameters_json or {},
             "payload": task.payload_json or {},
             "result": task.result_json or {},
-            "created_at": task.created_at.isoformat() if task.created_at else "",
+            "created_at": to_local_isoformat(task.created_at),
         }
 
     def _serialize_task_log(self, item) -> dict:
@@ -680,5 +680,5 @@ class BackendBridge:
             "level": item.level,
             "message": item.message,
             "payload": item.payload_json,
-            "created_at": item.created_at.isoformat() if item.created_at else "",
+            "created_at": to_local_isoformat(item.created_at),
         }
