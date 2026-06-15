@@ -51,6 +51,7 @@ Item {
     property string toastMessage: ""
     property string lastSuggestedImportName: ""
     property bool importNameManuallyEdited: false
+    property int currentPreviewImageIndex: -1
 
     // ======== 后端信号连接 ========
     Connections {
@@ -291,6 +292,7 @@ Item {
 
     function previewFile(file) {
         root.previewSample = file
+        root.currentPreviewImageIndex = root.imagePreviewIndexForFile(file)
         var previewKey = String(file ? (file.sampleId > 0 ? file.sampleId : (file.filePath || file.name || "")) : "")
         if (root.samplePreviewVisible && root.pendingPreviewKey === previewKey) return
         root.pendingPreviewKey = previewKey
@@ -311,11 +313,50 @@ Item {
     function closeSamplePreview() {
         root.samplePreviewVisible = false
         root.pendingPreviewKey = ""
+        root.currentPreviewImageIndex = -1
         previewPlayer.stop()
     }
 
     function openSamplePreview(sample) {
         previewFile(sample)
+    }
+
+    function previewImageFiles() {
+        var images = []
+        for (var i = 0; i < currentDirFiles.length; i++) {
+            var item = currentDirFiles[i]
+            if (item && item._isImage) images.push(item)
+        }
+        return images
+    }
+
+    function imagePreviewIndexForFile(file) {
+        if (!file || !file._isImage) return -1
+        var images = root.previewImageFiles()
+        var fileKey = String(file.sampleId > 0 ? file.sampleId : (file.filePath || file.name || ""))
+        for (var i = 0; i < images.length; i++) {
+            var item = images[i]
+            var itemKey = String(item.sampleId > 0 ? item.sampleId : (item.filePath || item.name || ""))
+            if (itemKey === fileKey) return i
+        }
+        return -1
+    }
+
+    function canPreviewPreviousImage() {
+        return root.currentPreviewImageIndex > 0
+    }
+
+    function canPreviewNextImage() {
+        var images = root.previewImageFiles()
+        return root.currentPreviewImageIndex >= 0 && root.currentPreviewImageIndex < images.length - 1
+    }
+
+    function previewAdjacentImage(step) {
+        var images = root.previewImageFiles()
+        if (images.length === 0 || root.currentPreviewImageIndex < 0) return
+        var nextIndex = root.currentPreviewImageIndex + step
+        if (nextIndex < 0 || nextIndex >= images.length) return
+        root.previewFile(images[nextIndex])
     }
 
     // 触发文件详情弹窗
@@ -640,6 +681,18 @@ Item {
         modal: true
         focus: true
         closePolicy: Popup.NoAutoClose // 必须点右上角关闭
+        Keys.onLeftPressed: {
+            if (root.samplePreviewVisible && root.previewKind === "image" && root.canPreviewPreviousImage()) {
+                root.previewAdjacentImage(-1)
+                event.accepted = true
+            }
+        }
+        Keys.onRightPressed: {
+            if (root.samplePreviewVisible && root.previewKind === "image" && root.canPreviewNextImage()) {
+                root.previewAdjacentImage(1)
+                event.accepted = true
+            }
+        }
 
         background: Rectangle {
             color: Theme.row
@@ -922,6 +975,54 @@ Item {
                             source: (root.previewKind === "image" && root.isImageExtension(root.previewSource)) ? root.previewSource : ""
                             fillMode: Image.PreserveAspectFit
                             asynchronous: true
+                        }
+
+                        Button {
+                            anchors.left: parent.left
+                            anchors.leftMargin: 16
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 40
+                            height: 56
+                            visible: root.previewKind === "image"
+                            enabled: root.canPreviewPreviousImage()
+                            background: Rectangle {
+                                color: parent.enabled ? Qt.rgba(15 / 255, 23 / 255, 42 / 255, parent.hovered ? 0.82 : 0.68) : Qt.rgba(148 / 255, 163 / 255, 184 / 255, 0.28)
+                                radius: 20
+                                border.color: parent.enabled ? Qt.rgba(1, 1, 1, 0.18) : "transparent"
+                            }
+                            contentItem: Text {
+                                text: "‹"
+                                color: parent.enabled ? "white" : "#CBD5E1"
+                                font.pixelSize: 28
+                                font.bold: true
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                            onClicked: root.previewAdjacentImage(-1)
+                        }
+
+                        Button {
+                            anchors.right: parent.right
+                            anchors.rightMargin: 16
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 40
+                            height: 56
+                            visible: root.previewKind === "image"
+                            enabled: root.canPreviewNextImage()
+                            background: Rectangle {
+                                color: parent.enabled ? Qt.rgba(15 / 255, 23 / 255, 42 / 255, parent.hovered ? 0.82 : 0.68) : Qt.rgba(148 / 255, 163 / 255, 184 / 255, 0.28)
+                                radius: 20
+                                border.color: parent.enabled ? Qt.rgba(1, 1, 1, 0.18) : "transparent"
+                            }
+                            contentItem: Text {
+                                text: "›"
+                                color: parent.enabled ? "white" : "#CBD5E1"
+                                font.pixelSize: 28
+                                font.bold: true
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                            onClicked: root.previewAdjacentImage(1)
                         }
 
                         ScrollView {
