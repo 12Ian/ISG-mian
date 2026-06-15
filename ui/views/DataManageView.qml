@@ -49,6 +49,8 @@ Item {
     property string previewSource: ""
     property string previewTitle: ""
     property string toastMessage: ""
+    property string lastSuggestedImportName: ""
+    property bool importNameManuallyEdited: false
 
     // ======== 后端信号连接 ========
     Connections {
@@ -256,6 +258,35 @@ Item {
         }
         var parts = clean.split("/")
         return parts.length > 0 ? parts[parts.length - 1] : ""
+    }
+
+    function importTimestamp() {
+        return Qt.formatDateTime(new Date(), "yyyyMMdd_HHmmss")
+    }
+
+    function importDefaultNameFromPath(path, isFile) {
+        var baseName = root.datasetNameFromPath(path)
+        if (isFile) {
+            var dotIndex = baseName.lastIndexOf(".")
+            if (dotIndex > 0) {
+                baseName = baseName.slice(0, dotIndex)
+            }
+        }
+        baseName = String(baseName || "").trim()
+        if (baseName === "") return ""
+        return baseName + "_" + root.importTimestamp()
+    }
+
+    function applyImportDefaultName(path, isFile) {
+        var previousSuggestedName = root.lastSuggestedImportName
+        var suggestedName = root.importDefaultNameFromPath(path, isFile)
+        if (suggestedName === "") return
+        var currentName = inputName.text.trim()
+        if (currentName === "" || currentName === previousSuggestedName || !root.importNameManuallyEdited) {
+            inputName.text = suggestedName
+            root.importNameManuallyEdited = false
+        }
+        root.lastSuggestedImportName = suggestedName
     }
 
     function previewFile(file) {
@@ -1030,7 +1061,9 @@ Item {
         id: fileDialog
         title: "选择导入的文件"
         onAccepted: {
-            selectedPathInput.text = root.localPathFromUrl(selectedFile)
+            var path = root.localPathFromUrl(selectedFile)
+            selectedPathInput.text = path
+            root.applyImportDefaultName(path, true)
         }
     }
 
@@ -1038,7 +1071,9 @@ Item {
         id: folderDialog
         title: "选择导入的文件夹"
         onAccepted: {
-            selectedPathInput.text = root.localPathFromUrl(selectedFolder)
+            var path = root.localPathFromUrl(selectedFolder)
+            selectedPathInput.text = path
+            root.applyImportDefaultName(path, false)
         }
     }
 
@@ -1054,6 +1089,10 @@ Item {
         onOpened: {
             importModeCombo.currentIndex = 1
             inputType.currentIndex = 0
+            inputName.text = ""
+            selectedPathInput.text = ""
+            root.lastSuggestedImportName = ""
+            root.importNameManuallyEdited = false
         }
 
         background: Rectangle {
@@ -1072,6 +1111,7 @@ Item {
                 Layout.fillWidth: true
                 color: Theme.text
                 placeholderTextColor: Theme.muted
+                onTextEdited: root.importNameManuallyEdited = true
                 background: Rectangle {
                     color: Theme.row
                     border.color: Theme.border
@@ -1099,7 +1139,14 @@ Item {
                         verticalAlignment: Text.AlignVCenter
                         leftPadding: 10
                     }
-                    onCurrentIndexChanged: selectedPathInput.text = ""
+                    onCurrentIndexChanged: {
+                        selectedPathInput.text = ""
+                        if (!root.importNameManuallyEdited || inputName.text.trim() === root.lastSuggestedImportName) {
+                            inputName.text = ""
+                            root.importNameManuallyEdited = false
+                            root.lastSuggestedImportName = ""
+                        }
+                    }
                 }
 
                 TextField {
@@ -1168,7 +1215,7 @@ Item {
                 return
             }
             var finalName = inputName.text.trim()
-            if (finalName === "") finalName = root.datasetNameFromPath(path)
+            if (finalName === "") finalName = root.importDefaultNameFromPath(path, importModeCombo.currentIndex === 0)
             if (finalName === "") {
                 root.showToast("请输入源数据集名称")
                 return
@@ -1182,6 +1229,8 @@ Item {
             }
             inputName.text = ""
             selectedPathInput.text = ""
+            root.lastSuggestedImportName = ""
+            root.importNameManuallyEdited = false
             importDeferTimer.start()
         }
     }
