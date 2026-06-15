@@ -408,6 +408,13 @@ class BackendService(QObject):
             return {"status": "success"}
         return {"status": "error", "message": "无法打开插件规范文档"}
 
+    @Slot(result=dict)
+    def getAlgorithmPluginSpecUrl(self) -> dict:
+        spec_path = Path(__file__).resolve().parent / "docs" / "ISG算法插件开发规范_专业版.pdf"
+        if not spec_path.exists():
+            return {"status": "error", "message": f"未找到插件规范文档: {spec_path}"}
+        return {"status": "success", "url": QUrl.fromLocalFile(str(spec_path)).toString()}
+
     @Slot(str, result=dict)
     def downloadAlgorithmPluginSpec(self, targetPath: str) -> dict:
         result = self._bridge.download_algorithm_plugin_spec(targetPath)
