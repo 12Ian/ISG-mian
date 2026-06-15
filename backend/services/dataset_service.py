@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import shutil
 from dataclasses import field
+from math import gcd
 from .._compat import to_local_isoformat
 from .._compat import slots_dataclass
 from pathlib import Path
@@ -85,7 +86,7 @@ class DatasetService(ServiceBase):
                 message=f"Created dataset {clean_name}",
             )
             session.commit()
-            return {"ok": True, "data": self._serialize_dataset(dataset)}
+            return {"ok": True, "data": self._serialize_dataset(session, dataset)}
 
     def update_dataset(self, dataset_id: int, name: str, type_name: str) -> dict:
         with self.session_factory() as session:
@@ -113,7 +114,7 @@ class DatasetService(ServiceBase):
                 message=f"Updated dataset {dataset.name}",
             )
             session.commit()
-            return {"ok": True, "data": self._serialize_dataset(dataset)}
+            return {"ok": True, "data": self._serialize_dataset(session, dataset)}
 
     def delete_dataset(self, dataset_id: int) -> dict:
         with self.session_factory() as session:
@@ -132,7 +133,7 @@ class DatasetService(ServiceBase):
                 message=f"Deleted dataset {dataset.name} (files purged)",
             )
             session.commit()
-            return {"ok": True, "data": self._serialize_dataset(dataset)}
+            return {"ok": True, "data": self._serialize_dataset(session, dataset)}
 
     def purge_dataset_files(self, dataset_id: int) -> dict:
         with self.session_factory() as session:
@@ -152,12 +153,12 @@ class DatasetService(ServiceBase):
                 message=f"Purged dataset files for {dataset.name}",
             )
             session.commit()
-            return {"ok": True, "data": self._serialize_dataset(dataset)}
+            return {"ok": True, "data": self._serialize_dataset(session, dataset)}
 
     def get_dataset(self, dataset_id: int, include_deleted: bool = False) -> dict:
         with self.session_factory() as session:
             dataset = self._require_dataset(session, dataset_id, include_deleted=include_deleted)
-            return {"ok": True, "data": self._serialize_dataset(dataset)}
+            return {"ok": True, "data": self._serialize_dataset(session, dataset)}
 
     def get_datasets(self, page: int, page_size: int, status: str) -> dict:
         with self.session_factory() as session:
@@ -170,7 +171,7 @@ class DatasetService(ServiceBase):
             )
             return {
                 "total": total,
-                "items": [self._serialize_dataset(item) for item in items],
+                "items": [self._serialize_dataset(session, item) for item in items],
                 "page": max(page, 1),
                 "page_size": max(page_size, 1),
             }
@@ -218,6 +219,7 @@ class DatasetService(ServiceBase):
                     message=f"Imported file {copied.name} into dataset {dataset.name}",
                 )
             self._refresh_dataset_stats(session, dataset)
+            self._write_dataset_manifest(session, dataset)
             session.commit()
             return {"ok": True, "data": {"imported_count": imported_count, "failed_count": failed_count, "errors": errors}}
 
@@ -364,6 +366,7 @@ class DatasetService(ServiceBase):
                 extra["label_mode"] = "manifest"
                 dataset.extra_json = extra
             self._refresh_dataset_stats(session, dataset)
+            self._write_dataset_manifest(session, dataset)
             session.commit()
             return {"ok": True, "data": {"imported_count": imported_count, "failed_count": failed_count, "errors": errors}}
 
@@ -685,6 +688,7 @@ class DatasetService(ServiceBase):
         extra_json["dataset_stage"] = status
         dataset.extra_json = extra_json
         self._refresh_dataset_stats(session, dataset)
+        self._write_dataset_manifest(session, dataset)
         self.log_repository.add(
             session,
             level="info",
@@ -694,7 +698,9 @@ class DatasetService(ServiceBase):
             message=f"Imported dataset bundle {dataset.name}",
             payload_json={"sample_count": len(records), "status": status},
         )
-        return self._serialize_dataset(dataset)
+        with self.session_factory() as session:
+            current = self.dataset_repository.get_dataset(session, dataset.id, include_deleted=True)
+            return self._serialize_dataset(session, current or dataset)
 
     def _collect_import_records(self, data_path: Path, label_path: Path | None, split: str) -> tuple[list[dict], str]:
         if data_path.is_file():
@@ -1412,8 +1418,9 @@ class DatasetService(ServiceBase):
                     resource_id=str(sample.id),
                     message=f"Imported labeled sample {copied.name} into dataset {dataset.name}",
                     payload_json={"class_name": record["class_name"], "split": record["split"]},
-                )
+            )
             self._refresh_dataset_stats(session, dataset)
+            self._write_dataset_manifest(session, dataset)
             self.log_repository.add(
                 session,
                 level="info",
@@ -1424,7 +1431,7 @@ class DatasetService(ServiceBase):
                 payload_json={"sample_count": len(records), "dataset_format": spec["dataset_format"]},
             )
             session.commit()
-            return self._serialize_dataset(dataset)
+            return self._serialize_dataset(session, dataset)
 
     def _deduplicate_records(self, records: list[dict]) -> list[dict]:
         deduped: dict[Path, dict] = {}
@@ -1433,6 +1440,113 @@ class DatasetService(ServiceBase):
             if key not in deduped or record.get("split") == "test":
                 deduped[key] = record
         return list(deduped.values())
+
+    def _write_dataset_manifest(self, session, dataset) -> None:
+        dataset_root_value = str(dataset.storage_path or "").strip()
+        if not dataset_root_value:
+            return
+        raw_dir = Path(dataset_root_value) / "raw"
+        raw_dir.mkdir(parents=True, exist_ok=True)
+        samples = sorted(
+            self.dataset_repository.get_all_samples(session, dataset.id),
+            key=lambda item: ((item.relative_path or ""), item.id),
+        )
+        split_counts: dict[str, int] = {}
+        class_distribution: dict[str, dict[str, int]] = {}
+        label_to_id: dict[str, int] = {}
+        manifest_samples: dict[str, dict] = {}
+
+        for index, sample in enumerate(samples, start=1):
+            split = self._manifest_split(sample, dataset.status)
+            split_counts[split] = split_counts.get(split, 0) + 1
+            labels: list[dict] = []
+            for label in sample.labels_json or []:
+                normalized = self._manifest_label_payload(label)
+                if not normalized:
+                    continue
+                labels.append(normalized)
+                class_name = str(normalized.get("class_name") or "").strip()
+                if class_name:
+                    dist = class_distribution.setdefault(class_name, {"train": 0, "val": 0, "test": 0, "total": 0})
+                    if split not in dist:
+                        dist[split] = 0
+                    dist[split] += 1
+                    dist["total"] += 1
+                class_id = normalized.get("class_id")
+                if class_name and class_id is not None and class_name not in label_to_id:
+                    try:
+                        label_to_id[class_name] = int(class_id)
+                    except (TypeError, ValueError):
+                        pass
+
+            manifest_samples[f"sample_{index:06d}"] = {
+                "path": (sample.relative_path or sample.name or "").replace("\\", "/"),
+                "labels": labels,
+                "split": split,
+            }
+
+        extra = dataset.extra_json or {}
+        source_path = str(extra.get("source_path") or extra.get("source_root") or dataset_root_value)
+        manifest = {
+            "dataset_name": dataset.name,
+            "modality": dataset.modality,
+            "source": source_path,
+            "split_ratio": self._format_split_ratio(split_counts),
+            "class_distribution": class_distribution,
+            "total_samples": len(samples),
+            "label_to_id": label_to_id,
+            "samples": manifest_samples,
+        }
+        (raw_dir / "dataset_manifest.json").write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+    def _manifest_split(self, sample, dataset_status: str) -> str:
+        metadata = sample.metadata_json or {}
+        split = str(metadata.get("split") or "").strip().lower()
+        if not split:
+            labels = sample.labels_json or []
+            if labels:
+                split = str(labels[0].get("split") or "").strip().lower()
+        if split == "valid":
+            return "val"
+        if split:
+            return split
+        return "test" if str(dataset_status or "").lower() == "test" else "train"
+
+    def _manifest_label_payload(self, label: dict) -> dict:
+        if not isinstance(label, dict):
+            return {}
+        payload: dict[str, object] = {}
+        class_name = label.get("class_name", label.get("name", ""))
+        if class_name not in (None, ""):
+            payload["class_name"] = str(class_name)
+        class_id = label.get("class_id")
+        if class_id is not None:
+            try:
+                payload["class_id"] = int(class_id)
+            except (TypeError, ValueError):
+                pass
+        bbox = label.get("bbox")
+        if isinstance(bbox, (list, tuple)) and len(bbox) >= 4:
+            try:
+                payload["bbox"] = [float(value) for value in bbox[:4]]
+            except (TypeError, ValueError):
+                pass
+        return payload
+
+    def _format_split_ratio(self, split_counts: dict[str, int]) -> str:
+        ordered_keys = [key for key in ("train", "val", "test") if split_counts.get(key)]
+        ordered_keys.extend(key for key in split_counts.keys() if key not in {"train", "val", "test"} and split_counts.get(key))
+        values = [int(split_counts[key]) for key in ordered_keys if int(split_counts.get(key, 0)) > 0]
+        if not values:
+            return ""
+        divisor = values[0]
+        for value in values[1:]:
+            divisor = gcd(divisor, value)
+        divisor = max(divisor, 1)
+        return ":".join(str(value // divisor) for value in values)
 
     def _load_training_parameters(self, parameter_path: str) -> dict:
         if not (parameter_path or "").strip():
@@ -1450,9 +1564,18 @@ class DatasetService(ServiceBase):
             raise ValidationError("Training parameter file must contain a JSON object.")
         return {key: data[key] for key in self._TRAINING_PARAMETER_ALLOWLIST if key in data}
 
-    def _serialize_dataset(self, dataset) -> dict:
+    def _serialize_dataset(self, session, dataset) -> dict:
         status = (dataset.status or "").lower()
         tags = list(dataset.tags_json or [])
+        parent_dataset_name = ""
+        if dataset.parent_dataset_id:
+            parent_dataset = self.dataset_repository.get_dataset(
+                session,
+                dataset.parent_dataset_id,
+                include_deleted=True,
+            )
+            if parent_dataset is not None:
+                parent_dataset_name = parent_dataset.name
         return {
             "id": dataset.id,
             "name": dataset.name,
@@ -1461,6 +1584,7 @@ class DatasetService(ServiceBase):
             "status": dataset.status,
             "stage": "generated" if status == "generated" or "generated" in {str(tag).lower() for tag in tags} else ("cleaned" if status == "cleaned" or "cleaned" in {str(tag).lower() for tag in tags} else "raw"),
             "parent_dataset_id": dataset.parent_dataset_id,
+            "parent_dataset_name": parent_dataset_name,
             "storage_path": dataset.storage_path,
             "total_samples": dataset.total_samples,
             "size_bytes": dataset.size_bytes,

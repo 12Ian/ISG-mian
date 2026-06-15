@@ -49,6 +49,9 @@ Item {
     property string previewSource: ""
     property string previewTitle: ""
     property string toastMessage: ""
+    property string lastSuggestedImportName: ""
+    property bool importNameManuallyEdited: false
+    property int currentPreviewImageIndex: -1
 
     // ======== 后端信号连接 ========
     Connections {
@@ -258,8 +261,38 @@ Item {
         return parts.length > 0 ? parts[parts.length - 1] : ""
     }
 
+    function importTimestamp() {
+        return Qt.formatDateTime(new Date(), "yyyyMMdd_HHmmss")
+    }
+
+    function importDefaultNameFromPath(path, isFile) {
+        var baseName = root.datasetNameFromPath(path)
+        if (isFile) {
+            var dotIndex = baseName.lastIndexOf(".")
+            if (dotIndex > 0) {
+                baseName = baseName.slice(0, dotIndex)
+            }
+        }
+        baseName = String(baseName || "").trim()
+        if (baseName === "") return ""
+        return baseName + "_" + root.importTimestamp()
+    }
+
+    function applyImportDefaultName(path, isFile) {
+        var previousSuggestedName = root.lastSuggestedImportName
+        var suggestedName = root.importDefaultNameFromPath(path, isFile)
+        if (suggestedName === "") return
+        var currentName = inputName.text.trim()
+        if (currentName === "" || currentName === previousSuggestedName || !root.importNameManuallyEdited) {
+            inputName.text = suggestedName
+            root.importNameManuallyEdited = false
+        }
+        root.lastSuggestedImportName = suggestedName
+    }
+
     function previewFile(file) {
         root.previewSample = file
+        root.currentPreviewImageIndex = root.imagePreviewIndexForFile(file)
         var previewKey = String(file ? (file.sampleId > 0 ? file.sampleId : (file.filePath || file.name || "")) : "")
         if (root.samplePreviewVisible && root.pendingPreviewKey === previewKey) return
         root.pendingPreviewKey = previewKey
@@ -280,11 +313,50 @@ Item {
     function closeSamplePreview() {
         root.samplePreviewVisible = false
         root.pendingPreviewKey = ""
+        root.currentPreviewImageIndex = -1
         previewPlayer.stop()
     }
 
     function openSamplePreview(sample) {
         previewFile(sample)
+    }
+
+    function previewImageFiles() {
+        var images = []
+        for (var i = 0; i < currentDirFiles.length; i++) {
+            var item = currentDirFiles[i]
+            if (item && item._isImage) images.push(item)
+        }
+        return images
+    }
+
+    function imagePreviewIndexForFile(file) {
+        if (!file || !file._isImage) return -1
+        var images = root.previewImageFiles()
+        var fileKey = String(file.sampleId > 0 ? file.sampleId : (file.filePath || file.name || ""))
+        for (var i = 0; i < images.length; i++) {
+            var item = images[i]
+            var itemKey = String(item.sampleId > 0 ? item.sampleId : (item.filePath || item.name || ""))
+            if (itemKey === fileKey) return i
+        }
+        return -1
+    }
+
+    function canPreviewPreviousImage() {
+        return root.currentPreviewImageIndex > 0
+    }
+
+    function canPreviewNextImage() {
+        var images = root.previewImageFiles()
+        return root.currentPreviewImageIndex >= 0 && root.currentPreviewImageIndex < images.length - 1
+    }
+
+    function previewAdjacentImage(step) {
+        var images = root.previewImageFiles()
+        if (images.length === 0 || root.currentPreviewImageIndex < 0) return
+        var nextIndex = root.currentPreviewImageIndex + step
+        if (nextIndex < 0 || nextIndex >= images.length) return
+        root.previewFile(images[nextIndex])
     }
 
     // 触发文件详情弹窗
@@ -467,7 +539,7 @@ Item {
                         anchors.rightMargin: 15
                         spacing: 10
 
-                        Label { text: "数据集名称"; font.bold: true; color: Theme.muted; Layout.preferredWidth: 200 }
+                        Label { text: "数据集名称"; font.bold: true; color: Theme.muted; Layout.preferredWidth: 360 }
                         Item { Layout.fillWidth: true } // 弹簧
                         Label { text: "类型/阶段"; font.bold: true; color: Theme.muted; Layout.preferredWidth: 140 }
                         Label { text: "文件总数"; font.bold: true; color: Theme.muted; Layout.preferredWidth: 100 }
@@ -497,13 +569,27 @@ Item {
                             anchors.rightMargin: 15
                             spacing: 10
 
-                            Label {
-                                text: modelData._cleanName || (modelData.name || "未命名").split("|Status:")[0]
-                                color: Theme.text
-                                font.pixelSize: 14
-                                font.bold: true
-                                Layout.preferredWidth: 200
-                                elide: Text.ElideRight
+                            RowLayout {
+                                Layout.preferredWidth: 360
+                                spacing: 8
+
+                                Label {
+                                    text: modelData._cleanName || (modelData.name || "未命名").split("|Status:")[0]
+                                    color: Theme.text
+                                    font.pixelSize: 14
+                                    font.bold: true
+                                    Layout.preferredWidth: modelData.parent_dataset_name ? 180 : 360
+                                    elide: Text.ElideRight
+                                }
+
+                                Label {
+                                    visible: !!modelData.parent_dataset_name
+                                    text: "原数据集：" + (modelData.parent_dataset_name || "")
+                                    color: Theme.muted
+                                    font.pixelSize: 12
+                                    Layout.fillWidth: true
+                                    elide: Text.ElideRight
+                                }
                             }
                             Item { Layout.fillWidth: true } // 弹簧
                             Label { text: (modelData.type || "图像") + " / " + root.stageLabel(modelData); color: "#4DD0E1"; Layout.preferredWidth: 140; elide: Text.ElideRight }
@@ -609,6 +695,18 @@ Item {
         modal: true
         focus: true
         closePolicy: Popup.NoAutoClose // 必须点右上角关闭
+        Keys.onLeftPressed: {
+            if (root.samplePreviewVisible && root.previewKind === "image" && root.canPreviewPreviousImage()) {
+                root.previewAdjacentImage(-1)
+                event.accepted = true
+            }
+        }
+        Keys.onRightPressed: {
+            if (root.samplePreviewVisible && root.previewKind === "image" && root.canPreviewNextImage()) {
+                root.previewAdjacentImage(1)
+                event.accepted = true
+            }
+        }
 
         background: Rectangle {
             color: Theme.row
@@ -893,6 +991,54 @@ Item {
                             asynchronous: true
                         }
 
+                        Button {
+                            anchors.left: parent.left
+                            anchors.leftMargin: 16
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 40
+                            height: 56
+                            visible: root.previewKind === "image"
+                            enabled: root.canPreviewPreviousImage()
+                            background: Rectangle {
+                                color: parent.enabled ? Qt.rgba(15 / 255, 23 / 255, 42 / 255, parent.hovered ? 0.82 : 0.68) : Qt.rgba(148 / 255, 163 / 255, 184 / 255, 0.28)
+                                radius: 20
+                                border.color: parent.enabled ? Qt.rgba(1, 1, 1, 0.18) : "transparent"
+                            }
+                            contentItem: Text {
+                                text: "‹"
+                                color: parent.enabled ? "white" : "#CBD5E1"
+                                font.pixelSize: 28
+                                font.bold: true
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                            onClicked: root.previewAdjacentImage(-1)
+                        }
+
+                        Button {
+                            anchors.right: parent.right
+                            anchors.rightMargin: 16
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 40
+                            height: 56
+                            visible: root.previewKind === "image"
+                            enabled: root.canPreviewNextImage()
+                            background: Rectangle {
+                                color: parent.enabled ? Qt.rgba(15 / 255, 23 / 255, 42 / 255, parent.hovered ? 0.82 : 0.68) : Qt.rgba(148 / 255, 163 / 255, 184 / 255, 0.28)
+                                radius: 20
+                                border.color: parent.enabled ? Qt.rgba(1, 1, 1, 0.18) : "transparent"
+                            }
+                            contentItem: Text {
+                                text: "›"
+                                color: parent.enabled ? "white" : "#CBD5E1"
+                                font.pixelSize: 28
+                                font.bold: true
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                            onClicked: root.previewAdjacentImage(1)
+                        }
+
                         ScrollView {
                             anchors.fill: parent
                             anchors.margins: 12
@@ -1030,7 +1176,9 @@ Item {
         id: fileDialog
         title: "选择导入的文件"
         onAccepted: {
-            selectedPathInput.text = root.localPathFromUrl(selectedFile)
+            var path = root.localPathFromUrl(selectedFile)
+            selectedPathInput.text = path
+            root.applyImportDefaultName(path, true)
         }
     }
 
@@ -1038,7 +1186,9 @@ Item {
         id: folderDialog
         title: "选择导入的文件夹"
         onAccepted: {
-            selectedPathInput.text = root.localPathFromUrl(selectedFolder)
+            var path = root.localPathFromUrl(selectedFolder)
+            selectedPathInput.text = path
+            root.applyImportDefaultName(path, false)
         }
     }
 
@@ -1054,6 +1204,10 @@ Item {
         onOpened: {
             importModeCombo.currentIndex = 1
             inputType.currentIndex = 0
+            inputName.text = ""
+            selectedPathInput.text = ""
+            root.lastSuggestedImportName = ""
+            root.importNameManuallyEdited = false
         }
 
         background: Rectangle {
@@ -1072,6 +1226,7 @@ Item {
                 Layout.fillWidth: true
                 color: Theme.text
                 placeholderTextColor: Theme.muted
+                onTextEdited: root.importNameManuallyEdited = true
                 background: Rectangle {
                     color: Theme.row
                     border.color: Theme.border
@@ -1099,7 +1254,14 @@ Item {
                         verticalAlignment: Text.AlignVCenter
                         leftPadding: 10
                     }
-                    onCurrentIndexChanged: selectedPathInput.text = ""
+                    onCurrentIndexChanged: {
+                        selectedPathInput.text = ""
+                        if (!root.importNameManuallyEdited || inputName.text.trim() === root.lastSuggestedImportName) {
+                            inputName.text = ""
+                            root.importNameManuallyEdited = false
+                            root.lastSuggestedImportName = ""
+                        }
+                    }
                 }
 
                 TextField {
@@ -1168,7 +1330,7 @@ Item {
                 return
             }
             var finalName = inputName.text.trim()
-            if (finalName === "") finalName = root.datasetNameFromPath(path)
+            if (finalName === "") finalName = root.importDefaultNameFromPath(path, importModeCombo.currentIndex === 0)
             if (finalName === "") {
                 root.showToast("请输入源数据集名称")
                 return
@@ -1182,6 +1344,8 @@ Item {
             }
             inputName.text = ""
             selectedPathInput.text = ""
+            root.lastSuggestedImportName = ""
+            root.importNameManuallyEdited = false
             importDeferTimer.start()
         }
     }
