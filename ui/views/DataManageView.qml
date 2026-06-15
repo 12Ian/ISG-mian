@@ -539,7 +539,7 @@ Item {
                         anchors.rightMargin: 15
                         spacing: 10
 
-                        Label { text: "数据集名称"; font.bold: true; color: Theme.muted; Layout.preferredWidth: 200 }
+                        Label { text: "数据集名称"; font.bold: true; color: Theme.muted; Layout.preferredWidth: 360 }
                         Item { Layout.fillWidth: true } // 弹簧
                         Label { text: "类型/阶段"; font.bold: true; color: Theme.muted; Layout.preferredWidth: 140 }
                         Label { text: "文件总数"; font.bold: true; color: Theme.muted; Layout.preferredWidth: 100 }
@@ -569,13 +569,27 @@ Item {
                             anchors.rightMargin: 15
                             spacing: 10
 
-                            Label {
-                                text: modelData._cleanName || (modelData.name || "未命名").split("|Status:")[0]
-                                color: Theme.text
-                                font.pixelSize: 14
-                                font.bold: true
-                                Layout.preferredWidth: 200
-                                elide: Text.ElideRight
+                            RowLayout {
+                                Layout.preferredWidth: 360
+                                spacing: 8
+
+                                Label {
+                                    text: modelData._cleanName || (modelData.name || "未命名").split("|Status:")[0]
+                                    color: Theme.text
+                                    font.pixelSize: 14
+                                    font.bold: true
+                                    Layout.preferredWidth: modelData.parent_dataset_name ? 180 : 360
+                                    elide: Text.ElideRight
+                                }
+
+                                Label {
+                                    visible: !!modelData.parent_dataset_name
+                                    text: "原数据集：" + (modelData.parent_dataset_name || "")
+                                    color: Theme.muted
+                                    font.pixelSize: 12
+                                    Layout.fillWidth: true
+                                    elide: Text.ElideRight
+                                }
                             }
                             Item { Layout.fillWidth: true } // 弹簧
                             Label { text: (modelData.type || "图像") + " / " + root.stageLabel(modelData); color: "#4DD0E1"; Layout.preferredWidth: 140; elide: Text.ElideRight }

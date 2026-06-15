@@ -85,7 +85,7 @@ class DatasetService(ServiceBase):
                 message=f"Created dataset {clean_name}",
             )
             session.commit()
-            return {"ok": True, "data": self._serialize_dataset(dataset)}
+            return {"ok": True, "data": self._serialize_dataset(session, dataset)}
 
     def update_dataset(self, dataset_id: int, name: str, type_name: str) -> dict:
         with self.session_factory() as session:
@@ -113,7 +113,7 @@ class DatasetService(ServiceBase):
                 message=f"Updated dataset {dataset.name}",
             )
             session.commit()
-            return {"ok": True, "data": self._serialize_dataset(dataset)}
+            return {"ok": True, "data": self._serialize_dataset(session, dataset)}
 
     def delete_dataset(self, dataset_id: int) -> dict:
         with self.session_factory() as session:
@@ -132,7 +132,7 @@ class DatasetService(ServiceBase):
                 message=f"Deleted dataset {dataset.name} (files purged)",
             )
             session.commit()
-            return {"ok": True, "data": self._serialize_dataset(dataset)}
+            return {"ok": True, "data": self._serialize_dataset(session, dataset)}
 
     def purge_dataset_files(self, dataset_id: int) -> dict:
         with self.session_factory() as session:
@@ -152,12 +152,12 @@ class DatasetService(ServiceBase):
                 message=f"Purged dataset files for {dataset.name}",
             )
             session.commit()
-            return {"ok": True, "data": self._serialize_dataset(dataset)}
+            return {"ok": True, "data": self._serialize_dataset(session, dataset)}
 
     def get_dataset(self, dataset_id: int, include_deleted: bool = False) -> dict:
         with self.session_factory() as session:
             dataset = self._require_dataset(session, dataset_id, include_deleted=include_deleted)
-            return {"ok": True, "data": self._serialize_dataset(dataset)}
+            return {"ok": True, "data": self._serialize_dataset(session, dataset)}
 
     def get_datasets(self, page: int, page_size: int, status: str) -> dict:
         with self.session_factory() as session:
@@ -170,7 +170,7 @@ class DatasetService(ServiceBase):
             )
             return {
                 "total": total,
-                "items": [self._serialize_dataset(item) for item in items],
+                "items": [self._serialize_dataset(session, item) for item in items],
                 "page": max(page, 1),
                 "page_size": max(page_size, 1),
             }
@@ -694,7 +694,9 @@ class DatasetService(ServiceBase):
             message=f"Imported dataset bundle {dataset.name}",
             payload_json={"sample_count": len(records), "status": status},
         )
-        return self._serialize_dataset(dataset)
+        with self.session_factory() as session:
+            current = self.dataset_repository.get_dataset(session, dataset.id, include_deleted=True)
+            return self._serialize_dataset(session, current or dataset)
 
     def _collect_import_records(self, data_path: Path, label_path: Path | None, split: str) -> tuple[list[dict], str]:
         if data_path.is_file():
@@ -1424,7 +1426,7 @@ class DatasetService(ServiceBase):
                 payload_json={"sample_count": len(records), "dataset_format": spec["dataset_format"]},
             )
             session.commit()
-            return self._serialize_dataset(dataset)
+            return self._serialize_dataset(session, dataset)
 
     def _deduplicate_records(self, records: list[dict]) -> list[dict]:
         deduped: dict[Path, dict] = {}
@@ -1450,9 +1452,18 @@ class DatasetService(ServiceBase):
             raise ValidationError("Training parameter file must contain a JSON object.")
         return {key: data[key] for key in self._TRAINING_PARAMETER_ALLOWLIST if key in data}
 
-    def _serialize_dataset(self, dataset) -> dict:
+    def _serialize_dataset(self, session, dataset) -> dict:
         status = (dataset.status or "").lower()
         tags = list(dataset.tags_json or [])
+        parent_dataset_name = ""
+        if dataset.parent_dataset_id:
+            parent_dataset = self.dataset_repository.get_dataset(
+                session,
+                dataset.parent_dataset_id,
+                include_deleted=True,
+            )
+            if parent_dataset is not None:
+                parent_dataset_name = parent_dataset.name
         return {
             "id": dataset.id,
             "name": dataset.name,
@@ -1461,6 +1472,7 @@ class DatasetService(ServiceBase):
             "status": dataset.status,
             "stage": "generated" if status == "generated" or "generated" in {str(tag).lower() for tag in tags} else ("cleaned" if status == "cleaned" or "cleaned" in {str(tag).lower() for tag in tags} else "raw"),
             "parent_dataset_id": dataset.parent_dataset_id,
+            "parent_dataset_name": parent_dataset_name,
             "storage_path": dataset.storage_path,
             "total_samples": dataset.total_samples,
             "size_bytes": dataset.size_bytes,
