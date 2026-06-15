@@ -9,6 +9,7 @@ Item {
 
     readonly property color bgDark: Theme.bg
     readonly property color panelBg: Theme.panel
+    readonly property color panelAltBg: Theme.panelAlt
     readonly property color primaryColor: Theme.primary
     readonly property color textColor: Theme.text
     readonly property color textMuted: Theme.muted
@@ -161,7 +162,7 @@ Item {
             Rectangle {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 88
-                color: root.panelBg
+                color: root.panelAltBg
                 radius: 8
                 border.color: root.borderColor
                 border.width: 1
@@ -178,7 +179,7 @@ Item {
             Rectangle {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 104
-                color: root.panelBg
+                color: root.panelAltBg
                 radius: 8
                 border.color: root.borderColor
                 border.width: 1
@@ -193,7 +194,7 @@ Item {
                         delegate: Rectangle {
                             Layout.fillWidth: true
                             Layout.fillHeight: true
-                            color: Theme.control
+                            color: root.bgDark
                             radius: 6
                             border.color: root.borderColor
                             border.width: 1
@@ -214,7 +215,7 @@ Item {
             Rectangle {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 240
-                color: root.panelBg
+                color: root.panelAltBg
                 radius: 8
                 border.color: root.borderColor
                 border.width: 1
@@ -294,7 +295,7 @@ Item {
             Rectangle {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 240
-                color: root.panelBg
+                color: root.panelAltBg
                 radius: 8
                 border.color: root.borderColor
                 border.width: 1

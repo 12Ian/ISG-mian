@@ -211,13 +211,11 @@ class GenerationService(ServiceBase):
                     outputs=outputs,
                 )
 
-            source_copied_count = 0
-            if source_dataset.modality == "image":
-                source_copied_count = self._persist_source_image_outputs(
-                    task_id=task_id,
-                    target_dataset_id=target_dataset.id,
-                    source_samples=source_samples,
-                )
+            source_copied_count = self._persist_source_outputs(
+                task_id=task_id,
+                target_dataset_id=target_dataset.id,
+                source_samples=source_samples,
+            )
 
             total_count = produced_count + source_copied_count
             self.task_manager.complete(
@@ -365,7 +363,7 @@ class GenerationService(ServiceBase):
             session.commit()
         return persisted_items
 
-    def _persist_source_image_outputs(self, *, task_id: int, target_dataset_id: int, source_samples: list[Sample]) -> int:
+    def _persist_source_outputs(self, *, task_id: int, target_dataset_id: int, source_samples: list[Sample]) -> int:
         if not source_samples:
             return 0
 
@@ -426,7 +424,7 @@ class GenerationService(ServiceBase):
                 session,
                 task_id=task_id,
                 level="info",
-                message="Source image samples copied into generation outputs",
+                message="Source samples copied into generation outputs",
                 payload_json={"source_copied_count": copied_count, "target_dataset_id": target_dataset.id},
             )
             session.commit()

@@ -284,6 +284,12 @@ class BackendBridge:
         except Exception as exc:
             return _normalize_error(exc)
 
+    def manual_exclude_cleaning_sample(self, task_id: int, sample_id: int) -> dict:
+        try:
+            return self.facade.cleaning_service.manual_exclude_sample(task_id, sample_id)
+        except Exception as exc:
+            return _normalize_error(exc)
+
     def store_cleaning_task_result(self, task_id: int, dataset_name: str) -> dict:
         try:
             return self.facade.cleaning_service.store_cleaned_dataset(task_id, dataset_name)
@@ -605,8 +611,11 @@ class BackendBridge:
 
     def to_qml_sample(self, item: dict) -> dict:
         size_bytes = int(item.get("size_bytes") or 0)
+        file_path = item.get("file_path", "")
         return {
             **item,
+            "path": item.get("path") or file_path,
+            "sample_path": item.get("sample_path") or file_path,
             "type": self._qml_modality_label(item.get("modality", "")),
             "size": self._format_size(size_bytes),
             "modified": item.get("updated_at", ""),

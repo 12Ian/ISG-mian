@@ -209,6 +209,59 @@ class CleaningService(ServiceBase):
             updated.append(self.handle_suggestion(suggestion_id, action)["data"])
         return {"ok": True, "data": {"updated_count": len(updated), "items": updated}}
 
+    def manual_exclude_sample(self, task_id: int, sample_id: int) -> dict:
+        with self.session_factory() as session:
+            task = self.task_repository.get_task_model(session, task_id)
+            if task is None:
+                raise NotFoundError(f"Task {task_id} not found.")
+            if task.task_type != "cleaning":
+                raise ValidationError("Only cleaning tasks support manual sample filtering.")
+
+            sample = session.query(Sample).filter(Sample.id == sample_id).first()
+            if sample is None:
+                raise NotFoundError(f"Sample {sample_id} not found.")
+            if sample.dataset_id != task.source_dataset_id:
+                raise ValidationError("Sample does not belong to the cleaning source dataset.")
+
+            suggestion = (
+                session.query(CleaningSuggestion)
+                .filter(CleaningSuggestion.task_id == task_id, CleaningSuggestion.sample_id == sample_id)
+                .order_by(CleaningSuggestion.confidence.desc(), CleaningSuggestion.id.asc())
+                .first()
+            )
+            if suggestion is None:
+                suggestion = CleaningSuggestion(
+                    task_id=task_id,
+                    sample_id=sample_id,
+                    algorithm_id=task.algorithm_id,
+                    issue_type="manual_filter",
+                    suggested_action="exclude",
+                    status="approved",
+                    confidence=1.0,
+                    message="Manual sample exclusion",
+                    details_json={"source": "manual"},
+                )
+                session.add(suggestion)
+            else:
+                suggestion.issue_type = "manual_filter"
+                suggestion.suggested_action = "exclude"
+                suggestion.status = "approved"
+                suggestion.confidence = 1.0
+                suggestion.message = "Manual sample exclusion"
+                details = dict(suggestion.details_json or {})
+                details["source"] = "manual"
+                suggestion.details_json = details
+
+            self.task_repository.add_task_log(
+                session,
+                task_id=task_id,
+                level="info",
+                message="Cleaning sample manually excluded",
+                payload_json={"sample_id": sample_id},
+            )
+            session.commit()
+            return {"ok": True, "data": self._serialize_suggestion(suggestion)}
+
     def store_cleaned_dataset(self, task_id: int, dataset_name: str | None = None) -> dict:
         with self.session_factory() as session:
             task = self.task_repository.get_task_model(session, task_id)

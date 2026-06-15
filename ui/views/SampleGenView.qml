@@ -57,12 +57,21 @@ Item {
     property string previewTitle: ""
     property string previewText: ""
     property string previewSource: ""
+    property bool comparisonPreviewMode: false
+    property var previewLeftData: ({})
+    property var previewRightData: ({})
+    property bool previewHasGenerated: false
     property string currentTargetDatasetName: ""
 
     property int pendingPreviewId: -1
     property int pendingEditIndex: -1
     property int pendingDeleteIndex: -1
     property int selectedExportCount: 0
+    property var generationParameterPresets: []
+    property var hoveredParameterPreset: null
+    property bool parameterPresetPreviewVisible: false
+    property var allGenerationHistoryItems: []
+    property string historySearchText: ""
 
     function updateExportCount() {
         var count = 0
@@ -70,6 +79,46 @@ Item {
             if (generationHistoryModel.get(i).isSelected) count++
         }
         root.selectedExportCount = count
+    }
+
+    function loadGenerationParameterPresets() {
+        var result = backendService.getGenerationParameterPresets()
+        if (result && result.status === "success") {
+            root.generationParameterPresets = result.items || []
+        }
+    }
+
+    function parameterPresetOptions() {
+        var items = [{ name: root.generationParameterPresets.length > 0 ? "选择已保存参数" : "暂无已保存参数" }]
+        for (var i = 0; i < root.generationParameterPresets.length; i++) {
+            var preset = root.generationParameterPresets[i]
+            items.push({ name: preset.name || ("参数记录 " + (i + 1)) })
+        }
+        return items
+    }
+
+    function generationHistoryMatches(item, keyword) {
+        if (!keyword) return true
+        var text = [
+            item.projectName || "",
+            item.algos || "",
+            item.algorithmNames || "",
+            item.sourceDataset || "",
+            item.generatedDataset || ""
+        ].join(" ").toLowerCase()
+        return text.indexOf(keyword) !== -1
+    }
+
+    function applyGenerationHistoryFilter() {
+        var keyword = String(root.historySearchText || "").trim().toLowerCase()
+        generationHistoryModel.clear()
+        for (var i = 0; i < root.allGenerationHistoryItems.length; i++) {
+            var item = root.allGenerationHistoryItems[i]
+            if (root.generationHistoryMatches(item, keyword)) {
+                generationHistoryModel.append(item)
+            }
+        }
+        root.updateExportCount()
     }
 
     function modalityFromLabel(label) {
@@ -311,6 +360,8 @@ Item {
 
     property var paramsDataMap: ({})
     property var algorithmNameMap: ({})
+    property var parameterLabelMap: ({})
+    property var algorithmParameterLabelMap: ({})
 
     function algorithmNames(ids) {
         if (!ids || ids.length === 0) return ""
@@ -330,10 +381,148 @@ Item {
             for (var i = 0; i < keys.length; i++) {
                 var k = keys[i]
                 if (k === "algorithm_ids" || k === "target_count") continue
-                parts.push(k + "=" + paramsJson[k])
+                parts.push(root.parameterDisplayName(k, ids) + "=" + paramsJson[k])
             }
         }
         return parts.join(" | ")
+    }
+
+    function parameterDisplayName(key, ids) {
+        var name = String(key || "")
+        var label = ""
+        var algoLabelMap = root.algorithmParameterLabelMap || {}
+        if (ids) {
+            for (var i = 0; i < ids.length; i++) {
+                var labels = algoLabelMap[String(ids[i])] || {}
+                if (labels[name]) {
+                    label = labels[name]
+                    break
+                }
+            }
+        }
+        if (!label) label = root.parameterLabelMap[name] || ""
+        if (!label || label === name) return name
+        return "\uFF08" + label + "\uFF09" + name
+    }
+
+    function parameterLabelOnly(key, ids) {
+        var name = String(key || "")
+        if (name === "target_count") return "目标数量"
+        var label = ""
+        var algoLabelMap = root.algorithmParameterLabelMap || {}
+        if (ids) {
+            for (var i = 0; i < ids.length; i++) {
+                var labels = algoLabelMap[String(ids[i])] || {}
+                if (labels[name]) {
+                    label = labels[name]
+                    break
+                }
+            }
+        }
+        if (!label) label = root.parameterLabelMap[name] || ""
+        return label || name
+    }
+
+    function cleanPresetParameters(params) {
+        var result = {}
+        if (!params) return result
+        var keys = Object.keys(params)
+        for (var i = 0; i < keys.length; i++) {
+            var key = keys[i]
+            if (key === "algorithm_ids") continue
+            result[key] = params[key]
+        }
+        return result
+    }
+
+    function saveCurrentDetailParameterPreset(name) {
+        var params = root.cleanPresetParameters(root.detailParameters)
+        if (params.target_count === undefined && root.currentHistoryItem && root.currentHistoryItem.targetCount) {
+            params.target_count = root.currentHistoryItem.targetCount
+        }
+        var result = backendService.saveGenerationParameterPreset(name, root.detailAlgorithmIds || [], params)
+        if (result && result.status === "success") {
+            root.generationParameterPresets = result.items || []
+            root.showToast("✅ 参数记录已保存")
+            return true
+        }
+        root.showToast("⚠️ " + (result && result.message ? result.message : "参数记录保存失败"))
+        return false
+    }
+
+    function applyParameterPreset(preset) {
+        if (!preset) return
+        var rawIds = root.parseAlgorithmIds(preset.algorithm_ids || preset.algorithmIds || [])
+        var availableIds = []
+        for (var i = 0; i < rawIds.length; i++) {
+            if (root.algorithmById(rawIds[i]) !== null) availableIds.push(rawIds[i])
+        }
+        if (availableIds.length === 0 && rawIds.length > 0) {
+            root.showToast("⚠️ 当前源数据集下没有该参数记录对应的算法")
+            return
+        }
+        if (availableIds.length > 0) root.selectedStrategies = availableIds
+
+        var params = preset.parameters || {}
+        if (params.target_count !== undefined) {
+            var count = parseInt(params.target_count)
+            if (!isNaN(count) && count > 0) root.totalCount = count
+        }
+
+        var newMap = {}
+        var mapKeys = Object.keys(root.paramsDataMap || {})
+        for (var mk = 0; mk < mapKeys.length; mk++) {
+            var mapKey = mapKeys[mk]
+            var sourceList = root.paramsDataMap[mapKey] || []
+            var targetList = []
+            for (var p = 0; p < sourceList.length; p++) {
+                var item = sourceList[p]
+                var copied = {
+                    n: item.n,
+                    label: item.label,
+                    v: params[item.n] !== undefined ? String(params[item.n]) : item.v,
+                    type: item.type,
+                    options: item.options,
+                    optionsJson: item.optionsJson
+                }
+                targetList.push(copied)
+            }
+            newMap[mapKey] = targetList
+        }
+        root.paramsDataMap = newMap
+        root.showToast("✅ 已应用参数记录")
+    }
+
+    function parameterPresetPreviewItems(preset) {
+        var result = []
+        if (!preset) return result
+        var params = preset.parameters || {}
+        var ids = root.parseAlgorithmIds(preset.algorithm_ids || preset.algorithmIds || [])
+        var keys = Object.keys(params)
+        for (var i = 0; i < keys.length; i++) {
+            var key = keys[i]
+            if (key === "algorithm_ids") continue
+            result.push({ label: root.parameterLabelOnly(key, ids), value: String(params[key]) })
+        }
+        return result
+    }
+
+    function refreshHistoryAlgorithmDescriptions() {
+        for (var h = 0; h < root.allGenerationHistoryItems.length; h++) {
+            var historyItem = root.allGenerationHistoryItems[h]
+            var ids = root.parseAlgorithmIds(historyItem.algorithmIdsText || historyItem.algorithmIds || "")
+            var historyParams = root.parseJsonObject(historyItem.parametersJsonText || historyItem.parameters || {})
+            historyItem.algos = root.formatParameters(ids, historyParams)
+            historyItem.algorithmNames = root.algorithmNames(ids)
+        }
+        for (var i = 0; i < generationHistoryModel.count; i++) {
+            var item = generationHistoryModel.get(i)
+            var algorithmIds = root.parseAlgorithmIds(item.algorithmIdsText || item.algorithmIds || "")
+            var params = root.parseJsonObject(item.parametersJsonText || item.parameters || {})
+            generationHistoryModel.setProperty(i, "algos", root.formatParameters(algorithmIds, params))
+            generationHistoryModel.setProperty(i, "algorithmNames", root.algorithmNames(algorithmIds))
+        }
+        root.applyGenerationHistoryFilter()
     }
 
     function generationTaskTitle(task, sourceName) {
@@ -396,6 +585,74 @@ Item {
         return "file:///" + clean
     }
 
+    function isImagePath(path) {
+        var ext = String(path || "").toLowerCase().split(".").pop()
+        return ["jpg","jpeg","png","bmp","gif","webp","tif","tiff"].indexOf(ext) >= 0
+    }
+
+    function previewKindForPath(path) {
+        var ext = String(path || "").toLowerCase().split(".").pop()
+        if (["jpg","jpeg","png","bmp","gif","webp","tif","tiff"].indexOf(ext) >= 0) return "image"
+        if (["wav","mp3","aac","flac","ogg","m4a"].indexOf(ext) >= 0) return "audio"
+        if (["txt","csv","json","md","log","yaml","yml","xml"].indexOf(ext) >= 0) return "text"
+        return "file"
+    }
+
+    function previewPayloadWithFallback(payload, fallbackPath, fallbackTitle) {
+        var data = {}
+        var source = payload || {}
+        var keys = Object.keys(source)
+        for (var i = 0; i < keys.length; i++) data[keys[i]] = source[keys[i]]
+        var path = data.file_path || data.path || data.sample_path || fallbackPath || ""
+        if (path !== "") {
+            data.file_path = path
+            data.path = path
+            data.sample_path = path
+        }
+        if (!data.preview_kind || data.preview_kind === "file") data.preview_kind = root.previewKindForPath(path)
+        if (!data.name && fallbackTitle) data.name = fallbackTitle
+        return data
+    }
+
+    function previewFileSource(payload) {
+        var path = payload ? (payload.file_path || payload.path || payload.sample_path || "") : ""
+        return path ? root.localFileUrl(path) : ""
+    }
+
+    function previewDisplayName(payload, fallback) {
+        if (!payload) return fallback
+        return payload.name || payload.relative_path || fallback
+    }
+
+    function openGenerationPreview(sourceSampleId, generatedSampleId, sourceTitle, generatedTitle, sourceFilePath, generatedFilePath) {
+        var result = backendService.getSamplePreviewPair(sourceSampleId || 0, generatedSampleId || 0)
+        if (!result || result.status !== "success") {
+            root.showToast("\u26a0\ufe0f \u6837\u672c\u9884\u89c8\u52a0\u8f7d\u5931\u8d25")
+            return
+        }
+        root.comparisonPreviewMode = true
+        root.previewLeftData = root.previewPayloadWithFallback(result.source || {}, sourceFilePath || "", sourceTitle || "\u6e90\u6837\u672c")
+        root.previewRightData = root.previewPayloadWithFallback(result.generated || {}, generatedFilePath || "", generatedTitle || "\u751f\u6210\u6837\u672c")
+        root.previewHasGenerated = generatedSampleId > 0 && (root.previewFileSource(root.previewRightData) !== "" || !!(result.generated && result.generated.sample_id))
+        root.previewTitle = root.previewHasGenerated
+                ? ((sourceTitle || "\u6e90\u6837\u672c") + "  ->  " + (generatedTitle || "\u751f\u6210\u6837\u672c"))
+                : (sourceTitle || "\u6e90\u6837\u672c")
+        previewPlayer.stop()
+        samplePreviewPopup.open()
+    }
+
+    function openSinglePreview(payload) {
+        root.comparisonPreviewMode = false
+        root.previewKind = payload.preview_kind || "file"
+        root.previewText = payload.text_content || payload.error || ""
+        root.previewTitle = payload.name || payload.relative_path || "\u6837\u672c\u9884\u89c8"
+        root.previewSource = root.previewFileSource(payload)
+        if (root.previewKind === "audio" && root.previewSource !== "") {
+            previewPlayer.source = root.previewSource
+        }
+        samplePreviewPopup.open()
+    }
+
     function computeHasDetailParams(obj) {
         if (!obj) return false
         var keys = Object.keys(obj)
@@ -455,7 +712,7 @@ Item {
         function onEnhancementTasksUpdated(data) {
             var items = []
             if (data && data.items) items = data.items
-            generationHistoryModel.clear()
+            var historyItems = []
             for (var i = 0; i < items.length; i++) {
                 var task = items[i]
                 var sourceName = task.source_dataset_name || ("数据集#" + (task.source_dataset_id || ""))
@@ -465,13 +722,14 @@ Item {
                 var algorithmIds = root.normalizeAlgorithmIds(task)
                 var targetCount = paramsObj.target_count || payloadObj.target_count || 0
                 var algoDesc = root.formatParameters(algorithmIds, paramsObj)
-                generationHistoryModel.append({
+                var historyItem = {
                     isSelected: false,
                     taskId: task.id || 0,
                     projectName: root.generationTaskTitle(task, sourceName),
                     sourceDataset: sourceName,
                     generatedDataset: targetName,
                     algos: algoDesc,
+                    algorithmNames: root.algorithmNames(algorithmIds),
                     algorithmIds: algorithmIds,
                     algorithmIdsText: algorithmIds.join(","),
                     parameters: paramsObj,
@@ -484,7 +742,8 @@ Item {
                     progress: task.progress || 0,
                     progressMessage: task.progress_message || "",
                     errorMessage: task.error_message || ""
-                })
+                }
+                historyItems.push(historyItem)
                 if (root.isGenerating && (task.id || 0) === root.currentTaskId) {
                     var pct = task.progress || 0
                     root.progress = pct / 100.0
@@ -499,11 +758,15 @@ Item {
                     }
                 }
             }
+            root.allGenerationHistoryItems = historyItems
+            root.applyGenerationHistoryFilter()
         }
 
         function onAlgorithmsUpdated(algorithms) {
             if (!algorithms || !algorithms.length) return
             var map = {}
+            var labelMap = {}
+            var algorithmLabelMap = {}
             var old = root.algorithmNameMap
             if (old) {
                 var oldKeys = Object.keys(old)
@@ -511,17 +774,46 @@ Item {
                     map[oldKeys[j]] = old[oldKeys[j]]
                 }
             }
+            var oldLabels = root.parameterLabelMap
+            if (oldLabels) {
+                var oldLabelKeys = Object.keys(oldLabels)
+                for (var lk = 0; lk < oldLabelKeys.length; lk++) {
+                    labelMap[oldLabelKeys[lk]] = oldLabels[oldLabelKeys[lk]]
+                }
+            }
+            var oldAlgorithmLabels = root.algorithmParameterLabelMap
+            if (oldAlgorithmLabels) {
+                var oldAlgorithmLabelKeys = Object.keys(oldAlgorithmLabels)
+                for (var ak = 0; ak < oldAlgorithmLabelKeys.length; ak++) {
+                    algorithmLabelMap[oldAlgorithmLabelKeys[ak]] = oldAlgorithmLabels[oldAlgorithmLabelKeys[ak]]
+                }
+            }
             for (var i = 0; i < algorithms.length; i++) {
                 var algo = algorithms[i]
                 map[String(algo.id)] = algo.name || algo.key || ""
+                var params = algo.parameters || []
+                var perAlgorithmLabels = algorithmLabelMap[String(algo.id)] || {}
+                for (var p = 0; p < params.length; p++) {
+                    var param = params[p]
+                    var paramName = String(param.name || "")
+                    var paramLabel = String(param.label || "")
+                    if (paramName && paramLabel && paramLabel !== paramName) {
+                        labelMap[paramName] = paramLabel
+                        perAlgorithmLabels[paramName] = paramLabel
+                    }
+                }
+                algorithmLabelMap[String(algo.id)] = perAlgorithmLabels
             }
             root.algorithmNameMap = map
+            root.parameterLabelMap = labelMap
+            root.algorithmParameterLabelMap = algorithmLabelMap
             root.generationAlgorithms = algorithms
             root.paramsDataMap = root.buildParamsDataMap(algorithms)
             root.generationAlgorithmGroups = root.groupGenerationAlgorithms(algorithms)
             root.selectedStrategies = root.selectedStrategies.filter(function(id) {
                 return root.algorithmById(id) !== null
             })
+            root.refreshHistoryAlgorithmDescriptions()
         }
 
         function onGenerationOutputsUpdated(data) {
@@ -531,13 +823,16 @@ Item {
                 var item = items[i]
                 var srcSample = item.source_sample || {}
                 var outSample = item.output_sample || {}
+                var hasGenerated = item.status !== "source" && (item.output_sample_id || 0) > 0
                 previewModel.append({
                     outputId: item.id || 0,
                     outputSampleId: item.output_sample_id || 0,
-                    sourceName: srcSample.name || ("源样本#" + (item.source_sample_id || "")),
-                    generatedName: outSample.name || ("生成样本#" + (item.output_sample_id || "")),
+                    sourceSampleId: item.source_sample_id || srcSample.id || 0,
+                    hasGenerated: hasGenerated,
+                    sourceName: srcSample.name || ("\u6e90\u6837\u672c#" + (item.source_sample_id || "")),
+                    generatedName: hasGenerated ? (outSample.name || ("\u751f\u6210\u6837\u672c#" + (item.output_sample_id || ""))) : "",
                     sourcePath: srcSample.path || srcSample.sample_path || "",
-                    generatedPath: outSample.path || outSample.sample_path || item.output_path || "",
+                    generatedPath: hasGenerated ? (outSample.path || outSample.sample_path || item.output_path || "") : "",
                     algoId: item.algorithm_id || 0,
                     status: item.status || ""
                 })
@@ -546,8 +841,10 @@ Item {
                 previewModel.append({
                     outputId: 0,
                     outputSampleId: 0,
-                    sourceName: "生成任务已完成",
-                    generatedName: "无生成输出记录",
+                    sourceSampleId: 0,
+                    hasGenerated: false,
+                    sourceName: "\u751f\u6210\u4efb\u52a1\u5df2\u5b8c\u6210",
+                    generatedName: "\u65e0\u751f\u6210\u8f93\u51fa\u8bb0\u5f55",
                     sourcePath: "",
                     generatedPath: "",
                     algoId: 0,
@@ -561,28 +858,25 @@ Item {
             if (!payload || !payload.sample_id) return
             if (root.pendingPreviewId !== payload.sample_id) return
             root.pendingPreviewId = -1
-            root.previewKind = payload.preview_kind || "file"
-            root.previewText = payload.text_content || payload.error || ""
-            root.previewTitle = payload.name || payload.relative_path || "样本预览"
-            root.previewSource = payload.file_path ? root.localFileUrl(payload.file_path) : ""
-            if (root.previewKind === "audio" && root.previewSource !== "") {
-                previewPlayer.source = root.previewSource
-            }
-            samplePreviewPopup.open()
+            root.openSinglePreview(payload)
         }
     }
 
     // ================= 样本预览弹窗 =================
     Popup {
         id: samplePreviewPopup
-        width: Math.max(400, Math.min(root.width * 0.9, 760))
-        height: Math.max(300, Math.min(root.height * 0.9, 560))
+        width: Math.max(400, Math.min(root.width * 0.92, root.comparisonPreviewMode ? 1040 : 760))
+        height: Math.max(300, Math.min(root.height * 0.9, root.comparisonPreviewMode ? 620 : 560))
         x: Math.round((root.width - width) / 2)
         y: Math.round((root.height - height) / 2)
         modal: true
         focus: true
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-        onClosed: previewPlayer.stop()
+        onClosed: {
+            previewPlayer.stop()
+            previewLeftPlayer.stop()
+            previewRightPlayer.stop()
+        }
 
         background: Rectangle {
             color: root.panelBg
@@ -609,7 +903,7 @@ Item {
                     elide: Text.ElideRight
                 }
                 Button {
-                    text: "关闭"
+                    text: "\u5173\u95ed"
                     Layout.preferredWidth: 72
                     Layout.preferredHeight: 30
                     background: Rectangle { color: parent.hovered ? root.tableHoverBg : "transparent"; radius: 4; border.color: root.borderColor }
@@ -621,6 +915,7 @@ Item {
             Rectangle {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
+                visible: !root.comparisonPreviewMode
                 color: root.bgDark
                 border.color: root.borderColor
                 radius: 6
@@ -664,7 +959,7 @@ Item {
                         elide: Text.ElideRight
                     }
                     Text {
-                        text: root.previewSource !== "" ? root.previewSource : "无音频路径"
+                        text: root.previewSource !== "" ? root.previewSource : "\u65e0\u97f3\u9891\u8def\u5f84"
                         color: root.textMuted
                         font.pixelSize: 12
                         Layout.fillWidth: true
@@ -675,7 +970,7 @@ Item {
                         Layout.alignment: Qt.AlignHCenter
                         spacing: 10
                         Button {
-                            text: previewPlayer.playbackState === MediaPlayer.PlayingState ? "暂停" : "播放"
+                            text: previewPlayer.playbackState === MediaPlayer.PlayingState ? "\u6682\u505c" : "\u64ad\u653e"
                             Layout.preferredWidth: 90
                             Layout.preferredHeight: 34
                             background: Rectangle { color: parent.hovered ? "#0288D1" : "#039BE5"; radius: 4 }
@@ -686,7 +981,7 @@ Item {
                             }
                         }
                         Button {
-                            text: "停止"
+                            text: "\u505c\u6b62"
                             Layout.preferredWidth: 70
                             Layout.preferredHeight: 34
                             background: Rectangle { color: parent.hovered ? root.tableHoverBg : "transparent"; border.color: root.borderColor; border.width: 1; radius: 4 }
@@ -705,7 +1000,7 @@ Item {
                         width: 72; height: 72; radius: 12
                         color: root.tableHoverBg
                         Layout.alignment: Qt.AlignHCenter
-                        Text { text: root.previewKind === "file" ? "📄" : "📎"; font.pixelSize: 32; anchors.centerIn: parent }
+                        Text { text: root.previewKind === "file" ? "\u6587\u4ef6" : "\u9644\u4ef6"; font.pixelSize: 18; anchors.centerIn: parent }
                     }
                     Text {
                         text: root.previewTitle
@@ -717,7 +1012,7 @@ Item {
                         elide: Text.ElideRight
                     }
                     Text {
-                        text: root.previewSource !== "" ? root.previewSource : "文件路径不可用"
+                        text: root.previewSource !== "" ? root.previewSource : "\u6587\u4ef6\u8def\u5f84\u4e0d\u53ef\u7528"
                         color: root.textMuted
                         font.pixelSize: 12
                         Layout.fillWidth: true
@@ -735,6 +1030,208 @@ Item {
                     }
                 }
             }
+
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                visible: root.comparisonPreviewMode
+                spacing: 12
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    color: root.bgDark
+                    radius: 6
+                    border.color: root.borderColor
+                    clip: true
+                    ColumnLayout {
+                        anchors.fill: parent
+                        anchors.margins: 12
+                        spacing: 8
+                        Text { text: "\u6e90\u6837\u672c"; color: root.primaryColor; font.pixelSize: 14; font.bold: true; Layout.fillWidth: true }
+                        Loader {
+                            id: leftPreviewLoader
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            sourceComponent: previewContentComponent
+                            onLoaded: item.setPreviewData(root.previewLeftData, previewLeftPlayer)
+                            Connections {
+                                target: root
+                                function onPreviewLeftDataChanged() {
+                                    if (leftPreviewLoader.item) leftPreviewLoader.item.setPreviewData(root.previewLeftData, previewLeftPlayer)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Text {
+                    text: "\u2192"
+                    color: root.primaryColor
+                    font.pixelSize: 26
+                    font.bold: true
+                    visible: root.previewHasGenerated
+                    Layout.alignment: Qt.AlignVCenter
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    visible: root.previewHasGenerated
+                    color: root.bgDark
+                    radius: 6
+                    border.color: root.borderColor
+                    clip: true
+                    ColumnLayout {
+                        anchors.fill: parent
+                        anchors.margins: 12
+                        spacing: 8
+                        Text { text: "\u751f\u6210\u6837\u672c"; color: root.successColor; font.pixelSize: 14; font.bold: true; Layout.fillWidth: true }
+                        Loader {
+                            id: rightPreviewLoader
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            sourceComponent: previewContentComponent
+                            onLoaded: item.setPreviewData(root.previewRightData, previewRightPlayer)
+                            Connections {
+                                target: root
+                                function onPreviewRightDataChanged() {
+                                    if (rightPreviewLoader.item) rightPreviewLoader.item.setPreviewData(root.previewRightData, previewRightPlayer)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Component {
+        id: previewContentComponent
+        Item {
+            id: previewContent
+            property var payload: ({})
+            property var player: null
+            property string kind: payload.preview_kind || "file"
+            property string fileSource: root.previewFileSource(payload)
+            property string title: root.previewDisplayName(payload, "\u6837\u672c\u9884\u89c8")
+            property string textBody: payload.text_content || payload.error || ""
+
+            function setPreviewData(data, audioPlayer) {
+                payload = data || {}
+                player = audioPlayer
+                if (kind === "audio" && fileSource !== "" && player) player.source = fileSource
+            }
+
+            Image {
+                anchors.fill: parent
+                visible: previewContent.kind === "image" && previewContent.fileSource !== ""
+                source: visible ? previewContent.fileSource : ""
+                fillMode: Image.PreserveAspectFit
+                asynchronous: true
+            }
+
+            ScrollView {
+                anchors.fill: parent
+                visible: previewContent.kind === "text"
+                TextArea {
+                    text: previewContent.textBody
+                    readOnly: true
+                    wrapMode: TextEdit.Wrap
+                    color: root.textColor
+                    selectByMouse: true
+                    background: Rectangle { color: "transparent" }
+                }
+            }
+
+            ColumnLayout {
+                anchors.centerIn: parent
+                width: Math.min(parent.width - 36, 360)
+                spacing: 12
+                visible: previewContent.kind === "audio"
+                Text {
+                    text: previewContent.title
+                    color: root.textColor
+                    font.pixelSize: 13
+                    font.bold: true
+                    Layout.fillWidth: true
+                    horizontalAlignment: Text.AlignHCenter
+                    elide: Text.ElideRight
+                }
+                Text {
+                    text: previewContent.fileSource !== "" ? previewContent.fileSource : "\u65e0\u97f3\u9891\u8def\u5f84"
+                    color: root.textMuted
+                    font.pixelSize: 11
+                    Layout.fillWidth: true
+                    horizontalAlignment: Text.AlignHCenter
+                    elide: Text.ElideMiddle
+                }
+                RowLayout {
+                    Layout.alignment: Qt.AlignHCenter
+                    spacing: 8
+                    Button {
+                        text: previewContent.player && previewContent.player.playbackState === MediaPlayer.PlayingState ? "\u6682\u505c" : "\u64ad\u653e"
+                        Layout.preferredWidth: 74
+                        Layout.preferredHeight: 30
+                        enabled: previewContent.player !== null && previewContent.fileSource !== ""
+                        background: Rectangle { color: parent.enabled ? (parent.hovered ? "#0288D1" : "#039BE5") : Theme.border; radius: 4 }
+                        contentItem: Text { text: parent.text; color: parent.enabled ? "black" : root.textMuted; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                        onClicked: {
+                            if (!previewContent.player) return
+                            if (previewContent.player.playbackState === MediaPlayer.PlayingState) previewContent.player.pause()
+                            else previewContent.player.play()
+                        }
+                    }
+                    Button {
+                        text: "\u505c\u6b62"
+                        Layout.preferredWidth: 62
+                        Layout.preferredHeight: 30
+                        enabled: previewContent.player !== null
+                        background: Rectangle { color: parent.hovered ? root.tableHoverBg : "transparent"; border.color: root.borderColor; border.width: 1; radius: 4 }
+                        contentItem: Text { text: parent.text; color: root.textColor; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                        onClicked: if (previewContent.player) previewContent.player.stop()
+                    }
+                }
+            }
+
+            ColumnLayout {
+                anchors.centerIn: parent
+                width: Math.min(parent.width - 36, 360)
+                spacing: 12
+                visible: previewContent.kind !== "image" && previewContent.kind !== "text" && previewContent.kind !== "audio"
+                Rectangle {
+                    width: 64; height: 64; radius: 8
+                    color: root.tableHoverBg
+                    Layout.alignment: Qt.AlignHCenter
+                    Text { text: "\u6587\u4ef6"; font.pixelSize: 16; anchors.centerIn: parent }
+                }
+                Text {
+                    text: previewContent.title
+                    color: root.textColor
+                    font.pixelSize: 13
+                    font.bold: true
+                    Layout.fillWidth: true
+                    horizontalAlignment: Text.AlignHCenter
+                    elide: Text.ElideRight
+                }
+                Text {
+                    text: previewContent.fileSource !== "" ? previewContent.fileSource : "\u6587\u4ef6\u8def\u5f84\u4e0d\u53ef\u7528"
+                    color: root.textMuted
+                    font.pixelSize: 11
+                    Layout.fillWidth: true
+                    horizontalAlignment: Text.AlignHCenter
+                    elide: Text.ElideMiddle
+                }
+                Text {
+                    visible: previewContent.textBody !== ""
+                    text: previewContent.textBody
+                    color: root.textMuted
+                    font.pixelSize: 11
+                    Layout.fillWidth: true
+                    horizontalAlignment: Text.AlignHCenter
+                    wrapMode: Text.WordWrap
+                }
+            }
         }
     }
 
@@ -748,7 +1245,26 @@ Item {
         id: previewAudio
     }
 
-    // ================= 任务进度轮询 =================
+    MediaPlayer {
+        id: previewLeftPlayer
+        autoPlay: false
+        audioOutput: previewLeftAudio
+    }
+
+    AudioOutput {
+        id: previewLeftAudio
+    }
+
+    MediaPlayer {
+        id: previewRightPlayer
+        autoPlay: false
+        audioOutput: previewRightAudio
+    }
+
+    AudioOutput {
+        id: previewRightAudio
+    }
+
     Timer {
         id: progressPollTimer
         interval: 1000
@@ -760,6 +1276,7 @@ Item {
     }
 
     Component.onCompleted: {
+        root.loadGenerationParameterPresets()
         backendService.getDatasets(1, 100, "")
         backendService.getAlgorithms("generation", "")
         backendService.getEnhancementTasks(0, "")
@@ -956,6 +1473,80 @@ Item {
                         root.currentTaskId = 0
                         root.currentTargetDatasetId = 0
                         root.currentTargetDatasetName = ""
+                    }
+                }
+            }
+        }
+    }
+
+    // ================= 保存生成参数记录弹窗 =================
+    Popup {
+        id: parameterPresetNamePopup
+        width: 420
+        height: 240
+        modal: true
+        focus: true
+        x: Math.round((root.width - width) / 2)
+        y: Math.round((root.height - height) / 2)
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        background: Rectangle { color: root.panelBg; radius: 8; border.color: root.borderColor; border.width: 1 }
+
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 22
+            spacing: 12
+
+            Text { text: "记录生成参数"; color: root.textColor; font.pixelSize: 16; font.bold: true }
+            Text {
+                text: "为本次任务的参数配置起一个名字，之后可在新建任务中复用。"
+                color: root.textMuted
+                font.pixelSize: 12
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+            }
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 36
+                color: root.bgDark
+                radius: 4
+                border.color: root.borderColor
+                border.width: 1
+                TextInput {
+                    id: parameterPresetNameInput
+                    color: root.textColor
+                    font.pixelSize: 13
+                    anchors.fill: parent
+                    leftPadding: 10
+                    verticalAlignment: TextInput.AlignVCenter
+                    selectByMouse: true
+                }
+            }
+            Item { Layout.fillHeight: true; Layout.minimumHeight: 8 }
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 34
+                spacing: 12
+                Item { Layout.fillWidth: true }
+                Button {
+                    id: cancelParameterPresetButton
+                    text: "取消"
+                    Layout.preferredWidth: 80
+                    Layout.preferredHeight: 32
+                    background: Rectangle { color: "transparent"; border.color: root.borderColor; border.width: 1; radius: 4 }
+                    contentItem: Text { text: cancelParameterPresetButton.text; color: root.textMuted; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    onClicked: parameterPresetNamePopup.close()
+                }
+                Button {
+                    id: saveParameterPresetButton
+                    text: "保存记录"
+                    Layout.preferredWidth: 92
+                    Layout.preferredHeight: 32
+                    background: Rectangle { color: root.primaryColor; radius: 4 }
+                    contentItem: Text { text: saveParameterPresetButton.text; color: "black"; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    onClicked: {
+                        if (root.saveCurrentDetailParameterPreset(parameterPresetNameInput.text)) {
+                            parameterPresetNamePopup.close()
+                        }
                     }
                 }
             }
@@ -1170,6 +1761,7 @@ Item {
         x: Math.round((root.width - width) / 2)
         y: Math.round((root.height - height) / 2)
         closePolicy: root.isGenerating ? Popup.NoAutoClose : (Popup.CloseOnEscape | Popup.CloseOnPressOutside)
+        onOpened: root.loadGenerationParameterPresets()
         background: Rectangle { color: root.bgDark; radius: 8; border.color: root.borderColor; border.width: 1 }
 
         ColumnLayout {
@@ -1540,6 +2132,61 @@ Item {
                                 }
                             }
                         }
+                        Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.borderColor }
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 6
+                            Text { text: "参数记录"; color: root.textMuted; font.pixelSize: 12 }
+                            Item {
+                                id: parameterPresetSelector
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 36
+
+                                StableComboBox {
+                                    id: parameterPresetCombo
+                                    anchors.fill: parent
+                                    enabled: root.generationParameterPresets.length > 0
+                                    model: root.parameterPresetOptions()
+                                    textRole: "name"
+                                    currentIndex: 0
+                                    background: Rectangle {
+                                        color: root.bgDark
+                                        border.color: root.borderColor
+                                        radius: 4
+                                    }
+                                    onActivated: function(index) {
+                                        if (index <= 0) return
+                                        root.applyParameterPreset(root.generationParameterPresets[index - 1])
+                                    }
+                                }
+
+                                Timer {
+                                    id: parameterPresetHoverTimer
+                                    interval: 1000
+                                    repeat: false
+                                    onTriggered: {
+                                        if (parameterPresetCombo.currentIndex > 0) {
+                                            root.hoveredParameterPreset = root.generationParameterPresets[parameterPresetCombo.currentIndex - 1]
+                                            root.parameterPresetPreviewVisible = root.hoveredParameterPreset !== null
+                                        }
+                                    }
+                                }
+
+                                MouseArea {
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    acceptedButtons: Qt.NoButton
+                                    onEntered: {
+                                        root.parameterPresetPreviewVisible = false
+                                        parameterPresetHoverTimer.restart()
+                                    }
+                                    onExited: {
+                                        parameterPresetHoverTimer.stop()
+                                        root.parameterPresetPreviewVisible = false
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -1563,7 +2210,9 @@ Item {
                                 id: taskMonitorList
                                 anchors.fill: parent; anchors.margins: 10; spacing: 8; model: previewModel; clip: true
                                 delegate: Rectangle {
-                                    width: taskMonitorList.width; height: 50; radius: 4
+                                    width: taskMonitorList.width
+                                    height: 68
+                                    radius: 4
                                     color: genMa.containsMouse ? root.tableHoverBg : "transparent"
                                     border.color: genMa.containsMouse ? root.primaryColor : "transparent"
                                     border.width: 1
@@ -1571,34 +2220,80 @@ Item {
                                         id: genMa
                                         anchors.fill: parent
                                         hoverEnabled: true
-                                        cursorShape: Qt.PointingHandCursor
+                                        cursorShape: sourceSampleId > 0 ? Qt.PointingHandCursor : Qt.ArrowCursor
                                         onClicked: {
-                                            if (outputSampleId > 0) {
-                                                root.pendingPreviewId = outputSampleId
-                                                backendService.getSamplePreview(outputSampleId)
+                                            if (sourceSampleId > 0) {
+                                                root.openGenerationPreview(sourceSampleId, hasGenerated ? outputSampleId : 0, sourceName, generatedName, sourcePath, generatedPath)
                                             }
                                         }
                                     }
                                     RowLayout {
-                                        anchors.fill: parent; anchors.margins: 10; spacing: 15
-                                        RowLayout {
-                                            Layout.fillWidth: true; spacing: 8
-                                            Text { text: "📄"; font.pixelSize: 16 }
-                                            ColumnLayout {
-                                                spacing: 2
-                                                Text { text: "源样本"; color: root.textMuted; font.pixelSize: 10 }
-                                                Text { text: sourceName; color: root.textColor; font.pixelSize: 12; font.family: "Courier"; elide: Text.ElideRight }
+                                        anchors.fill: parent
+                                        anchors.margins: 10
+                                        spacing: 12
+
+                                        Rectangle {
+                                            Layout.preferredWidth: 50
+                                            Layout.preferredHeight: 44
+                                            Layout.alignment: Qt.AlignVCenter
+                                            radius: 4
+                                            color: root.panelBg
+                                            border.color: root.borderColor
+                                            clip: true
+                                            Image {
+                                                anchors.fill: parent
+                                                anchors.margins: 2
+                                                source: root.isImagePath(sourcePath) ? root.localFileUrl(sourcePath) : ""
+                                                fillMode: Image.PreserveAspectCrop
+                                                asynchronous: true
+                                                visible: source !== ""
                                             }
+                                            Text { anchors.centerIn: parent; text: "\u6e90"; color: root.textMuted; font.pixelSize: 12; visible: !root.isImagePath(sourcePath) }
                                         }
-                                        Text { text: "➡"; color: root.primaryColor; font.pixelSize: 16 }
-                                        RowLayout {
-                                            Layout.fillWidth: true; spacing: 8
-                                            Text { text: "✨"; font.pixelSize: 16 }
-                                            ColumnLayout {
-                                                spacing: 2
-                                                Text { text: "生成样本"; color: root.successColor; font.pixelSize: 10; font.bold: true }
-                                                Text { text: generatedName; color: root.textColor; font.pixelSize: 12; font.family: "Courier"; elide: Text.ElideRight }
+
+                                        ColumnLayout {
+                                            Layout.fillWidth: true
+                                            Layout.alignment: Qt.AlignVCenter
+                                            spacing: 2
+                                            Text { text: "\u6e90\u6837\u672c"; color: root.textMuted; font.pixelSize: 10 }
+                                            Text { text: sourceName || "-"; color: root.textColor; font.pixelSize: 12; font.family: "Courier"; elide: Text.ElideRight; Layout.fillWidth: true }
+                                        }
+
+                                        Text {
+                                            text: hasGenerated ? "\u2192" : ""
+                                            color: root.primaryColor
+                                            font.pixelSize: 20
+                                            font.bold: true
+                                            Layout.alignment: Qt.AlignVCenter
+                                        }
+
+                                        Rectangle {
+                                            Layout.preferredWidth: 50
+                                            Layout.preferredHeight: 44
+                                            Layout.alignment: Qt.AlignVCenter
+                                            visible: hasGenerated
+                                            radius: 4
+                                            color: root.panelBg
+                                            border.color: root.borderColor
+                                            clip: true
+                                            Image {
+                                                anchors.fill: parent
+                                                anchors.margins: 2
+                                                source: root.isImagePath(generatedPath) ? root.localFileUrl(generatedPath) : ""
+                                                fillMode: Image.PreserveAspectCrop
+                                                asynchronous: true
+                                                visible: source !== ""
                                             }
+                                            Text { anchors.centerIn: parent; text: "\u751f\u6210"; color: root.textMuted; font.pixelSize: 11; visible: !root.isImagePath(generatedPath) }
+                                        }
+
+                                        ColumnLayout {
+                                            Layout.fillWidth: true
+                                            Layout.alignment: Qt.AlignVCenter
+                                            visible: hasGenerated
+                                            spacing: 2
+                                            Text { text: "\u751f\u6210\u6837\u672c"; color: root.successColor; font.pixelSize: 10; font.bold: true }
+                                            Text { text: generatedName || "-"; color: root.textColor; font.pixelSize: 12; font.family: "Courier"; elide: Text.ElideRight; Layout.fillWidth: true }
                                         }
                                     }
                                 }
@@ -1675,6 +2370,71 @@ Item {
                 }
             }
         }
+
+        Rectangle {
+            visible: root.parameterPresetPreviewVisible && root.hoveredParameterPreset !== null
+            width: 300
+            height: Math.min(260, 70 + parameterPresetPreviewColumn.implicitHeight)
+            x: {
+                if (!parameterPresetSelector) return newGenerationTaskPopup.width - width - 24
+                var mapped = parameterPresetSelector.mapToItem(newGenerationTaskPopup.contentItem, parameterPresetSelector.width + 12, -8)
+                return Math.min(mapped.x, newGenerationTaskPopup.width - width - 24)
+            }
+            y: {
+                if (!parameterPresetSelector) return 120
+                var mapped = parameterPresetSelector.mapToItem(newGenerationTaskPopup.contentItem, 0, -8)
+                return Math.max(24, Math.min(mapped.y, newGenerationTaskPopup.height - height - 24))
+            }
+            z: 20
+            radius: 6
+            color: root.panelBg
+            border.color: root.primaryColor
+            border.width: 1
+            clip: true
+
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: 12
+                spacing: 8
+
+                Text {
+                    text: root.hoveredParameterPreset ? (root.hoveredParameterPreset.name || "参数记录") : "参数记录"
+                    color: root.primaryColor
+                    font.bold: true
+                    font.pixelSize: 13
+                    elide: Text.ElideRight
+                    Layout.fillWidth: true
+                }
+                Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.borderColor }
+                Column {
+                    id: parameterPresetPreviewColumn
+                    Layout.fillWidth: true
+                    spacing: 6
+                    Repeater {
+                        model: root.parameterPresetPreviewItems(root.hoveredParameterPreset)
+                        delegate: RowLayout {
+                            width: parameterPresetPreviewColumn.width
+                            spacing: 10
+                            Text {
+                                text: modelData.label
+                                color: root.textMuted
+                                font.pixelSize: 11
+                                elide: Text.ElideRight
+                                Layout.preferredWidth: 120
+                            }
+                            Text {
+                                text: modelData.value
+                                color: root.textColor
+                                font.pixelSize: 11
+                                font.bold: true
+                                elide: Text.ElideRight
+                                Layout.fillWidth: true
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // ================= 视图A：生成历史列表 =================
@@ -1688,6 +2448,62 @@ Item {
             Layout.fillWidth: true
             spacing: 15
             Label { text: "增量样本生成历史"; font.pixelSize: 18; font.bold: true; color: root.textColor }
+            Rectangle {
+                Layout.preferredWidth: 360
+                Layout.preferredHeight: 34
+                color: root.panelBg
+                radius: 4
+                border.color: historySearchInput.activeFocus ? root.primaryColor : root.borderColor
+                border.width: 1
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: 10
+                    anchors.rightMargin: 8
+                    spacing: 6
+                    Text { text: "🔍"; color: root.textMuted; font.pixelSize: 13 }
+                    TextInput {
+                        id: historySearchInput
+                        Layout.fillWidth: true
+                        color: root.textColor
+                        font.pixelSize: 13
+                        selectByMouse: true
+                        verticalAlignment: TextInput.AlignVCenter
+                        clip: true
+                        text: root.historySearchText
+                        onTextChanged: {
+                            root.historySearchText = text
+                            root.applyGenerationHistoryFilter()
+                        }
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: "按任务名或算法搜索"
+                            color: root.textMuted
+                            font.pixelSize: 12
+                            visible: historySearchInput.text.length === 0 && !historySearchInput.activeFocus
+                        }
+                    }
+                    Rectangle {
+                        width: 18
+                        height: 18
+                        radius: 9
+                        color: historySearchClearMa.containsMouse ? root.tableHoverBg : "transparent"
+                        visible: root.historySearchText.length > 0
+                        Text {
+                            text: "×"
+                            color: root.textMuted
+                            font.pixelSize: 14
+                            anchors.centerIn: parent
+                        }
+                        MouseArea {
+                            id: historySearchClearMa
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: historySearchInput.text = ""
+                        }
+                    }
+                }
+            }
             Item { Layout.fillWidth: true }
 
             Button {
@@ -1821,7 +2637,46 @@ Item {
                             RowLayout {
                                 Layout.fillWidth: true
                                 Label { text: "使用算法: "; color: root.textMuted; font.pixelSize: 13 }
-                                Label { text: model.algos || "未知"; color: root.textColor; font.pixelSize: 13; Layout.fillWidth: true; elide: Text.ElideRight; font.bold: true }
+                                Flickable {
+                                    id: historyAlgoFlick
+                                    Layout.fillWidth: true
+                                    Layout.preferredHeight: 18
+                                    contentWidth: historyAlgoText.implicitWidth
+                                    contentHeight: height
+                                    clip: true
+                                    boundsBehavior: Flickable.StopAtBounds
+                                    flickableDirection: Flickable.HorizontalFlick
+
+                                    Text {
+                                        id: historyAlgoText
+                                        text: model.algos || "未知"
+                                        color: root.textColor
+                                        font.pixelSize: 13
+                                        font.bold: true
+                                        anchors.verticalCenter: parent.verticalCenter
+                                    }
+
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        acceptedButtons: Qt.NoButton
+                                        onWheel: function(wheel) {
+                                            var delta = wheel.pixelDelta.y !== 0 ? wheel.pixelDelta.y : wheel.angleDelta.y
+                                            if (delta === 0) delta = wheel.pixelDelta.x !== 0 ? -wheel.pixelDelta.x : -wheel.angleDelta.x
+                                            var maxX = Math.max(0, historyAlgoFlick.contentWidth - historyAlgoFlick.width)
+                                            historyAlgoFlick.contentX = Math.max(0, Math.min(maxX, historyAlgoFlick.contentX - delta))
+                                            wheel.accepted = maxX > 0
+                                        }
+                                    }
+
+                                    onContentWidthChanged: {
+                                        var maxX = Math.max(0, contentWidth - width)
+                                        contentX = Math.min(contentX, maxX)
+                                    }
+                                    onWidthChanged: {
+                                        var maxX = Math.max(0, contentWidth - width)
+                                        contentX = Math.min(contentX, maxX)
+                                    }
+                                }
                             }
 
                             RowLayout {
@@ -1912,7 +2767,7 @@ Item {
 
                 Text {
                     anchors.centerIn: parent
-                    text: "暂无样本生成记录"
+                    text: root.historySearchText.trim().length > 0 ? "没有匹配的生成任务" : "暂无样本生成记录"
                     color: Theme.muted
                     font.pixelSize: 16
                     visible: generationHistoryModel.count === 0
@@ -2043,6 +2898,32 @@ Item {
                             }
                         }
                     }
+                    Button {
+                        id: recordParameterButton
+                        text: "记录参数"
+                        enabled: root.hasDetailCustomParams
+                        Layout.preferredWidth: 92
+                        Layout.preferredHeight: 32
+                        Layout.alignment: Qt.AlignLeft
+                        background: Rectangle {
+                            color: recordParameterButton.enabled ? (recordParameterButton.hovered ? "#0288D1" : root.primaryColor) : Theme.border
+                            radius: 4
+                        }
+                        contentItem: Text {
+                            text: recordParameterButton.text
+                            color: recordParameterButton.enabled ? "black" : root.textMuted
+                            font.bold: recordParameterButton.enabled
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                        onClicked: {
+                            if (!root.hasDetailCustomParams) return
+                            var title = root.currentHistoryItem && root.currentHistoryItem.projectName ? root.currentHistoryItem.projectName : "生成参数"
+                            parameterPresetNameInput.text = title + " 参数"
+                            parameterPresetNameInput.forceActiveFocus()
+                            parameterPresetNamePopup.open()
+                        }
+                    }
                 }
             }
 
@@ -2070,7 +2951,9 @@ Item {
                             id: detailFileListView
                             anchors.fill: parent; anchors.margins: 10; spacing: 8; model: previewModel; clip: true
                             delegate: Rectangle {
-                                width: detailFileListView.width; height: 64; radius: 4
+                                width: detailFileListView.width
+                                height: 76
+                                radius: 4
                                 color: detailMa.containsMouse ? root.tableHoverBg : "transparent"
                                 border.color: detailMa.containsMouse ? root.primaryColor : "transparent"
                                 border.width: 1
@@ -2078,94 +2961,102 @@ Item {
                                     id: detailMa
                                     anchors.fill: parent
                                     hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
+                                    cursorShape: sourceSampleId > 0 ? Qt.PointingHandCursor : Qt.ArrowCursor
                                     onClicked: {
-                                        if (outputSampleId > 0) {
-                                            root.pendingPreviewId = outputSampleId
-                                            backendService.getSamplePreview(outputSampleId)
+                                        if (sourceSampleId > 0) {
+                                            root.openGenerationPreview(sourceSampleId, hasGenerated ? outputSampleId : 0, sourceName, generatedName, sourcePath, generatedPath)
                                         }
                                     }
                                 }
                                 RowLayout {
-                                    anchors.fill: parent; anchors.margins: 10; spacing: 16
+                                    anchors.fill: parent
+                                    anchors.margins: 10
+                                    spacing: 14
 
                                     Rectangle {
                                         Layout.preferredWidth: 58
-                                        Layout.preferredHeight: 44
+                                        Layout.preferredHeight: 48
                                         Layout.alignment: Qt.AlignVCenter
                                         radius: 4
                                         color: root.panelBg
                                         border.color: root.borderColor
                                         clip: true
                                         Image {
-                                            id: generatedThumb
                                             anchors.fill: parent
                                             anchors.margins: 2
-                                            source: {
-                                                var ext = String(generatedPath).toLowerCase().split('.').pop()
-                                                var isImg = ["jpg","jpeg","png","bmp","gif","webp","tif","tiff"].indexOf(ext) >= 0
-                                                return isImg ? root.localFileUrl(generatedPath) : ""
-                                            }
+                                            source: root.isImagePath(sourcePath) ? root.localFileUrl(sourcePath) : ""
                                             fillMode: Image.PreserveAspectCrop
                                             asynchronous: true
-                                            visible: {
-                                                var ext = String(generatedPath).toLowerCase().split('.').pop()
-                                                return ["jpg","jpeg","png","bmp","gif","webp","tif","tiff"].indexOf(ext) >= 0 && generatedPath !== ""
-                                            }
+                                            visible: source !== ""
                                         }
-                                        Text {
-                                            anchors.centerIn: parent
-                                            text: "结果"
-                                            color: root.textMuted
-                                            font.pixelSize: 12
-                                            visible: generatedPath === "" || generatedThumb.status === Image.Error
-                                        }
+                                        Text { anchors.centerIn: parent; text: "\u6e90"; color: root.textMuted; font.pixelSize: 12; visible: !root.isImagePath(sourcePath) }
                                     }
 
                                     ColumnLayout {
                                         Layout.fillWidth: true
                                         Layout.alignment: Qt.AlignVCenter
                                         spacing: 2
-                                        Text { text: generatedName || "未知生成样本"; color: root.textColor; font.pixelSize: 12; font.family: "Courier"; elide: Text.ElideRight; Layout.fillWidth: true }
-                                        Text { text: "源: " + (sourceName || "-"); color: root.textMuted; font.pixelSize: 10; elide: Text.ElideRight; Layout.fillWidth: true }
+                                        Text { text: "\u6e90\u6837\u672c"; color: root.textMuted; font.pixelSize: 10 }
+                                        Text { text: sourceName || "-"; color: root.textColor; font.pixelSize: 12; font.family: "Courier"; elide: Text.ElideRight; Layout.fillWidth: true }
                                     }
 
-                                    ColumnLayout {
-                                        Layout.preferredWidth: 118; spacing: 2
+                                    Text {
+                                        text: hasGenerated ? "\u2192" : ""
+                                        color: root.primaryColor
+                                        font.pixelSize: 20
+                                        font.bold: true
                                         Layout.alignment: Qt.AlignVCenter
-                                        Text { text: "生成算法"; color: root.textMuted; font.pixelSize: 10 }
-                                        Text { text: algoId > 0 ? (root.algorithmNameMap[String(algoId)] || ("算法#" + algoId)) : "-"; color: root.primaryColor; font.pixelSize: 12; font.bold: true; elide: Text.ElideRight; Layout.fillWidth: true }
                                     }
 
                                     Rectangle {
-                                        Layout.preferredWidth: 64
+                                        Layout.preferredWidth: 58
+                                        Layout.preferredHeight: 48
+                                        Layout.alignment: Qt.AlignVCenter
+                                        visible: hasGenerated
+                                        radius: 4
+                                        color: root.panelBg
+                                        border.color: root.borderColor
+                                        clip: true
+                                        Image {
+                                            anchors.fill: parent
+                                            anchors.margins: 2
+                                            source: root.isImagePath(generatedPath) ? root.localFileUrl(generatedPath) : ""
+                                            fillMode: Image.PreserveAspectCrop
+                                            asynchronous: true
+                                            visible: source !== ""
+                                        }
+                                        Text { anchors.centerIn: parent; text: "\u751f\u6210"; color: root.textMuted; font.pixelSize: 11; visible: !root.isImagePath(generatedPath) }
+                                    }
+
+                                    ColumnLayout {
+                                        Layout.fillWidth: true
+                                        Layout.alignment: Qt.AlignVCenter
+                                        visible: hasGenerated
+                                        spacing: 2
+                                        Text { text: "\u751f\u6210\u6837\u672c"; color: root.successColor; font.pixelSize: 10; font.bold: true }
+                                        Text { text: generatedName || "-"; color: root.textColor; font.pixelSize: 12; font.family: "Courier"; elide: Text.ElideRight; Layout.fillWidth: true }
+                                    }
+
+                                    ColumnLayout {
+                                        Layout.preferredWidth: 118
+                                        Layout.alignment: Qt.AlignVCenter
+                                        spacing: 2
+                                        Text { text: "\u751f\u6210\u7b97\u6cd5"; color: root.textMuted; font.pixelSize: 10 }
+                                        Text { text: hasGenerated && algoId > 0 ? (root.algorithmNameMap[String(algoId)] || ("\u7b97\u6cd5#" + algoId)) : "\u6e90\u6837\u672c\u4fdd\u7559"; color: hasGenerated ? root.primaryColor : root.textMuted; font.pixelSize: 12; font.bold: hasGenerated; elide: Text.ElideRight; Layout.fillWidth: true }
+                                    }
+
+                                    Rectangle {
+                                        Layout.preferredWidth: 72
                                         Layout.preferredHeight: 26
                                         Layout.alignment: Qt.AlignVCenter
                                         radius: 4
-                                        color: {
-                                            var s = status || ""
-                                            if (s === "completed" || s === "created") return "#1E3A5F"
-                                            if (s === "pending") return "#5C4A1F"
-                                            if (s === "failed") return "#5C1F1F"
-                                            return root.bgDark
-                                        }
+                                        color: hasGenerated ? "#1E3A5F" : root.bgDark
                                         Text {
-                                            text: {
-                                                var s = status || ""
-                                                if (s === "pending") return "待处理"
-                                                if (s === "created") return "已生成"
-                                                if (s === "completed") return "完成"
-                                                if (s === "failed") return "失败"
-                                                return s || "-"
-                                            }
-                                            color: {
-                                                var s = status || ""
-                                                if (s === "completed" || s === "created") return "#60A5FA"
-                                                if (s === "pending") return "#FBBF24"
-                                                if (s === "failed") return "#F87171"
-                                                return root.textMuted
-                                            }
-                                            font.pixelSize: 11; font.bold: true; anchors.centerIn: parent
+                                            text: hasGenerated ? "\u5df2\u751f\u6210" : "\u4ec5\u6e90\u6837\u672c"
+                                            color: hasGenerated ? "#60A5FA" : root.textMuted
+                                            font.pixelSize: 11
+                                            font.bold: true
+                                            anchors.centerIn: parent
                                         }
                                     }
                                 }

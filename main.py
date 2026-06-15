@@ -3,6 +3,7 @@ from pathlib import Path
 import sys
 import os
 import threading
+from datetime import datetime
 
 from PySide6.QtGui import QDesktopServices, QGuiApplication
 from PySide6.QtQml import QQmlApplicationEngine, QQmlContext
@@ -19,6 +20,10 @@ from backend import (
 )
 from backend.database import Base
 from backend.qt.bridge import BackendBridge
+
+
+GENERATION_PARAMETER_PRESETS_KEY = "generation.parameter_presets"
+CLEANING_PARAMETER_PRESETS_KEY = "cleaning.parameter_presets"
 
 
 def _build_backend() -> BackendBridge:
@@ -153,6 +158,27 @@ class BackendService(QObject):
         result = self._bridge.get_sample_preview(sampleId)
         self.samplePreviewUpdated.emit(result)
 
+    @Slot(int, int, result=dict)
+    def getSamplePreviewPair(self, sourceSampleId: int, generatedSampleId: int) -> dict:
+        def load_preview(sample_id: int) -> dict:
+            if sample_id <= 0:
+                return {}
+            result = self._bridge.get_sample_preview(sample_id)
+            if result.get("ok") and isinstance(result.get("data"), dict):
+                return result["data"]
+            return {
+                "sample_id": sample_id,
+                "preview_kind": "file",
+                "text_content": "",
+                "error": result.get("message", "样本预览加载失败"),
+            }
+
+        return {
+            "status": "success",
+            "source": load_preview(sourceSampleId),
+            "generated": load_preview(generatedSampleId),
+        }
+
     @Slot(str)
     def previewFileByPath(self, filePath: str):
         result = self._bridge.preview_file_by_path(filePath)
@@ -264,6 +290,11 @@ class BackendService(QObject):
     def batchApproveCleaningSuggestions(self, suggestionIds: list, action: str) -> dict:
         return self._bridge.batch_approve_cleaning_suggestions(list(suggestionIds), action)
 
+    @Slot(int, int, result=dict)
+    def manualExcludeCleaningSample(self, taskId: int, sampleId: int) -> dict:
+        result = self._bridge.manual_exclude_cleaning_sample(taskId, sampleId)
+        return {"status": "success" if result.get("ok") else "error", "data": result.get("data", {}), "message": result.get("message", "")}
+
     @Slot(int, str, result=dict)
     def storeCleaningTaskResult(self, taskId: int, datasetName: str) -> dict:
         result = self._bridge.store_cleaning_task_result(taskId, datasetName)
@@ -286,6 +317,54 @@ class BackendService(QObject):
     def getEnhancementTasks(self, datasetId: int, status: str):
         result = self._bridge.get_generation_tasks(datasetId, status)
         self.enhancementTasksUpdated.emit(result)
+
+    @Slot(result=dict)
+    def getGenerationParameterPresets(self) -> dict:
+        return self._get_parameter_presets(GENERATION_PARAMETER_PRESETS_KEY)
+
+    @Slot(str, list, dict, result=dict)
+    def saveGenerationParameterPreset(self, name: str, algorithmIds: list, parameters: dict) -> dict:
+        return self._save_parameter_preset(GENERATION_PARAMETER_PRESETS_KEY, name, algorithmIds, parameters)
+
+    @Slot(result=dict)
+    def getCleaningParameterPresets(self) -> dict:
+        return self._get_parameter_presets(CLEANING_PARAMETER_PRESETS_KEY)
+
+    @Slot(str, list, dict, result=dict)
+    def saveCleaningParameterPreset(self, name: str, algorithmIds: list, parameters: dict) -> dict:
+        return self._save_parameter_preset(CLEANING_PARAMETER_PRESETS_KEY, name, algorithmIds, parameters)
+
+    def _get_parameter_presets(self, key: str) -> dict:
+        items = self._bridge.get_setting(key)
+        if not isinstance(items, list):
+            items = []
+        return {"status": "success", "items": items}
+
+    def _save_parameter_preset(self, key: str, name: str, algorithmIds: list, parameters: dict) -> dict:
+        clean_name = (name or "").strip()
+        if not clean_name:
+            return {"status": "error", "message": "参数记录名称不能为空"}
+        clean_parameters = dict(parameters or {})
+        if not clean_parameters:
+            return {"status": "error", "message": "没有可记录的参数"}
+
+        saved_items = self._bridge.get_setting(key)
+        if not isinstance(saved_items, list):
+            saved_items = []
+
+        created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        record = {
+            "id": datetime.now().strftime("%Y%m%d%H%M%S%f"),
+            "name": clean_name,
+            "algorithm_ids": [int(item) for item in list(algorithmIds or []) if str(item).strip()],
+            "parameters": clean_parameters,
+            "created_at": created_at,
+        }
+        saved_items.append(record)
+        result = self._bridge.update_setting(key, saved_items)
+        if result.get("ok"):
+            return {"status": "success", "data": record, "items": saved_items}
+        return {"status": "error", "message": result.get("message", "参数记录保存失败")}
 
     @Slot(str, str)
     def getAlgorithms(self, category: str, modality: str):

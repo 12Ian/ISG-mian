@@ -66,6 +66,11 @@ Item {
     property int pendingEditIndex: -1
     property int pendingDeleteIndex: -1
     property int selectedExportCount: 0
+    property var cleaningParameterPresets: []
+    property var hoveredParameterPreset: null
+    property bool parameterPresetPreviewVisible: false
+    property var allCleaningHistoryItems: []
+    property string historySearchText: ""
 
     function updateExportCount() {
         var count = 0
@@ -73,6 +78,61 @@ Item {
             if (cleaningHistoryModel.get(i).isSelected) count++
         }
         root.selectedExportCount = count
+    }
+
+    function loadCleaningParameterPresets() {
+        var result = backendService.getCleaningParameterPresets()
+        if (result && result.status === "success") {
+            root.cleaningParameterPresets = result.items || []
+        }
+    }
+
+    function parameterPresetOptions() {
+        var items = [{ name: root.cleaningParameterPresets.length > 0 ? "\u9009\u62e9\u5df2\u4fdd\u5b58\u53c2\u6570" : "\u6682\u65e0\u5df2\u4fdd\u5b58\u53c2\u6570" }]
+        for (var i = 0; i < root.cleaningParameterPresets.length; i++) {
+            var preset = root.cleaningParameterPresets[i]
+            items.push({ name: preset.name || ("\u53c2\u6570\u8bb0\u5f55 " + (i + 1)) })
+        }
+        return items
+    }
+
+    function cleaningHistoryMatches(item, keyword) {
+        if (!keyword) return true
+        var text = [
+            item.projectName || "",
+            item.algos || "",
+            item.algorithmNames || "",
+            item.sourceDataset || "",
+            item.cleanedDataset || ""
+        ].join(" ").toLowerCase()
+        return text.indexOf(keyword) !== -1
+    }
+
+    function applyCleaningHistoryFilter() {
+        var keyword = String(root.historySearchText || "").trim().toLowerCase()
+        cleaningHistoryModel.clear()
+        for (var i = 0; i < root.allCleaningHistoryItems.length; i++) {
+            var item = root.allCleaningHistoryItems[i]
+            if (root.cleaningHistoryMatches(item, keyword)) {
+                cleaningHistoryModel.append(item)
+            }
+        }
+        root.updateExportCount()
+    }
+
+    function manualExcludeMonitorSample(rowIndex, taskId, sampleId) {
+        if (!taskId || taskId <= 0 || !sampleId || sampleId <= 0) return
+        var result = backendService.manualExcludeCleaningSample(taskId, sampleId)
+        if (result && result.status === "success") {
+            previewModel.setProperty(rowIndex, "actionName", "\u5220\u9664")
+            previewModel.setProperty(rowIndex, "operation", "delete")
+            previewModel.setProperty(rowIndex, "issueType", "manual_filter")
+            previewModel.setProperty(rowIndex, "status", "approved")
+            previewModel.setProperty(rowIndex, "excluded", true)
+            root.showToast("\u2705 \u5df2\u6807\u8bb0\u4e3a\u624b\u52a8\u5220\u9664")
+            return
+        }
+        root.showToast("\u26a0\ufe0f " + (result && result.message ? result.message : "\u624b\u52a8\u5220\u9664\u5931\u8d25"))
     }
 
     function modalityFromLabel(label) {
@@ -206,6 +266,78 @@ Item {
             for (var p = 0; p < params.length; p++) {
                 result[params[p].n] = params[p].v
             }
+        }
+        return result
+    }
+
+    function cleanPresetParameters(params) {
+        var result = {}
+        if (!params) return result
+        var keys = Object.keys(params)
+        for (var i = 0; i < keys.length; i++) {
+            var key = keys[i]
+            if (key === "algorithm_ids") continue
+            result[key] = params[key]
+        }
+        return result
+    }
+
+    function saveCurrentDetailParameterPreset(name) {
+        var params = root.cleanPresetParameters(root.detailParameters)
+        var result = backendService.saveCleaningParameterPreset(name, root.detailAlgorithmIds || [], params)
+        if (result && result.status === "success") {
+            root.cleaningParameterPresets = result.items || []
+            root.showToast("\u2705 \u53c2\u6570\u8bb0\u5f55\u5df2\u4fdd\u5b58")
+            return true
+        }
+        root.showToast("\u26a0\ufe0f " + (result && result.message ? result.message : "\u53c2\u6570\u8bb0\u5f55\u4fdd\u5b58\u5931\u8d25"))
+        return false
+    }
+
+    function applyParameterPreset(preset) {
+        if (!preset) return
+        var rawIds = root.parseAlgorithmIds(preset.algorithm_ids || preset.algorithmIds || [])
+        var availableIds = []
+        for (var i = 0; i < rawIds.length; i++) {
+            if (root.algorithmById(rawIds[i]) !== null) availableIds.push(rawIds[i])
+        }
+        if (availableIds.length === 0 && rawIds.length > 0) {
+            root.showToast("\u26a0\ufe0f \u5f53\u524d\u6e90\u6570\u636e\u96c6\u4e0b\u6ca1\u6709\u8be5\u53c2\u6570\u8bb0\u5f55\u5bf9\u5e94\u7684\u7b97\u6cd5")
+            return
+        }
+        if (availableIds.length > 0) root.selectedStrategies = availableIds
+
+        var params = preset.parameters || {}
+        var newMap = {}
+        var mapKeys = Object.keys(root.paramsDataMap || {})
+        for (var mk = 0; mk < mapKeys.length; mk++) {
+            var mapKey = mapKeys[mk]
+            var sourceList = root.paramsDataMap[mapKey] || []
+            var targetList = []
+            for (var p = 0; p < sourceList.length; p++) {
+                var item = sourceList[p]
+                targetList.push({
+                    n: item.n,
+                    label: item.label,
+                    v: params[item.n] !== undefined ? String(params[item.n]) : item.v,
+                    type: item.type
+                })
+            }
+            newMap[mapKey] = targetList
+        }
+        root.paramsDataMap = newMap
+        root.showToast("\u2705 \u5df2\u5e94\u7528\u53c2\u6570\u8bb0\u5f55")
+    }
+
+    function parameterPresetPreviewItems(preset) {
+        var result = []
+        if (!preset) return result
+        var params = preset.parameters || {}
+        var keys = Object.keys(params)
+        for (var i = 0; i < keys.length; i++) {
+            var key = keys[i]
+            if (key === "algorithm_ids") continue
+            result.push({ label: key, value: String(params[key]) })
         }
         return result
     }
@@ -388,22 +520,23 @@ Item {
         function onCleaningTasksUpdated(data) {
             var items = []
             if (data && data.items) items = data.items
-            cleaningHistoryModel.clear()
+            var historyItems = []
             for (var i = 0; i < items.length; i++) {
                 var task = items[i]
-                var sourceName = task.source_dataset_name || ("数据集#" + (task.source_dataset_id || ""))
+                var sourceName = task.source_dataset_name || ("\u6570\u636e\u96c6#" + (task.source_dataset_id || ""))
                 var targetName = task.target_dataset_name || ""
                 var paramsObj = task.parameters || task.parameters_json || {}
                 var payloadObj = task.payload || task.payload_json || {}
                 var algorithmIds = root.normalizeAlgorithmIds(task)
                 var algoDesc = root.formatParameters(algorithmIds, paramsObj)
-                cleaningHistoryModel.append({
+                historyItems.push({
                     isSelected: false,
                     taskId: task.id || 0,
                     projectName: root.cleaningTaskTitle(task, sourceName),
                     sourceDataset: sourceName,
                     cleanedDataset: targetName,
                     algos: algoDesc,
+                    algorithmNames: root.algorithmNames(algorithmIds),
                     algorithmIds: algorithmIds,
                     algorithmIdsText: algorithmIds.join(","),
                     parameters: paramsObj,
@@ -421,10 +554,12 @@ Item {
                     root.taskProgressMessage = task.progress_message || ""
                     if (task.status === "failed" && root.lastFailureTaskId !== task.id) {
                         root.lastFailureTaskId = task.id
-                        root.showCleaningFailure(task.error_message || task.progress_message || "清洗任务执行失败")
+                        root.showCleaningFailure(task.error_message || task.progress_message || "\u6e05\u6d17\u4efb\u52a1\u6267\u884c\u5931\u8d25")
                     }
                 }
             }
+            root.allCleaningHistoryItems = historyItems
+            root.applyCleaningHistoryFilter()
         }
 
         function onAlgorithmsUpdated(algorithms) {
@@ -449,25 +584,32 @@ Item {
             var monitorItems = data.monitor_items || []
             for (var i = 0; i < monitorItems.length; i++) {
                 var item = monitorItems[i]
+                var operation = item.operation || item.suggested_action || ""
                 previewModel.append({
                     sampleId: item.sample_id || 0,
+                    suggestionId: item.suggestion_id || 0,
                     sourceName: item.sample_name || "",
                     actionName: item.operation_label || item.suggested_action || "",
+                    operation: operation,
                     samplePath: item.sample_path || "",
                     issueType: item.issue_type || "",
                     confidence: item.confidence || 0,
-                    status: item.status || ""
+                    status: item.status || "",
+                    excluded: operation === "delete" || (item.suggested_action || "") === "exclude"
                 })
             }
             if (monitorItems.length === 0) {
                 previewModel.append({
                     sampleId: 0,
-                    sourceName: "清洗任务已完成",
-                    actionName: "未发现需处理的清洗建议",
+                    suggestionId: 0,
+                    sourceName: "\u6e05\u6d17\u4efb\u52a1\u5df2\u5b8c\u6210",
+                    actionName: "\u672a\u53d1\u73b0\u9700\u5904\u7406\u7684\u6e05\u6d17\u5efa\u8bae",
+                    operation: "",
                     samplePath: "",
                     issueType: "",
                     confidence: 0,
-                    status: ""
+                    status: "",
+                    excluded: false
                 })
             }
         }
@@ -709,6 +851,7 @@ Item {
     }
 
     Component.onCompleted: {
+        root.loadCleaningParameterPresets()
         backendService.getDatasets(1, 100, "")
         backendService.getAlgorithms("cleaning", "")
         backendService.getCleaningTasks(0, "")
@@ -818,6 +961,78 @@ Item {
     }
 
     // ================= 保存清洗结果弹窗 =================
+
+    Popup {
+        id: parameterPresetNamePopup
+        width: 420
+        height: 240
+        modal: true
+        focus: true
+        x: Math.round((root.width - width) / 2)
+        y: Math.round((root.height - height) / 2)
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        background: Rectangle { color: root.panelBg; radius: 8; border.color: root.borderColor; border.width: 1 }
+
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 22
+            spacing: 12
+
+            Text { text: "\u8bb0\u5f55\u6e05\u6d17\u53c2\u6570"; color: root.textColor; font.pixelSize: 16; font.bold: true }
+            Text {
+                text: "\u4e3a\u672c\u6b21\u4efb\u52a1\u7684\u53c2\u6570\u914d\u7f6e\u8d77\u4e00\u4e2a\u540d\u5b57\uff0c\u4e4b\u540e\u53ef\u5728\u65b0\u5efa\u6e05\u6d17\u4efb\u52a1\u4e2d\u590d\u7528\u3002"
+                color: root.textMuted
+                font.pixelSize: 12
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+            }
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 36
+                color: root.bgDark
+                radius: 4
+                border.color: root.borderColor
+                border.width: 1
+                TextInput {
+                    id: parameterPresetNameInput
+                    color: root.textColor
+                    font.pixelSize: 13
+                    anchors.fill: parent
+                    leftPadding: 10
+                    verticalAlignment: TextInput.AlignVCenter
+                    selectByMouse: true
+                }
+            }
+            Item { Layout.fillHeight: true; Layout.minimumHeight: 8 }
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 34
+                spacing: 12
+                Item { Layout.fillWidth: true }
+                Button {
+                    text: "\u53d6\u6d88"
+                    Layout.preferredWidth: 80
+                    Layout.preferredHeight: 32
+                    background: Rectangle { color: "transparent"; border.color: root.borderColor; border.width: 1; radius: 4 }
+                    contentItem: Text { text: parent.text; color: root.textMuted; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    onClicked: parameterPresetNamePopup.close()
+                }
+                Button {
+                    text: "\u4fdd\u5b58\u8bb0\u5f55"
+                    Layout.preferredWidth: 92
+                    Layout.preferredHeight: 32
+                    background: Rectangle { color: root.primaryColor; radius: 4 }
+                    contentItem: Text { text: parent.text; color: "black"; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    onClicked: {
+                        if (root.saveCurrentDetailParameterPreset(parameterPresetNameInput.text)) {
+                            parameterPresetNamePopup.close()
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     Popup {
         id: savePopup
         width: 460
@@ -1106,6 +1321,7 @@ Item {
         x: Math.round((root.width - width) / 2)
         y: Math.round((root.height - height) / 2)
         closePolicy: root.isCleaning ? Popup.NoAutoClose : (Popup.CloseOnEscape | Popup.CloseOnPressOutside)
+        onOpened: root.loadCleaningParameterPresets()
         background: Rectangle { color: root.bgDark; radius: 8; border.color: root.borderColor; border.width: 1 }
 
         ColumnLayout {
@@ -1427,6 +1643,63 @@ Item {
                                 }
                             }
                         }
+
+
+                        Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.borderColor }
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 6
+                            Text { text: "\u53c2\u6570\u8bb0\u5f55"; color: root.textMuted; font.pixelSize: 12 }
+                            Item {
+                                id: parameterPresetSelector
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 36
+
+                                StableComboBox {
+                                    id: parameterPresetCombo
+                                    anchors.fill: parent
+                                    enabled: root.cleaningParameterPresets.length > 0
+                                    model: root.parameterPresetOptions()
+                                    textRole: "name"
+                                    currentIndex: 0
+                                    background: Rectangle {
+                                        color: root.bgDark
+                                        border.color: root.borderColor
+                                        radius: 4
+                                    }
+                                    onActivated: function(index) {
+                                        if (index <= 0) return
+                                        root.applyParameterPreset(root.cleaningParameterPresets[index - 1])
+                                    }
+                                }
+
+                                Timer {
+                                    id: parameterPresetHoverTimer
+                                    interval: 1000
+                                    repeat: false
+                                    onTriggered: {
+                                        if (parameterPresetCombo.currentIndex > 0) {
+                                            root.hoveredParameterPreset = root.cleaningParameterPresets[parameterPresetCombo.currentIndex - 1]
+                                            root.parameterPresetPreviewVisible = root.hoveredParameterPreset !== null
+                                        }
+                                    }
+                                }
+
+                                MouseArea {
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    acceptedButtons: Qt.NoButton
+                                    onEntered: {
+                                        root.parameterPresetPreviewVisible = false
+                                        parameterPresetHoverTimer.restart()
+                                    }
+                                    onExited: {
+                                        parameterPresetHoverTimer.stop()
+                                        root.parameterPresetPreviewVisible = false
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -1450,15 +1723,17 @@ Item {
                                 id: taskMonitorList
                                 anchors.fill: parent; anchors.margins: 10; spacing: 8; model: previewModel; clip: true
                                 delegate: Rectangle {
-                                    width: taskMonitorList.width; height: 50; radius: 4
-                                    color: monitorMa.containsMouse ? root.tableHoverBg : "transparent"
-                                    border.color: monitorMa.containsMouse ? root.primaryColor : "transparent"
-                                    border.width: 1
+                                    width: taskMonitorList.width
+                                    height: 56
+                                    radius: 4
+                                    color: excluded ? Qt.rgba(248, 113, 113, 0.10) : (monitorMa.containsMouse ? root.tableHoverBg : "transparent")
+                                    border.color: excluded ? root.dangerColor : (monitorMa.containsMouse ? root.primaryColor : "transparent")
+                                    border.width: excluded || monitorMa.containsMouse ? 1 : 0
                                     MouseArea {
                                         id: monitorMa
                                         anchors.fill: parent
                                         hoverEnabled: true
-                                        cursorShape: Qt.PointingHandCursor
+                                        cursorShape: sampleId > 0 ? Qt.PointingHandCursor : Qt.ArrowCursor
                                         onClicked: {
                                             if (sampleId > 0) {
                                                 root.pendingPreviewId = sampleId
@@ -1467,24 +1742,54 @@ Item {
                                         }
                                     }
                                     RowLayout {
-                                        anchors.fill: parent; anchors.margins: 10; spacing: 15
+                                        anchors.fill: parent
+                                        anchors.margins: 10
+                                        spacing: 12
                                         RowLayout {
-                                            Layout.fillWidth: true; spacing: 8
-                                            Text { text: "📄"; font.pixelSize: 16 }
+                                            Layout.fillWidth: true
+                                            spacing: 8
+                                            opacity: excluded ? 0.55 : 1.0
+                                            Text { text: "\u6587\u4ef6"; font.pixelSize: 12; color: root.textMuted }
                                             ColumnLayout {
                                                 spacing: 2
-                                                Text { text: "样本"; color: root.textMuted; font.pixelSize: 10 }
-                                                Text { text: sourceName; color: root.textColor; font.pixelSize: 12; font.family: "Courier"; elide: Text.ElideRight }
+                                                Text { text: "\u6837\u672c"; color: root.textMuted; font.pixelSize: 10 }
+                                                Text { text: sourceName; color: root.textColor; font.pixelSize: 12; font.family: "Courier"; elide: Text.ElideRight; Layout.fillWidth: true }
                                             }
                                         }
-                                        Text { text: "➡"; color: root.primaryColor; font.pixelSize: 16 }
+                                        Text { text: "\u2192"; color: root.primaryColor; font.pixelSize: 16; visible: !excluded }
                                         RowLayout {
-                                            Layout.fillWidth: true; spacing: 8
-                                            Text { text: "🛠"; font.pixelSize: 16 }
+                                            Layout.preferredWidth: 112
+                                            spacing: 8
+                                            opacity: excluded ? 0.75 : 1.0
+                                            Text { text: excluded ? "\u2715" : "\u25cf"; color: excluded ? root.dangerColor : root.primaryColor; font.pixelSize: 14; font.bold: true }
                                             ColumnLayout {
                                                 spacing: 2
-                                                Text { text: "清洗决策"; color: root.primaryColor; font.pixelSize: 10; font.bold: true }
-                                                Text { text: actionName; color: root.textColor; font.pixelSize: 12; font.family: "Courier"; elide: Text.ElideRight }
+                                                Text { text: "\u6e05\u6d17\u51b3\u7b56"; color: excluded ? root.dangerColor : root.primaryColor; font.pixelSize: 10; font.bold: true }
+                                                Text { text: excluded ? "\u624b\u52a8\u5220\u9664" : actionName; color: root.textColor; font.pixelSize: 12; font.family: "Courier"; elide: Text.ElideRight; Layout.fillWidth: true }
+                                            }
+                                        }
+                                        Button {
+                                            id: monitorDeleteButton
+                                            text: excluded ? "\u5df2\u5220\u9664" : "\u5220\u9664"
+                                            enabled: root.isCompleted && sampleId > 0 && !excluded
+                                            Layout.preferredWidth: 72
+                                            Layout.preferredHeight: 30
+                                            background: Rectangle {
+                                                color: monitorDeleteButton.enabled ? (monitorDeleteButton.hovered ? "#BE123C" : "transparent") : root.bgDark
+                                                border.color: monitorDeleteButton.enabled ? root.dangerColor : root.borderColor
+                                                border.width: 1
+                                                radius: 4
+                                            }
+                                            contentItem: Text {
+                                                text: monitorDeleteButton.text
+                                                color: monitorDeleteButton.enabled ? (monitorDeleteButton.hovered ? "white" : root.dangerColor) : root.textMuted
+                                                font.pixelSize: 12
+                                                font.bold: monitorDeleteButton.enabled
+                                                horizontalAlignment: Text.AlignHCenter
+                                                verticalAlignment: Text.AlignVCenter
+                                            }
+                                            onClicked: {
+                                                root.manualExcludeMonitorSample(index, root.currentTaskId, sampleId)
                                             }
                                         }
                                     }
@@ -1560,6 +1865,72 @@ Item {
                 }
             }
         }
+
+        Rectangle {
+            visible: root.parameterPresetPreviewVisible && root.hoveredParameterPreset !== null
+            width: 300
+            height: Math.min(260, 70 + parameterPresetPreviewColumn.implicitHeight)
+            x: {
+                if (!parameterPresetSelector) return newCleaningTaskPopup.width - width - 24
+                var mapped = parameterPresetSelector.mapToItem(newCleaningTaskPopup.contentItem, parameterPresetSelector.width + 12, -8)
+                return Math.min(mapped.x, newCleaningTaskPopup.width - width - 24)
+            }
+            y: {
+                if (!parameterPresetSelector) return 120
+                var mapped = parameterPresetSelector.mapToItem(newCleaningTaskPopup.contentItem, 0, -8)
+                return Math.max(24, Math.min(mapped.y, newCleaningTaskPopup.height - height - 24))
+            }
+            z: 20
+            radius: 6
+            color: root.panelBg
+            border.color: root.primaryColor
+            border.width: 1
+            clip: true
+
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: 12
+                spacing: 8
+
+                Text {
+                    text: root.hoveredParameterPreset ? (root.hoveredParameterPreset.name || "\u53c2\u6570\u8bb0\u5f55") : "\u53c2\u6570\u8bb0\u5f55"
+                    color: root.primaryColor
+                    font.bold: true
+                    font.pixelSize: 13
+                    elide: Text.ElideRight
+                    Layout.fillWidth: true
+                }
+                Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.borderColor }
+                Column {
+                    id: parameterPresetPreviewColumn
+                    Layout.fillWidth: true
+                    spacing: 6
+                    Repeater {
+                        model: root.parameterPresetPreviewItems(root.hoveredParameterPreset)
+                        delegate: RowLayout {
+                            width: parameterPresetPreviewColumn.width
+                            spacing: 10
+                            Text {
+                                text: modelData.label
+                                color: root.textMuted
+                                font.pixelSize: 11
+                                elide: Text.ElideRight
+                                Layout.preferredWidth: 120
+                            }
+                            Text {
+                                text: modelData.value
+                                color: root.textColor
+                                font.pixelSize: 11
+                                font.bold: true
+                                elide: Text.ElideRight
+                                Layout.fillWidth: true
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
     }
 
     // ================= 视图A：清洗历史列表 =================
@@ -1573,22 +1944,62 @@ Item {
             Layout.fillWidth: true
             spacing: 15
             Label { text: "数据清洗流转历史"; font.pixelSize: 18; font.bold: true; color: root.textColor }
-            Button {
-                text: "修改任务名称"
-                font.bold: true; font.pixelSize: 14
-                Layout.preferredHeight: 30
-                background: Rectangle { color: "transparent"; border.color: root.primaryColor; border.width: 1; radius: 4 }
-                contentItem: Text { text: parent.text; color: root.primaryColor; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                onClicked: {
-                    if (!root.currentHistoryItem || root.currentHistoryItem.taskId <= 0) {
-                        root.showToast("❌ 没有可修改的任务")
-                        return
+            Rectangle {
+                Layout.preferredWidth: 360
+                Layout.preferredHeight: 34
+                color: root.panelBg
+                radius: 4
+                border.color: historySearchInput.activeFocus ? root.primaryColor : root.borderColor
+                border.width: 1
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: 10
+                    anchors.rightMargin: 8
+                    spacing: 6
+                    Text { text: "\ud83d\udd0d"; color: root.textMuted; font.pixelSize: 13 }
+                    TextInput {
+                        id: historySearchInput
+                        Layout.fillWidth: true
+                        color: root.textColor
+                        font.pixelSize: 13
+                        selectByMouse: true
+                        verticalAlignment: TextInput.AlignVCenter
+                        clip: true
+                        text: root.historySearchText
+                        onTextChanged: {
+                            root.historySearchText = text
+                            root.applyCleaningHistoryFilter()
+                        }
+                        Text {
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: "\u6309\u4efb\u52a1\u540d\u6216\u7b97\u6cd5\u641c\u7d22"
+                            color: root.textMuted
+                            font.pixelSize: 12
+                            visible: historySearchInput.text.length === 0 && !historySearchInput.activeFocus
+                        }
                     }
-                    renameTaskNameInput.text = root.currentHistoryTitle || root.currentHistoryItem.projectName || ""
-                    renameTaskPopup.open()
+                    Rectangle {
+                        width: 18
+                        height: 18
+                        radius: 9
+                        color: historySearchClearMa.containsMouse ? root.tableHoverBg : "transparent"
+                        visible: root.historySearchText.length > 0
+                        Text {
+                            text: "x"
+                            color: root.textMuted
+                            font.pixelSize: 14
+                            anchors.centerIn: parent
+                        }
+                        MouseArea {
+                            id: historySearchClearMa
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: historySearchInput.text = ""
+                        }
+                    }
                 }
             }
-
             Item { Layout.fillWidth: true }
             Button {
                 text: root.selectedExportCount > 0 ? "📥 导出选中项 (" + root.selectedExportCount + ")" : "📥 导出选中项"
@@ -1779,6 +2190,17 @@ Item {
                             }
 
                             Button {
+                                text: "\u4fee\u6539\u540d\u79f0"
+                                Layout.preferredWidth: 90; Layout.preferredHeight: 30
+                                background: Rectangle { color: parent.hovered ? Theme.hover : Theme.control; radius: 4; border.color: Theme.border }
+                                contentItem: Text { text: parent.text; color: "#D1D5DB"; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                onClicked: {
+                                    root.pendingEditIndex = index
+                                    editProjectNameInput.text = model.projectName
+                                    editProjectPopup.open()
+                                }
+                            }
+                            Button {
                                 text: "删除"
                                 Layout.preferredWidth: 90; Layout.preferredHeight: 30
                                 background: Rectangle { color: parent.hovered ? "#BE123C" : "transparent"; border.color: root.dangerColor; border.width: 1; radius: 4 }
@@ -1794,7 +2216,7 @@ Item {
 
                 Text {
                     anchors.centerIn: parent
-                    text: "暂无清洗历史记录"
+                    text: root.historySearchText.trim().length > 0 ? "\u6ca1\u6709\u5339\u914d\u7684\u6e05\u6d17\u4efb\u52a1" : "\u6682\u65e0\u6e05\u6d17\u5386\u53f2\u8bb0\u5f55"
                     color: Theme.muted
                     font.pixelSize: 16
                     visible: cleaningHistoryModel.count === 0
@@ -1924,6 +2346,32 @@ Item {
                                     }
                                 }
                             }
+                        }
+                    }
+                    Button {
+                        id: recordParameterButton
+                        text: "\u8bb0\u5f55\u53c2\u6570"
+                        enabled: root.hasDetailCustomParams
+                        Layout.preferredWidth: 92
+                        Layout.preferredHeight: 32
+                        Layout.alignment: Qt.AlignLeft
+                        background: Rectangle {
+                            color: recordParameterButton.enabled ? (recordParameterButton.hovered ? "#0288D1" : root.primaryColor) : Theme.border
+                            radius: 4
+                        }
+                        contentItem: Text {
+                            text: recordParameterButton.text
+                            color: recordParameterButton.enabled ? "black" : root.textMuted
+                            font.bold: recordParameterButton.enabled
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                        onClicked: {
+                            if (!root.hasDetailCustomParams) return
+                            var title = root.currentHistoryItem && root.currentHistoryItem.projectName ? root.currentHistoryItem.projectName : "\u6e05\u6d17\u53c2\u6570"
+                            parameterPresetNameInput.text = title + " \u53c2\u6570"
+                            parameterPresetNameInput.forceActiveFocus()
+                            parameterPresetNamePopup.open()
                         }
                     }
                 }
