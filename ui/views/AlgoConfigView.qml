@@ -116,6 +116,44 @@ Item {
         "<p style='color:" + root.textMuted + ";font-size:12px;margin-top:30px'>📄 完整示例见 plugins/user/_TEMPLATE.py</p>" +
         "</body></html>"
 
+    property string pluginSpecTextV2: "<html><body style='font-family:Segoe UI,Microsoft YaHei,sans-serif;font-size:14px;color:" + root.textColor + ";background:transparent;padding:24px 30px;line-height:1.75'>" +
+        "<h1 style='font-size:22px;color:" + root.primaryColor + ";margin:0 0 4px 0;font-weight:700'>ISG 算法插件开发规范</h1>" +
+        "<p style='color:" + root.textMuted + ";margin:0 0 24px 0;font-size:13px'>文档版本：v2.0 · 正式版 · 发布日期：2026-06-15</p>" +
+        "<h2 style='font-size:15px;color:" + root.primaryColor + ";margin:22px 0 8px 0'>1. 目的</h2>" +
+        "<p>本规范用于统一 ISG 算法插件的开发方式、接口约定、参数声明、输入输出、异常处理和交付标准，确保插件在平台内具备一致的可发现性、可配置性、可执行性、可观测性和可维护性。</p>" +
+        "<p>插件开发应遵循：接口稳定、配置显式、行为可控、输出可追溯、失败可诊断、交付可验证。</p>" +
+        "<h2 style='font-size:15px;color:" + root.primaryColor + ";margin:22px 0 8px 0'>2. 适用范围</h2>" +
+        "<p>适用于数据清洗与质量检查、数据增强与样本生成、标注辅助、模型前后处理等插件。平台核心服务、调度器和 UI 调用算法插件时，也应遵循本文定义的插件契约。</p>" +
+        "<h2 style='font-size:15px;color:" + root.primaryColor + ";margin:22px 0 8px 0'>3. 插件工程模型</h2>" +
+        "<p>ISG 算法插件是标准 Python 模块。最低要求：文件编码为 UTF-8；模块顶层声明 <code>PARAMETERS: list[dict[str, Any]]</code>；模块顶层定义 <code>run(payload: dict[str, Any], context: Any) -> dict[str, Any]</code>；不得在导入阶段执行耗时计算、读取大文件、访问网络或创建输出文件；不得在 <code>run()</code> 内修改 <code>PARAMETERS</code>；不得依赖当前工作目录。</p>" +
+        "<pre style='background:" + root.panelBg + ";color:" + root.textColor + ";border:1px solid " + root.borderColor + ";border-radius:6px;padding:12px 16px;font-family:Consolas,Courier New,monospace;font-size:12.5px;line-height:1.55;margin:0'>plugins/\n  user/\n    image_geometric_transform.py\n    label_quality_check.py\n    _TEMPLATE.py</pre>" +
+        "<h2 style='font-size:15px;color:" + root.primaryColor + ";margin:22px 0 8px 0'>4. 插件文件模板</h2>" +
+        "<pre style='background:" + root.panelBg + ";color:" + root.textColor + ";border:1px solid " + root.borderColor + ";border-radius:6px;padding:12px 16px;font-family:Consolas,Courier New,monospace;font-size:12.5px;line-height:1.55;margin:0'># -*- coding: utf-8 -*-\n\"\"\"图像几何变换增强插件。\"\"\"\nfrom __future__ import annotations\nfrom pathlib import Path\nfrom typing import Any\n\nPARAMETERS: list[dict[str, Any]] = [\n    {\n        \"name\": \"rotation_degrees\",\n        \"type\": \"float\",\n        \"label\": \"旋转角度\",\n        \"default\": 10.0,\n        \"min\": -180.0,\n        \"max\": 180.0,\n        \"description\": \"图像旋转角度，单位为度。\",\n        \"required\": False,\n    },\n]\n\ndef run(payload: dict[str, Any], context: Any) -> dict[str, Any]:\n    parameters = payload.get(\"parameters\", {}) or {}\n    input_info = payload.get(\"input\", {}) or {}\n    output_info = payload.get(\"output\", {}) or {}\n    samples = input_info.get(\"samples\", []) or []\n    output_dir = Path(output_info.get(\"output_dir\", \"\"))\n    if not samples:\n        return {\"ok\": False, \"error_code\": \"NO_INPUT_SAMPLES\", \"message\": \"未收到可处理的输入样本。\"}\n    output_dir.mkdir(parents=True, exist_ok=True)\n    context.set_progress(0, \"开始处理\")\n    outputs: list[dict[str, Any]] = []\n    for index, sample in enumerate(samples, start=1):\n        if context.is_cancel_requested():\n            return {\"ok\": False, \"error_code\": \"CANCELLED\", \"message\": \"任务已取消。\"}\n        context.log(\"info\", \"处理样本\", {\"sample_id\": sample.get(\"id\")})\n        context.set_progress(index * 100 / len(samples), f\"已处理 {index}/{len(samples)}\")\n    return {\"ok\": True, \"outputs\": outputs, \"logs\": []}</pre>" +
+        "<h2 style='font-size:15px;color:" + root.primaryColor + ";margin:22px 0 8px 0'>5. 参数声明规范</h2>" +
+        "<p><code>PARAMETERS</code> 必须是模块级变量。即使插件不需要参数，也必须显式声明 <code>PARAMETERS: list[dict[str, Any]] = []</code>。</p>" +
+        "<table style='border-collapse:collapse;width:100%;font-size:13px'><tr style='border-bottom:2px solid " + root.primaryColor + "'><td style='padding:7px 10px;font-weight:700'>字段</td><td style='padding:7px 10px;font-weight:700'>类型</td><td style='padding:7px 10px;font-weight:700'>必填</td><td style='padding:7px 10px;font-weight:700'>说明</td></tr>" +
+        "<tr style='border-bottom:1px solid " + root.borderColor + "'><td style='padding:6px 10px'>name</td><td style='padding:6px 10px'>str</td><td style='padding:6px 10px'>是</td><td style='padding:6px 10px'>英文小写字母、数字和下划线，且以字母开头。</td></tr>" +
+        "<tr style='border-bottom:1px solid " + root.borderColor + "'><td style='padding:6px 10px'>type</td><td style='padding:6px 10px'>str</td><td style='padding:6px 10px'>是</td><td style='padding:6px 10px'>仅支持 string、int、float、bool、select。</td></tr>" +
+        "<tr style='border-bottom:1px solid " + root.borderColor + "'><td style='padding:6px 10px'>label</td><td style='padding:6px 10px'>str</td><td style='padding:6px 10px'>是</td><td style='padding:6px 10px'>UI 展示名称，应使用简短中文。</td></tr>" +
+        "<tr style='border-bottom:1px solid " + root.borderColor + "'><td style='padding:6px 10px'>default</td><td style='padding:6px 10px'>任意</td><td style='padding:6px 10px'>是</td><td style='padding:6px 10px'>默认值，类型必须与 type 匹配。</td></tr>" +
+        "<tr><td style='padding:6px 10px'>options</td><td style='padding:6px 10px'>list</td><td style='padding:6px 10px'>条件必填</td><td style='padding:6px 10px'>select 类型必须提供非空 options。</td></tr></table>" +
+        "<p>参数校验要求：name 在同一插件内唯一；不得使用 Python 关键字；label 不为空；description 应说明单位、范围、默认行为和边界影响；声明 min/max 时必须满足 <code>min &lt;= default &lt;= max</code>；select 的 default 必须在 options 内。</p>" +
+        "<h2 style='font-size:15px;color:" + root.primaryColor + ";margin:22px 0 8px 0'>6. run() 入口规范</h2>" +
+        "<p><code>run()</code> 是插件唯一执行入口。插件不得修改输入样本原文件，不得写入 <code>output_dir</code> 之外的业务产物，不得吞掉异常后返回成功，不得返回不可 JSON 序列化对象。长耗时循环必须周期性调用 <code>context.is_cancel_requested()</code>，任务进度应从 0 到 100 单调递增。</p>" +
+        "<h2 style='font-size:15px;color:" + root.primaryColor + ";margin:22px 0 8px 0'>7. payload 结构规范</h2>" +
+        "<pre style='background:" + root.panelBg + ";color:" + root.textColor + ";border:1px solid " + root.borderColor + ";border-radius:6px;padding:12px 16px;font-family:Consolas,Courier New,monospace;font-size:12.5px;line-height:1.55;margin:0'>payload = {\n    \"algorithm_key\": \"generation.image.geometric_transform\",\n    \"parameters\": {\"rotation_degrees\": 10.0, \"scale\": 1.0},\n    \"input\": {\n        \"dataset_id\": 1,\n        \"dataset_path\": \"/data/datasets/abc\",\n        \"samples\": [{\"id\": 1, \"sample_path\": \"/data/datasets/abc/img_001.jpg\", \"modality\": \"image\", \"labels_json\": [\"ship\"]}],\n    },\n    \"output\": {\"output_dir\": \"/data/tasks/42/output\"},\n    \"target_count\": 100,\n}</pre>" +
+        "<p>样本对象建议包含 id、sample_path、modality、labels_json、metadata。插件应使用 pathlib.Path 处理路径，并使用 / 作为跨平台相对路径分隔符。</p>" +
+        "<h2 style='font-size:15px;color:" + root.primaryColor + ";margin:22px 0 8px 0'>8. context 接口规范</h2>" +
+        "<p><code>context.set_progress(percent, message)</code> 上报进度；<code>context.log(level, message, payload=None)</code> 记录日志；<code>context.is_cancel_requested()</code> 检查取消请求。日志 payload 必须可 JSON 序列化，不得输出密钥、令牌、个人敏感信息或大体积二进制内容。</p>" +
+        "<h2 style='font-size:15px;color:" + root.primaryColor + ";margin:22px 0 8px 0'>9. 返回值与错误码</h2>" +
+        "<pre style='background:" + root.panelBg + ";color:" + root.textColor + ";border:1px solid " + root.borderColor + ";border-radius:6px;padding:12px 16px;font-family:Consolas,Courier New,monospace;font-size:12.5px;line-height:1.55;margin:0'>清洗建议成功：{\"ok\": True, \"suggestions\": [{...}], \"logs\": []}\n生成增强成功：{\"ok\": True, \"outputs\": [{...}], \"logs\": []}\n失败返回：{\"ok\": False, \"error_code\": \"NO_INPUT_SAMPLES\", \"message\": \"未收到可处理的输入样本。\"}\n取消返回：{\"ok\": False, \"error_code\": \"CANCELLED\", \"message\": \"任务已取消。\"}</pre>" +
+        "<p>推荐错误码：INVALID_PARAMETER、NO_INPUT_SAMPLES、INPUT_FILE_NOT_FOUND、UNSUPPORTED_MODALITY、OUTPUT_WRITE_FAILED、DEPENDENCY_MISSING、ALGORITHM_FAILED、CANCELLED。</p>" +
+        "<h2 style='font-size:15px;color:" + root.primaryColor + ";margin:22px 0 8px 0'>10. 安全、测试与交付</h2>" +
+        "<p>插件不得读取与任务无关的系统敏感目录或用户私有目录，不得将输入数据、参数或日志发送到未经授权的外部网络，不得在运行时安装依赖、修改系统环境变量或启动长期后台进程，不得执行来自参数、标签、文件名或外部输入的动态代码。</p>" +
+        "<p>交付前至少完成参数声明检查、空输入测试、正常样例测试、取消测试、异常测试、输出检查和兼容性测试。交付物应包含插件 Python 文件、示例参数配置、最小输入样例或样例说明、依赖清单、算法说明和测试记录。</p>" +
+        "<p style='color:" + root.textMuted + ";font-size:12px;margin-top:30px'>完整 PDF：ISG算法插件开发规范_专业版.pdf</p>" +
+        "</body></html>"
+
     function findAlgoIndexById(algoId) {
         for (var i = 0; i < algoListModel.count; i++) {
             if (algoListModel.get(i).id === algoId) return i
@@ -406,7 +444,7 @@ Item {
                 Layout.fillHeight: true
                 clip: true; contentWidth: width; contentHeight: specText.implicitHeight + 24
                 ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
-                Text { id: specText; width: parent.width; text: root.pluginSpecText; textFormat: Text.RichText; wrapMode: Text.WordWrap; padding: 18 }
+                Text { id: specText; width: parent.width; text: root.pluginSpecTextV2; textFormat: Text.RichText; wrapMode: Text.WordWrap; padding: 18 }
             }
 
             // 底部栏 (右下角 下载PDF)
@@ -419,7 +457,7 @@ Item {
                         color: downloadMa.containsMouse ? root.primaryColor : root.tableHoverBg
                         Text { text: "⬇ 下载PDF"; color: downloadMa.containsMouse ? "white" : root.textColor; font.pixelSize: 11; anchors.centerIn: parent }
                         MouseArea { id: downloadMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-                            onClicked: { pluginSpecSaveDialog.selectedFile = "ISG 算法插件开发规范.pdf"; pluginSpecSaveDialog.open() }
+                            onClicked: { pluginSpecSaveDialog.selectedFile = "ISG算法插件开发规范_专业版.pdf"; pluginSpecSaveDialog.open() }
                         }
                     }
                 }

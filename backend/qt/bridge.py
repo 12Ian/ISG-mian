@@ -566,7 +566,7 @@ class BackendBridge:
 
     def download_algorithm_plugin_spec(self, target_path: str) -> dict:
         try:
-            src = Path(__file__).resolve().parents[2] / "docs" / "ISG 算法插件开发规范 v1.0.pdf"
+            src = Path(__file__).resolve().parents[2] / "docs" / "ISG算法插件开发规范_专业版.pdf"
             if not src.is_file():
                 return {"ok": False, "error_code": "NOT_FOUND", "message": f"未找到插件规范文档: {src}"}
 

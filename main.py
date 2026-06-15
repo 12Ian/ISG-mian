@@ -401,7 +401,7 @@ class BackendService(QObject):
 
     @Slot(result=dict)
     def openAlgorithmPluginSpec(self) -> dict:
-        spec_path = Path(__file__).resolve().parent / "docs" / "ISG 算法插件开发规范 v1.0.pdf"
+        spec_path = Path(__file__).resolve().parent / "docs" / "ISG算法插件开发规范_专业版.pdf"
         if not spec_path.exists():
             return {"status": "error", "message": f"未找到插件规范文档: {spec_path}"}
         if QDesktopServices.openUrl(QUrl.fromLocalFile(str(spec_path))):

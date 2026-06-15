@@ -159,20 +159,17 @@ Item {
             width: parent.width
             spacing: 20
 
-            Rectangle {
+            Item {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 88
-                color: root.panelAltBg
-                radius: 8
-                border.color: root.borderColor
-                border.width: 1
+                Layout.preferredHeight: 32
 
-                ColumnLayout {
-                    anchors.fill: parent
-                    anchors.margins: 20
-                    spacing: 4
-                    Text { text: "系统设置"; color: root.textColor; font.pixelSize: 22; font.bold: true }
-                    Text { text: "后端设置、运行状态和最近操作日志。"; color: root.textMuted; font.pixelSize: 13 }
+                Text {
+                    anchors.left: parent.left
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "系统设置"
+                    color: root.textColor
+                    font.pixelSize: 22
+                    font.bold: true
                 }
             }
 
