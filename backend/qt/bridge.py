@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shutil
+from datetime import datetime
 from pathlib import Path
 
 from .._compat import slots_dataclass, to_local_isoformat
@@ -411,6 +412,49 @@ class BackendBridge:
         except Exception as exc:
             return _normalize_error(exc)
 
+    def export_training_weights(self, task_id: int, export_name: str = "") -> dict:
+        try:
+            with self.facade.session_factory() as session:
+                task = self.facade.task_repository.get_task_model(session, task_id)
+                if task is None:
+                    return {"ok": False, "error_code": "NOT_FOUND", "message": f"Task {task_id} not found."}
+                if task.task_type != "training":
+                    raise ValidationError("仅支持导出训练任务权重。")
+
+                result_json = task.result_json or {}
+                artifacts = result_json.get("artifacts") or []
+                weight_files = []
+                for artifact in artifacts:
+                    artifact_path = Path(str(artifact or "")).expanduser()
+                    if artifact_path.is_file():
+                        weight_files.append(artifact_path)
+
+                if not weight_files:
+                    raise ValidationError("该训练记录没有可导出的权重文件。")
+
+                default_name = export_name or task.title or f"训练任务_{task.id}"
+
+            desktop_dir = Path.home() / "Desktop"
+            desktop_dir.mkdir(parents=True, exist_ok=True)
+            export_dir = self._build_export_dir(
+                desktop_dir,
+                f"导出权重_{self._sanitize_export_name(default_name)}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+            )
+            export_dir.mkdir(parents=True, exist_ok=True)
+
+            copied_files = []
+            for src in weight_files:
+                copied_files.append(str(self._copy_with_unique_name(src, export_dir)))
+
+            return {
+                "ok": True,
+                "path": str(export_dir),
+                "file_count": len(copied_files),
+                "files": copied_files,
+            }
+        except Exception as exc:
+            return _normalize_error(exc)
+
     def run_evaluation_task(self, task_id: int) -> dict:
         try:
             self.facade.task_manager.start(task_id)
@@ -718,3 +762,35 @@ class BackendBridge:
             "payload": item.payload_json,
             "created_at": to_local_isoformat(item.created_at),
         }
+
+    def _sanitize_export_name(self, value: str) -> str:
+        cleaned = "".join("_" if ch in '\\/:*?"<>|' else ch for ch in str(value or "").strip())
+        cleaned = cleaned.strip().strip(".")
+        return cleaned or "训练任务"
+
+    def _build_export_dir(self, base_dir: Path, folder_name: str) -> Path:
+        candidate = base_dir / folder_name
+        if not candidate.exists():
+            return candidate
+        index = 2
+        while True:
+            next_candidate = base_dir / f"{folder_name}_{index}"
+            if not next_candidate.exists():
+                return next_candidate
+            index += 1
+
+    def _copy_with_unique_name(self, src: Path, target_dir: Path) -> Path:
+        destination = target_dir / src.name
+        if not destination.exists():
+            shutil.copy2(src, destination)
+            return destination
+
+        stem = src.stem
+        suffix = src.suffix
+        index = 2
+        while True:
+            candidate = target_dir / f"{stem}_{index}{suffix}"
+            if not candidate.exists():
+                shutil.copy2(src, candidate)
+                return candidate
+            index += 1

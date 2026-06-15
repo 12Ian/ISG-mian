@@ -523,6 +523,18 @@ class BackendService(QObject):
         result = self._bridge.get_training_tasks(datasetId, status)
         self.trainingTasksUpdated.emit(result)
 
+    @Slot(int, str, result=dict)
+    def exportTrainingWeights(self, taskId: int, exportName: str) -> dict:
+        result = self._bridge.export_training_weights(taskId, exportName)
+        if result.get("ok"):
+            return {
+                "status": "success",
+                "path": result.get("path", ""),
+                "file_count": result.get("file_count", 0),
+                "files": result.get("files", []),
+            }
+        return {"status": "error", "message": result.get("message", "导出权重失败")}
+
     def _run_training_in_background(self, task_id: int):
         def worker():
             try:

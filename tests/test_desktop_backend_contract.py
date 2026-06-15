@@ -343,3 +343,48 @@ def test_bridge_get_task_logs_serializes_repository_dict_rows(tmp_path):
     assert logs["items"][0]["task_id"] == task_id
     assert isinstance(logs["items"][0]["payload"], dict)
     assert "created_at" in logs["items"][0]
+
+
+def test_bridge_can_export_training_weights_to_desktop(tmp_path, monkeypatch):
+    from backend import (
+        BackendPaths,
+        BackendServiceFacade,
+        create_backend_engine,
+        create_session_factory,
+        initialize_backend_database,
+    )
+    from backend.qt.bridge import BackendBridge
+
+    home_dir = tmp_path / "home"
+    desktop_dir = home_dir / "Desktop"
+    desktop_dir.mkdir(parents=True)
+    monkeypatch.setattr(Path, "home", lambda: home_dir)
+
+    weight_src = tmp_path / "best.pt"
+    weight_src.write_text("weights", encoding="utf-8")
+
+    paths = BackendPaths(root=tmp_path / "backend-root")
+    engine = create_backend_engine(paths.database_path)
+    initialize_backend_database(engine)
+    facade = BackendServiceFacade.build(paths=paths, session_factory=create_session_factory(engine))
+    bridge = BackendBridge(facade=facade)
+
+    with facade.session_factory() as session:
+        task = facade.task_repository.create_task(
+            session,
+            task_type="training",
+            status="completed",
+            title="训练任务 #110",
+            result_json={"artifacts": [str(weight_src)]},
+        )
+        session.commit()
+        task_id = task.id
+
+    exported = bridge.export_training_weights(task_id, "训练任务 #110")
+
+    assert exported["ok"] is True
+    export_dir = Path(exported["path"])
+    assert export_dir.parent == desktop_dir
+    assert export_dir.exists()
+    assert exported["file_count"] == 1
+    assert (export_dir / "best.pt").read_text(encoding="utf-8") == "weights"

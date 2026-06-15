@@ -1108,8 +1108,9 @@ Item {
                                 required property int modelData
                                 property int historyIndex: modelData
                                 property var historyItem: evalHistoryModel.get(historyIndex)
+                                property var taskIds: root.historyTaskIds(historyItem)
                                 width: historySections.width
-                                height: 130
+                                height: 142
                                 radius: 8
                                 color: Theme.panel
                                 border.color: rowMa.containsMouse ? Theme.primary : root.borderColor
@@ -1143,11 +1144,16 @@ Item {
                                             Label { text: historyItem.evalReport || ""; color: root.primaryColor; font.pixelSize: 12; font.family: "Courier"; font.bold: true; Layout.fillWidth: true }
                                         }
                                     }
-                                    ColumnLayout { Layout.alignment: Qt.AlignVCenter | Qt.AlignRight; spacing: 10
+                                    GridLayout {
+                                        Layout.alignment: Qt.AlignVCenter | Qt.AlignRight
+                                        columns: 2
+                                        columnSpacing: 8
+                                        rowSpacing: 8
+
                                         Button {
-                                            text: "查看"; Layout.preferredWidth: 90; Layout.preferredHeight: 30
+                                            text: "查看"; Layout.preferredWidth: 82; Layout.preferredHeight: 28
                                             background: Rectangle { color: parent.hovered ? Theme.hover : Theme.control; radius: 4; border.color: Theme.border }
-                                            contentItem: Text { text: parent.text; color: "#D1D5DB"; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                            contentItem: Text { text: parent.text; color: "#64748B"; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                                             onClicked: {
                                                 root.currentHistoryItem = { historyType: historyItem.historyType || "training", projectName: historyItem.projectName, scenario: historyItem.scenario, datasets: historyItem.datasets, algos: historyItem.algos, trainStatus: historyItem.trainStatus, evalReport: historyItem.evalReport }
                                                 currentDetailModel.clear()
@@ -1169,13 +1175,43 @@ Item {
                                             }
                                         }
                                         Button {
-                                            text: "修改"; Layout.preferredWidth: 90; Layout.preferredHeight: 30
+                                            text: "导出权重"
+                                            enabled: historyItem.trainStatus === "已完成" && taskIds.length > 0
+                                            Layout.preferredWidth: 82
+                                            Layout.preferredHeight: 28
+                                            background: Rectangle {
+                                                color: !parent.enabled ? Qt.rgba(148/255, 163/255, 184/255, 0.18) : parent.hovered ? "#0F766E" : "#0D9488"
+                                                radius: 4
+                                                border.color: !parent.enabled ? root.borderColor : "#14B8A6"
+                                            }
+                                            contentItem: Text {
+                                                text: parent.text
+                                                color: parent.enabled ? "white" : root.textMuted
+                                                horizontalAlignment: Text.AlignHCenter
+                                                verticalAlignment: Text.AlignVCenter
+                                                font.pixelSize: 11
+                                            }
+                                            onClicked: {
+                                                if (taskIds.length === 0) {
+                                                    root.showToast("⚠️ 未找到可导出的训练任务")
+                                                    return
+                                                }
+                                                var result = backendService.exportTrainingWeights(Number(taskIds[0]), historyItem.projectName || "")
+                                                if (result.status === "success") {
+                                                    root.showToast("✅ 已导出 " + (result.file_count || 0) + " 个权重到桌面文件夹")
+                                                } else {
+                                                    root.showToast("⚠️ " + (result.message || "导出权重失败"))
+                                                }
+                                            }
+                                        }
+                                        Button {
+                                            text: "修改"; Layout.preferredWidth: 82; Layout.preferredHeight: 28
                                             background: Rectangle { color: parent.hovered ? Theme.hover : Theme.control; radius: 4; border.color: Theme.border }
-                                            contentItem: Text { text: parent.text; color: "#D1D5DB"; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                            contentItem: Text { text: parent.text; color: "#64748B"; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                                             onClicked: { root.pendingEditIndex = historyIndex; editProjectNameInput.text = historyItem.projectName || ""; editProjectPopup.open() }
                                         }
                                         Button {
-                                            text: "删除"; Layout.preferredWidth: 90; Layout.preferredHeight: 30
+                                            text: "删除"; Layout.preferredWidth: 82; Layout.preferredHeight: 28
                                             background: Rectangle { color: parent.hovered ? "#BE123C" : "transparent"; border.color: root.dangerColor; border.width: 1; radius: 4 }
                                             contentItem: Text { text: parent.text; color: parent.hovered ? "white" : root.dangerColor; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                                             onClicked: { root.pendingDeleteIndex = historyIndex; deleteConfirmPopup.open() }
