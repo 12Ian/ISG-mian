@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 
@@ -61,6 +62,12 @@ def test_dataset_service_creates_dataset_and_imports_files(tmp_path):
     assert (dataset_root / "generated").is_dir()
     assert (dataset_root / "preview").is_dir()
     assert preview["items"][0]["file_path"].replace("\\", "/").endswith("raw/sample.txt")
+    manifest = json.loads((dataset_root / "raw" / "dataset_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["dataset_name"] == "demo"
+    assert manifest["modality"] == "text"
+    assert manifest["total_samples"] == 1
+    assert manifest["samples"]["sample_000001"]["path"] == "sample.txt"
+    assert manifest["samples"]["sample_000001"]["split"] == "train"
 
 
 def test_dataset_service_delete_purges_files(tmp_path):
@@ -159,6 +166,12 @@ def test_dataset_service_import_folder_parses_yolo_bbox_labels(tmp_path):
     assert samples["items"][0]["labels"][0]["class_id"] == 0
     assert samples["items"][0]["labels"][0]["class_name"] == "ship"
     assert samples["items"][0]["labels"][0]["bbox"] == [0.5, 0.5, 0.2, 0.3]
+    dataset_root = Path(created["data"]["storage_path"])
+    manifest = json.loads((dataset_root / "raw" / "dataset_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["label_to_id"] == {"ship": 0}
+    assert manifest["class_distribution"]["ship"]["train"] == 1
+    assert manifest["samples"]["sample_000001"]["split"] == "train"
+    assert manifest["samples"]["sample_000001"]["labels"][0]["bbox"] == [0.5, 0.5, 0.2, 0.3]
 
 
 def test_dataset_service_import_dataset_bundle_supports_labels_and_optional_test_set(tmp_path):
@@ -220,6 +233,10 @@ def test_dataset_service_import_dataset_bundle_parses_yolo_detection_records(tmp
     assert samples["total"] == 1
     assert samples["items"][0]["labels"][0]["type"] == "detection"
     assert samples["items"][0]["labels"][0]["bbox"] == [0.25, 0.75, 0.5, 0.1]
+    manifest = json.loads((Path(dataset["storage_path"]) / "raw" / "dataset_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["dataset_name"] == "bundle-yolo"
+    assert manifest["samples"]["sample_000001"]["path"] == "images/a.jpg"
+    assert manifest["samples"]["sample_000001"]["labels"][0]["class_name"] == "ship"
 
 
 def test_dataset_service_import_dataset_bundle_allows_empty_test_set(tmp_path):
