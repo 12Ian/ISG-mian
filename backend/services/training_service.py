@@ -36,12 +36,12 @@ class TrainingService(ServiceBase):
             if dataset.is_deleted or dataset.status == "deleted":
                 raise ValidationError("Dataset must be active for training.")
 
-            samples = (
-                session.query(Sample)
+            has_sample = (
+                session.query(Sample.id)
                 .filter(Sample.dataset_id == dataset.id, Sample.status != "deleted")
-                .all()
+                .first()
             )
-            if not samples:
+            if not has_sample:
                 raise ValidationError("Dataset must contain at least one active sample.")
 
             algorithm = self.algorithm_repository.get_algorithm(session, algorithm_id)

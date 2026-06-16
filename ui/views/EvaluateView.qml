@@ -1742,14 +1742,7 @@ Item {
                                 Text { text: "⏹ 取消训练"; color: "black"; font.bold: true; font.pixelSize: 12; anchors.centerIn: parent }
                                 MouseArea { anchors.fill: parent
                                     cursorShape: Qt.PointingHandCursor
-                                    onClicked: {
-                                        for (var ci = 0; ci < taskQueueModel.count; ci++) {
-                                            var ct = taskQueueModel.get(ci)
-                                            if (ct.trainStatus === 1 && ct.taskId > 0) {
-                                                backendService.cancelTask(ct.taskId)
-                                            }
-                                        }
-                                    }
+                                    onClicked: root.cancelSelectedTraining()
                                 }
                             }
                         }
@@ -2137,6 +2130,14 @@ Item {
     }
 
     function startSelectedTraining() {
+        if (root.isTraining || !root.canStartTraining()) return
+        root.isTraining = true
+        root.showToast("⏳ 正在启动训练任务...")
+        Qt.callLater(root._startSelectedTrainingImpl)
+    }
+
+    function _startSelectedTrainingImpl() {
+        var startedCount = 0
         for (var i = 0; i < taskQueueModel.count; i++) {
             var t = taskQueueModel.get(i)
             if (t.isSelected && t.trainStatus === 0 && t.datasetId > 0 && t.algoId > 0) {
@@ -2144,6 +2145,7 @@ Item {
                 var params = t.params || {}
                 var result = backendService.createTrainingTask(scId, t.datasetId, t.algoId, params)
                 if (!result || result.status !== "success") {
+                    if (startedCount === 0) root.isTraining = false
                     root.showToast("⚠️ " + (result && result.message ? result.message : "训练任务创建失败"))
                     return
                 }
@@ -2151,10 +2153,37 @@ Item {
                 taskQueueModel.setProperty(i, "trainStatus", 1)
                 taskQueueModel.setProperty(i, "trainProgress", 0.0)
                 backendService.startTrainingTask(result.id)
+                startedCount++
             }
         }
-        root.isTraining = true
-        root.showToast("✅ 训练任务已启动")
+        if (startedCount === 0) {
+            root.isTraining = false
+            root.showToast("⚠️ 没有可启动的训练任务")
+            return
+        }
+        root.showToast("✅ 已启动 " + startedCount + " 个训练任务")
+    }
+
+    function cancelSelectedTraining() {
+        if (!root.isTraining) return
+        root.showToast("⏳ 正在请求取消训练...")
+        Qt.callLater(root._cancelSelectedTrainingImpl)
+    }
+
+    function _cancelSelectedTrainingImpl() {
+        var cancelCount = 0
+        for (var ci = 0; ci < taskQueueModel.count; ci++) {
+            var ct = taskQueueModel.get(ci)
+            if (ct.trainStatus === 1 && ct.taskId > 0) {
+                backendService.cancelTask(ct.taskId)
+                cancelCount++
+            }
+        }
+        if (cancelCount === 0) {
+            root.showToast("⚠️ 当前没有可取消的训练任务")
+            return
+        }
+        root.showToast("✅ 已提交 " + cancelCount + " 个取消请求")
     }
 
     function isWeightSaved(taskId) {

@@ -457,7 +457,8 @@ class BackendService(QObject):
 
     @Slot(int, result=dict)
     def cancelTask(self, taskId: int) -> dict:
-        return self._bridge.cancel_task(taskId)
+        self._cancel_task_in_background(taskId)
+        return {"status": "success"}
 
     @Slot(int, result=dict)
     def stopEnhancementTask(self, taskId: int) -> dict:
@@ -545,6 +546,14 @@ class BackendService(QObject):
                     self.trainingStatusUpdated.emit(result.get("message", "Task failed"), False, 0.0)
             except Exception as exc:
                 self.trainingStatusUpdated.emit(str(exc), False, 0.0)
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _cancel_task_in_background(self, task_id: int):
+        def worker():
+            try:
+                self._bridge.cancel_task(task_id)
+            except Exception:
+                pass
         threading.Thread(target=worker, daemon=True).start()
 
     @Slot(int, result=dict)
