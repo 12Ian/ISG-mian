@@ -143,6 +143,31 @@ Item {
         return ""
     }
 
+    function detailMetricLabel(key) {
+        var labels = {
+            "accuracy": "准确率 (Accuracy)",
+            "precision": "精确率 (Precision)",
+            "recall": "召回率 (Recall)",
+            "f1_score": "F1",
+            "macro_f1": "宏平均F1 (Macro-F1)",
+            "gmean": "几何均值 (G-Mean)",
+            "map": "平均精度均值 (mAP)",
+            "map50": "平均精度均值 (mAP@0.5)",
+            "map5095": "平均精度均值 (mAP@0.5:0.95)",
+            "checkpoint": "Checkpoint",
+            "status": "状态",
+            "summary": "摘要"
+        }
+        return labels[key] || String(key || "")
+    }
+
+    function detailMetricValue(value) {
+        if (value === undefined || value === null || value === "") return "-"
+        if (typeof value === "number") return value < 10 ? Number(value).toFixed(4) : Number(value).toFixed(2)
+        if (typeof value === "boolean") return value ? "是" : "否"
+        return String(value)
+    }
+
     function normalizeParamToken(value) {
         return String(value || "").toLowerCase().replace(/[\s_\-]/g, "")
     }
@@ -1368,23 +1393,52 @@ Item {
             ColumnLayout { anchors.fill: parent; spacing: 0
                 Rectangle { Layout.fillWidth: true; height: 45; color: Theme.rowAlt
                     RowLayout { anchors.fill: parent; anchors.leftMargin: 20; anchors.rightMargin: 20; spacing: 10
-                        Label { text: "使用数据集"; font.bold: true; color: "#A0AEC0"; Layout.preferredWidth: 160 }
-                        Label { text: "匹配算法模型"; font.bold: true; color: "#A0AEC0"; Layout.preferredWidth: 140 }
+                        Label { text: "使用数据集"; font.bold: true; color: "#A0AEC0"; Layout.preferredWidth: 170 }
+                        Label { text: "匹配算法模型"; font.bold: true; color: "#A0AEC0"; Layout.preferredWidth: 170 }
                         Label { text: root.currentHistoryItem && root.currentHistoryItem.historyType === "training" ? "训练配置" : "评估指标"; font.bold: true; color: "#A0AEC0"; Layout.fillWidth: true }
                     }
                 }
                 ListView { id: detailListView; Layout.fillWidth: true; Layout.fillHeight: true; clip: true; spacing: 1; model: currentDetailModel
-                    delegate: Rectangle { width: detailListView.width; height: 45; color: index % 2 === 0 ? Theme.panel : "transparent"
+                    delegate: Rectangle {
+                        width: detailListView.width
+                        height: 96
+                        color: index % 2 === 0 ? Theme.panel : "transparent"
                         MouseArea { anchors.fill: parent; hoverEnabled: true; onEntered: parent.color = Theme.hover; onExited: parent.color = index % 2 === 0 ? Theme.panel : "transparent" }
-                        RowLayout { anchors.fill: parent; anchors.leftMargin: 20; anchors.rightMargin: 20; spacing: 10
-                            Label { text: "📁 " + model.dataset; color: Theme.text; font.pixelSize: 13; Layout.preferredWidth: 160; elide: Text.ElideRight }
-                            Label { text: model.algo; color: root.primaryColor; font.pixelSize: 13; font.bold: true; Layout.preferredWidth: 140; elide: Text.ElideRight }
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: 20
+                            anchors.rightMargin: 20
+                            anchors.topMargin: 10
+                            anchors.bottomMargin: 10
+                            spacing: 10
+
+                            Label {
+                                text: "📁 " + model.dataset
+                                color: Theme.text
+                                font.pixelSize: 13
+                                Layout.preferredWidth: 170
+                                Layout.alignment: Qt.AlignVCenter
+                                wrapMode: Text.WordWrap
+                                maximumLineCount: 2
+                                elide: Text.ElideRight
+                            }
+                            Label {
+                                text: model.algo
+                                color: root.primaryColor
+                                font.pixelSize: 13
+                                font.bold: true
+                                Layout.preferredWidth: 170
+                                Layout.alignment: Qt.AlignVCenter
+                                wrapMode: Text.WordWrap
+                                maximumLineCount: 2
+                                elide: Text.ElideRight
+                            }
                             Flickable {
                                 id: metricFlick
                                 Layout.fillWidth: true
                                 Layout.fillHeight: true
                                 clip: true
-                                contentWidth: metricText.implicitWidth
+                                contentWidth: metricRow.implicitWidth
                                 contentHeight: height
                                 flickableDirection: Flickable.HorizontalFlick
                                 boundsBehavior: Flickable.StopAtBounds
@@ -1394,29 +1448,61 @@ Item {
                                     policy: metricFlick.contentWidth > metricFlick.width ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff
                                 }
 
-                                Text {
-                                    id: metricText
-                                    property var _detailObj: { try { return JSON.parse(model.detailsJson || "{}") } catch(e) { return {} } }
-                                    property var _metricText: {
-                                        var str = "";
-                                        var keys = Object.keys(_detailObj);
+                                Row {
+                                    id: metricRow
+                                    spacing: 12
+                                    anchors.verticalCenter: parent.verticalCenter
+
+                                    property var detailObj: { try { return JSON.parse(model.detailsJson || "{}") } catch(e) { return {} } }
+                                    property var detailEntries: {
+                                        var entries = []
+                                        var keys = Object.keys(detailObj)
                                         var hiddenTrainingKeys = ["taskId", "status", "outputDir", "artifactPath", "progressMessage", "summary", "checkpoint"]
                                         for (var mi = 0; mi < keys.length; mi++) {
-                                            if (keys[mi] === "dataset" || keys[mi] === "algo") continue;
-                                            if (root.currentHistoryItem && root.currentHistoryItem.historyType === "training" && hiddenTrainingKeys.indexOf(keys[mi]) !== -1) continue;
-                                            if (str !== "") str += " | ";
-                                            str += keys[mi] + ": " + _detailObj[keys[mi]];
+                                            if (keys[mi] === "dataset" || keys[mi] === "algo") continue
+                                            if (root.currentHistoryItem && root.currentHistoryItem.historyType === "training" && hiddenTrainingKeys.indexOf(keys[mi]) !== -1) continue
+                                            entries.push({ "key": keys[mi], "value": detailObj[keys[mi]] })
                                         }
-                                        return str || "暂无指标";
+                                        return entries
                                     }
-                                    x: 0
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    text: _metricText
-                                    color: root.textColor
-                                    font.pixelSize: 12
-                                    font.family: "Courier"
-                                    font.bold: true
-                                    wrapMode: Text.NoWrap
+
+                                    Repeater {
+                                        model: metricRow.detailEntries.length > 0 ? metricRow.detailEntries : [{ "key": "empty", "value": "暂无指标" }]
+
+                                        delegate: Rectangle {
+                                            width: modelData.key === "empty" ? 120 : 132
+                                            height: 64
+                                            radius: 8
+                                            color: Theme.rowAlt
+                                            border.color: Theme.border
+                                            border.width: 1
+
+                                            Column {
+                                                anchors.fill: parent
+                                                anchors.margins: 8
+                                                spacing: 6
+
+                                                Label {
+                                                    width: parent.width
+                                                    text: modelData.key === "empty" ? "提示" : root.detailMetricLabel(modelData.key)
+                                                    color: root.textMuted
+                                                    font.pixelSize: 11
+                                                    font.bold: true
+                                                    horizontalAlignment: Text.AlignHCenter
+                                                    elide: Text.ElideRight
+                                                }
+                                                Label {
+                                                    width: parent.width
+                                                    text: root.detailMetricValue(modelData.value)
+                                                    color: root.textColor
+                                                    font.pixelSize: 14
+                                                    font.bold: true
+                                                    horizontalAlignment: Text.AlignHCenter
+                                                    elide: Text.ElideRight
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
