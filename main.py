@@ -249,6 +249,18 @@ class BackendService(QObject):
         result = self._bridge.delete_dataset(datasetId)
         return {"status": "success" if result.get("ok") else "error", "message": result.get("message", "")}
 
+    @Slot(int, str, result=dict)
+    def exportDataset(self, datasetId: int, targetDir: str) -> dict:
+        result = self._bridge.export_dataset(datasetId, targetDir)
+        if result.get("ok"):
+            return {
+                "status": "success",
+                "dataset_id": result.get("data", {}).get("dataset_id"),
+                "dataset_name": result.get("data", {}).get("dataset_name", ""),
+                "export_path": result.get("data", {}).get("export_path", ""),
+            }
+        return {"status": "error", "message": result.get("message", "")}
+
 
     @Slot(str, result=list)
     def getCleaningStrategies(self, modality: str) -> list:

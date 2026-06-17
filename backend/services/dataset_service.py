@@ -135,6 +135,52 @@ class DatasetService(ServiceBase):
             session.commit()
             return {"ok": True, "data": self._serialize_dataset(session, dataset)}
 
+    def export_dataset(self, dataset_id: int, target_dir: str) -> dict:
+        target_root = Path(str(target_dir or "").strip()).expanduser()
+        if not str(target_root):
+            raise ValidationError("Export target directory is required.")
+        if target_root.exists() and not target_root.is_dir():
+            raise ValidationError("Export target path must be a directory.")
+        target_root.mkdir(parents=True, exist_ok=True)
+
+        with self.session_factory() as session:
+            dataset = self._require_dataset(session, dataset_id, include_deleted=False)
+            dataset_status = str(dataset.status or "").lower()
+            dataset_tags = {str(tag).lower() for tag in (dataset.tags_json or [])}
+            if dataset_status not in {"cleaned", "generated"} and not ({"cleaned", "generated"} & dataset_tags):
+                raise ValidationError("Only cleaned or generated datasets can be exported from this page.")
+            source_dir = Path(str(dataset.storage_path or "").strip())
+            if not str(source_dir):
+                raise ValidationError("Dataset storage path is empty.")
+            if not source_dir.exists() or not source_dir.is_dir():
+                raise ValidationError("Dataset storage directory does not exist.")
+
+            export_dir = target_root / source_dir.name
+            suffix = 1
+            while export_dir.exists():
+                export_dir = target_root / f"{source_dir.name}_{suffix}"
+                suffix += 1
+
+            shutil.copytree(source_dir, export_dir)
+            self.log_repository.add(
+                session,
+                level="info",
+                action="export_dataset",
+                resource_type="dataset",
+                resource_id=str(dataset.id),
+                message=f"Exported dataset {dataset.name} to {export_dir}",
+            )
+            session.commit()
+            return {
+                "ok": True,
+                "data": {
+                    "dataset_id": dataset.id,
+                    "dataset_name": dataset.name,
+                    "source_path": str(source_dir),
+                    "export_path": str(export_dir),
+                },
+            }
+
     def purge_dataset_files(self, dataset_id: int) -> dict:
         with self.session_factory() as session:
             dataset = self._require_dataset(session, dataset_id, include_deleted=True)

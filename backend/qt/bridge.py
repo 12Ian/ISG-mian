@@ -44,6 +44,12 @@ class BackendBridge:
         except Exception as exc:
             return _normalize_error(exc)
 
+    def export_dataset(self, dataset_id: int, target_dir: str) -> dict:
+        try:
+            return self.facade.dataset_service.export_dataset(dataset_id, target_dir)
+        except Exception as exc:
+            return _normalize_error(exc)
+
     def get_datasets(self, page: int, page_size: int, status: str) -> dict:
         try:
             result = self.facade.dataset_service.get_datasets(page, page_size, status)

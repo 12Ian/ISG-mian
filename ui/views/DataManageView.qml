@@ -52,6 +52,8 @@ Item {
     property string lastSuggestedImportName: ""
     property bool importNameManuallyEdited: false
     property int currentPreviewImageIndex: -1
+    property int pendingExportDatasetId: -1
+    property string pendingExportDatasetName: ""
 
     // ======== 后端信号连接 ========
     Connections {
@@ -167,6 +169,11 @@ Item {
         if (stage === "cleaned") return "清洗数据集"
         if (stage === "generated") return "生成数据集"
         return "原始数据集"
+    }
+
+    function canExportDataset(item) {
+        var stage = item && item._stage ? item._stage : datasetStage(item)
+        return stage === "cleaned" || stage === "generated"
     }
 
     // 防止后端误判非图片扩展名导致 QML 解码失败
@@ -544,7 +551,7 @@ Item {
                         Label { text: "类型/阶段"; font.bold: true; color: Theme.muted; Layout.preferredWidth: 140 }
                         Label { text: "文件总数"; font.bold: true; color: Theme.muted; Layout.preferredWidth: 100 }
                         Label { text: "存储占用"; font.bold: true; color: Theme.muted; Layout.preferredWidth: 100 }
-                        Label { text: "操作管理"; font.bold: true; color: Theme.muted; Layout.preferredWidth: 196; horizontalAlignment: Text.AlignHCenter }
+                        Label { text: "操作管理"; font.bold: true; color: Theme.muted; Layout.preferredWidth: 264; horizontalAlignment: Text.AlignHCenter }
                     }
                 }
 
@@ -596,9 +603,9 @@ Item {
                             Label { text: modelData.sampleCount !== undefined ? modelData.sampleCount : "0"; color: "#94A3B8"; Layout.preferredWidth: 100 }
                             Label { text: modelData.size || "0 MB"; color: "#94A3B8"; Layout.preferredWidth: 100 }
 
-                            // 操作按钮区 (总宽度 196)
+                            // 操作按钮区
                             RowLayout {
-                                Layout.preferredWidth: 196
+                                Layout.preferredWidth: 264
                                 spacing: 8
 
                                 Button {
@@ -617,6 +624,29 @@ Item {
                                         verticalAlignment: Text.AlignVCenter
                                     }
                                     onClicked: enterFileDetail(modelData)
+                                }
+
+                                Button {
+                                    visible: root.canExportDataset(modelData)
+                                    text: "导出"
+                                    Layout.preferredWidth: 60
+                                    Layout.preferredHeight: 30
+                                    background: Rectangle {
+                                        color: parent.hovered ? "#15803D" : "#16A34A"
+                                        radius: 4
+                                    }
+                                    contentItem: Text {
+                                        text: parent.text
+                                        color: "white"
+                                        horizontalAlignment: Text.AlignHCenter
+                                        verticalAlignment: Text.AlignVCenter
+                                    }
+                                    onClicked: {
+                                        root.pendingExportDatasetId = modelData.id
+                                        root.pendingExportDatasetName = modelData._cleanName || (modelData.name || "")
+                                        exportPathInput.text = ""
+                                        exportDialog.open()
+                                    }
                                 }
 
                                 Button {
@@ -680,6 +710,131 @@ Item {
 
 
     // ======== 3. 弹窗组件 ========
+
+    FolderDialog {
+        id: exportFolderDialog
+        title: "选择导出目标文件夹"
+        onAccepted: {
+            var path = selectedFolder.toString()
+            exportPathInput.text = decodeURIComponent(path.replace(/^(file:\/{2,3})/, ""))
+        }
+    }
+
+    Popup {
+        id: exportDialog
+        width: 460
+        height: 250
+        modal: true
+        focus: true
+        x: Math.round((root.width - width) / 2)
+        y: Math.round((root.height - height) / 2)
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        background: Rectangle { color: Theme.panel; radius: 8; border.color: Theme.border; border.width: 1 }
+
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 20
+            spacing: 15
+
+            Text {
+                text: "导出数据集"
+                color: Theme.text
+                font.pixelSize: 16
+                font.bold: true
+            }
+
+            Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
+
+            Text {
+                text: "将导出数据集：" + (root.pendingExportDatasetName || "未命名数据集")
+                color: Theme.muted
+                font.pixelSize: 13
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+            }
+
+            ColumnLayout {
+                spacing: 5
+                Layout.fillWidth: true
+
+                Text { text: "目标导出路径:"; color: Theme.muted; font.pixelSize: 12 }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 10
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        height: 36
+                        color: Theme.control
+                        radius: 4
+                        border.color: Theme.border
+                        border.width: 1
+
+                        TextInput {
+                            id: exportPathInput
+                            color: Theme.text
+                            font.pixelSize: 13
+                            anchors.fill: parent
+                            leftPadding: 10
+                            verticalAlignment: TextInput.AlignVCenter
+                        }
+                    }
+
+                    Button {
+                        text: "浏览"
+                        Layout.preferredHeight: 36
+                        background: Rectangle { color: Theme.hover; radius: 4; border.color: Theme.border; border.width: 1 }
+                        contentItem: Text { text: parent.text; color: Theme.text; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                        onClicked: exportFolderDialog.open()
+                    }
+                }
+            }
+
+            Item { Layout.fillHeight: true }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 15
+                Item { Layout.fillWidth: true }
+
+                Button {
+                    text: "取消"
+                    Layout.preferredWidth: 80
+                    Layout.preferredHeight: 34
+                    background: Rectangle { color: "transparent"; border.color: Theme.border; border.width: 1; radius: 4 }
+                    contentItem: Text { text: parent.text; color: Theme.muted; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    onClicked: exportDialog.close()
+                }
+
+                Button {
+                    text: "开始导出"
+                    Layout.preferredWidth: 110
+                    Layout.preferredHeight: 34
+                    background: Rectangle { color: Theme.primary; radius: 4 }
+                    contentItem: Text { text: parent.text; color: "white"; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    onClicked: {
+                        var exportPath = (exportPathInput.text || "").trim()
+                        if (root.pendingExportDatasetId <= 0) {
+                            root.showToast("请选择要导出的数据集")
+                            return
+                        }
+                        if (exportPath === "") {
+                            root.showToast("请选择导出目标文件夹")
+                            return
+                        }
+                        var result = backendService.exportDataset(root.pendingExportDatasetId, exportPath)
+                        if (result && result.status === "success") {
+                            exportDialog.close()
+                            root.showToast("导出成功: " + (result.export_path || exportPath))
+                        } else {
+                            root.showToast("导出失败: " + ((result && result.message) ? result.message : "未知错误"))
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     // --- 新增：带有拖拽和放大缩小功能的文件详情弹窗 ---
     Popup {
