@@ -1,4 +1,4 @@
-"""Image denoise cleaning plugin. Estimates noise via median blur difference, denoises with fastNlMeansDenoisingColored."""
+"""Image denoise cleaning plugin. Filters out images whose noise score exceeds the threshold."""
 
 from pathlib import Path
 from typing import Optional
@@ -13,29 +13,29 @@ PARAMETERS = [
         "min": 0.0,
         "max": 255.0,
         "options": [],
-        "description": '超过此噪声强度时触发去噪',
+        "description": '超过此噪声强度时直接过滤图片',
         "required": False,
     },
     {
-        "name": 'denoise_strength',
+        "name": 'min_confidence',
+        "type": 'float',
+        "label": '最低置信度',
+        "default": 0.2,
+        "min": 0.0,
+        "max": 1.0,
+        "options": [],
+        "description": '仅当噪声判定置信度不低于该值时才过滤',
+        "required": False,
+    },
+    {
+        "name": 'median_kernel_size',
         "type": 'int',
-        "label": '去噪强度',
-        "default": 10,
+        "label": '中值核大小',
+        "default": 3,
         "min": 3,
-        "max": 30,
+        "max": 9,
         "options": [],
-        "description": 'fastNlMeansDenoisingColored的h参数，值越大去噪越强',
-        "required": False,
-    },
-    {
-        "name": 'apply',
-        "type": 'bool',
-        "label": '写入修复结果',
-        "default": True,
-        "min": None,
-        "max": None,
-        "options": [],
-        "description": '是否将去噪后的图像写入磁盘',
+        "description": '用于估计噪声分数的中值滤波核大小，必须为奇数',
         "required": False,
     },
 ]
@@ -44,10 +44,9 @@ PARAMETERS = [
 def run(payload: dict, context) -> dict:
     parameters = payload.get("parameters", {}) or {}
     samples = payload.get("input", {}).get("samples", []) or []
-    output_dir = Path(payload.get("output", {}).get("output_dir", "."))
     noise_threshold = float(parameters.get("noise_threshold", 12.0))
-    denoise_strength = int(parameters.get("denoise_strength", 10))
-    apply_changes = bool(parameters.get("apply", True))
+    min_confidence = float(parameters.get("min_confidence", 0.2))
+    median_kernel_size = _odd_kernel_size(parameters.get("median_kernel_size", 3), default=3, minimum=3, maximum=9)
 
     if not samples:
         return {"ok": True, "suggestions": [], "logs": []}
@@ -64,24 +63,28 @@ def run(payload: dict, context) -> dict:
         if not sample_path or not sample_path.is_file():
             continue
 
-        score = _noise_score(sample_path)
+        score = _noise_score(sample_path, median_kernel_size)
         if score is None:
             continue
 
         if score > noise_threshold:
             confidence = _clamp((score - noise_threshold) / max(noise_threshold * 2.0, 1.0))
-            output_path = ""
-            if apply_changes:
-                output_path = _denoise_and_save(sample_path, output_dir, denoise_strength)
+            if confidence < min_confidence:
+                continue
             suggestions.append({
                 "sample_id": sample["id"],
                 "issue_type": "image_noise",
-                "suggested_action": "repair",
+                "suggested_action": "delete",
                 "confidence": confidence,
                 "message": f"Noise score {score:.1f} > threshold {noise_threshold:.1f}",
-                "details": {"noise_score": score, "noise_threshold": noise_threshold,
-                            "denoise_strength": denoise_strength,
-                            "output_file_path": output_path, "processing_result": "denoised"},
+                "details": {
+                    "noise_score": score,
+                    "noise_threshold": noise_threshold,
+                    "min_confidence": min_confidence,
+                    "median_kernel_size": median_kernel_size,
+                    "sample_path": str(sample_path),
+                    "processing_result": "filtered_out",
+                },
             })
 
     return {"ok": True, "suggestions": suggestions, "logs": []}
@@ -94,40 +97,44 @@ def _sample_path(sample: dict):
     return Path(path)
 
 
-def _noise_score(path: Path) -> Optional[float]:
+def _noise_score(path: Path, kernel_size: int) -> Optional[float]:
     try:
         import cv2
         import numpy as np
     except Exception:
         return None
     try:
-        gray = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+        gray = _read_image(path, cv2.IMREAD_GRAYSCALE)
         if gray is None:
             return None
-        median = cv2.medianBlur(gray, 3)
+        median = cv2.medianBlur(gray, kernel_size)
         return float(np.mean(np.abs(gray.astype(np.float32) - median.astype(np.float32))))
     except Exception:
         return None
 
 
-def _denoise_and_save(path: Path, output_dir: Path, strength: int) -> str:
+def _read_image(path: Path, flags):
     try:
         import cv2
+        import numpy as np
+        data = np.fromfile(str(path), dtype=np.uint8)
+        if data.size == 0:
+            return None
+        return cv2.imdecode(data, flags)
     except Exception:
-        return ""
-    try:
-        img = cv2.imread(str(path))
-        if img is None:
-            return ""
-        h = max(3, min(strength, 30))
-        cleaned = cv2.fastNlMeansDenoisingColored(img, None, h, h, 7, 21)
-        output_dir.mkdir(parents=True, exist_ok=True)
-        out_path = output_dir / f"denoised_{path.name}"
-        cv2.imwrite(str(out_path), cleaned)
-        return str(out_path)
-    except Exception:
-        return ""
+        return None
 
 
 def _clamp(v: float) -> float:
     return round(max(0.0, min(1.0, v)), 4)
+
+
+def _odd_kernel_size(value, *, default: int, minimum: int, maximum: int) -> int:
+    try:
+        size = int(value)
+    except Exception:
+        size = default
+    size = max(minimum, min(maximum, size))
+    if size % 2 == 0:
+        size = size + 1 if size < maximum else size - 1
+    return max(minimum, min(maximum, size))

@@ -3,8 +3,9 @@ from pathlib import Path
 import sys
 import os
 import threading
+from datetime import datetime
 
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtGui import QDesktopServices, QGuiApplication
 from PySide6.QtQml import QQmlApplicationEngine, QQmlContext
 from PySide6.QtCore import QUrl, QObject, Signal, Slot, Property
 
@@ -19,6 +20,10 @@ from backend import (
 )
 from backend.database import Base
 from backend.qt.bridge import BackendBridge
+
+
+GENERATION_PARAMETER_PRESETS_KEY = "generation.parameter_presets"
+CLEANING_PARAMETER_PRESETS_KEY = "cleaning.parameter_presets"
 
 
 def _build_backend() -> BackendBridge:
@@ -37,6 +42,7 @@ class BackendService(QObject):
     datasetsUpdated = Signal(dict)
     datasetSamplesUpdated = Signal(dict)
     datasetDirectoryUpdated = Signal(dict)
+    datasetDirectoryLoading = Signal(bool)
     datasetPreviewSamplesUpdated = Signal(dict)
     samplePreviewUpdated = Signal(dict)
     datasetStatsUpdated = Signal(dict)
@@ -57,10 +63,12 @@ class BackendService(QObject):
     evaluationTasksUpdated = Signal(dict)
     evaluationResultsUpdated = Signal(dict)
     evaluationStatusUpdated = Signal(str, bool)
+    settingValueLoaded = Signal(str, "QVariant")
 
     trainingTasksUpdated = Signal(dict)
     trainingStatusUpdated = Signal(str, bool, float)
     testSetImported = Signal(dict)
+    algorithmBindingsUpdated = Signal(dict)
 
     taskLogsUpdated = Signal(dict)
     systemStatusUpdated = Signal(dict)
@@ -128,8 +136,17 @@ class BackendService(QObject):
 
     @Slot(int, str)
     def getDatasetDirectory(self, datasetId: int, path: str):
-        result = self._bridge.get_dataset_directory(datasetId, path)
-        self.datasetDirectoryUpdated.emit(result)
+        """异步加载目录内容，避免大数据集阻塞 UI 线程"""
+        self.datasetDirectoryLoading.emit(True)
+        def worker():
+            try:
+                result = self._bridge.get_dataset_directory(datasetId, path)
+                self.datasetDirectoryUpdated.emit(result)
+            except Exception as exc:
+                self.datasetDirectoryUpdated.emit({"ok": False, "message": str(exc)})
+            finally:
+                self.datasetDirectoryLoading.emit(False)
+        threading.Thread(target=worker, daemon=True).start()
 
     @Slot(int, int, str)
     def getDatasetPreviewSamples(self, datasetId: int, limit: int, status: str):
@@ -139,6 +156,32 @@ class BackendService(QObject):
     @Slot(int)
     def getSamplePreview(self, sampleId: int):
         result = self._bridge.get_sample_preview(sampleId)
+        self.samplePreviewUpdated.emit(result)
+
+    @Slot(int, int, result=dict)
+    def getSamplePreviewPair(self, sourceSampleId: int, generatedSampleId: int) -> dict:
+        def load_preview(sample_id: int) -> dict:
+            if sample_id <= 0:
+                return {}
+            result = self._bridge.get_sample_preview(sample_id)
+            if result.get("ok") and isinstance(result.get("data"), dict):
+                return result["data"]
+            return {
+                "sample_id": sample_id,
+                "preview_kind": "file",
+                "text_content": "",
+                "error": result.get("message", "样本预览加载失败"),
+            }
+
+        return {
+            "status": "success",
+            "source": load_preview(sourceSampleId),
+            "generated": load_preview(generatedSampleId),
+        }
+
+    @Slot(str)
+    def previewFileByPath(self, filePath: str):
+        result = self._bridge.preview_file_by_path(filePath)
         self.samplePreviewUpdated.emit(result)
 
     @Slot(int)
@@ -206,6 +249,18 @@ class BackendService(QObject):
         result = self._bridge.delete_dataset(datasetId)
         return {"status": "success" if result.get("ok") else "error", "message": result.get("message", "")}
 
+    @Slot(int, str, result=dict)
+    def exportDataset(self, datasetId: int, targetDir: str) -> dict:
+        result = self._bridge.export_dataset(datasetId, targetDir)
+        if result.get("ok"):
+            return {
+                "status": "success",
+                "dataset_id": result.get("data", {}).get("dataset_id"),
+                "dataset_name": result.get("data", {}).get("dataset_name", ""),
+                "export_path": result.get("data", {}).get("export_path", ""),
+            }
+        return {"status": "error", "message": result.get("message", "")}
+
 
     @Slot(str, result=list)
     def getCleaningStrategies(self, modality: str) -> list:
@@ -247,6 +302,11 @@ class BackendService(QObject):
     def batchApproveCleaningSuggestions(self, suggestionIds: list, action: str) -> dict:
         return self._bridge.batch_approve_cleaning_suggestions(list(suggestionIds), action)
 
+    @Slot(int, int, result=dict)
+    def manualExcludeCleaningSample(self, taskId: int, sampleId: int) -> dict:
+        result = self._bridge.manual_exclude_cleaning_sample(taskId, sampleId)
+        return {"status": "success" if result.get("ok") else "error", "data": result.get("data", {}), "message": result.get("message", "")}
+
     @Slot(int, str, result=dict)
     def storeCleaningTaskResult(self, taskId: int, datasetName: str) -> dict:
         result = self._bridge.store_cleaning_task_result(taskId, datasetName)
@@ -269,6 +329,54 @@ class BackendService(QObject):
     def getEnhancementTasks(self, datasetId: int, status: str):
         result = self._bridge.get_generation_tasks(datasetId, status)
         self.enhancementTasksUpdated.emit(result)
+
+    @Slot(result=dict)
+    def getGenerationParameterPresets(self) -> dict:
+        return self._get_parameter_presets(GENERATION_PARAMETER_PRESETS_KEY)
+
+    @Slot(str, list, dict, result=dict)
+    def saveGenerationParameterPreset(self, name: str, algorithmIds: list, parameters: dict) -> dict:
+        return self._save_parameter_preset(GENERATION_PARAMETER_PRESETS_KEY, name, algorithmIds, parameters)
+
+    @Slot(result=dict)
+    def getCleaningParameterPresets(self) -> dict:
+        return self._get_parameter_presets(CLEANING_PARAMETER_PRESETS_KEY)
+
+    @Slot(str, list, dict, result=dict)
+    def saveCleaningParameterPreset(self, name: str, algorithmIds: list, parameters: dict) -> dict:
+        return self._save_parameter_preset(CLEANING_PARAMETER_PRESETS_KEY, name, algorithmIds, parameters)
+
+    def _get_parameter_presets(self, key: str) -> dict:
+        items = self._bridge.get_setting(key)
+        if not isinstance(items, list):
+            items = []
+        return {"status": "success", "items": items}
+
+    def _save_parameter_preset(self, key: str, name: str, algorithmIds: list, parameters: dict) -> dict:
+        clean_name = (name or "").strip()
+        if not clean_name:
+            return {"status": "error", "message": "参数记录名称不能为空"}
+        clean_parameters = dict(parameters or {})
+        if not clean_parameters:
+            return {"status": "error", "message": "没有可记录的参数"}
+
+        saved_items = self._bridge.get_setting(key)
+        if not isinstance(saved_items, list):
+            saved_items = []
+
+        created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        record = {
+            "id": datetime.now().strftime("%Y%m%d%H%M%S%f"),
+            "name": clean_name,
+            "algorithm_ids": [int(item) for item in list(algorithmIds or []) if str(item).strip()],
+            "parameters": clean_parameters,
+            "created_at": created_at,
+        }
+        saved_items.append(record)
+        result = self._bridge.update_setting(key, saved_items)
+        if result.get("ok"):
+            return {"status": "success", "data": record, "items": saved_items}
+        return {"status": "error", "message": result.get("message", "参数记录保存失败")}
 
     @Slot(str, str)
     def getAlgorithms(self, category: str, modality: str):
@@ -303,6 +411,45 @@ class BackendService(QObject):
     def validateAlgorithm(self, algorithmId: int) -> dict:
         return self._bridge.validate_algorithm(algorithmId)
 
+    @Slot(result=dict)
+    def openAlgorithmPluginSpec(self) -> dict:
+        spec_path = Path(__file__).resolve().parent / "docs" / "ISG算法插件开发规范_专业版.pdf"
+        if not spec_path.exists():
+            return {"status": "error", "message": f"未找到插件规范文档: {spec_path}"}
+        if QDesktopServices.openUrl(QUrl.fromLocalFile(str(spec_path))):
+            return {"status": "success"}
+        return {"status": "error", "message": "无法打开插件规范文档"}
+
+    @Slot(result=dict)
+    def getAlgorithmPluginSpecUrl(self) -> dict:
+        spec_path = Path(__file__).resolve().parent / "docs" / "ISG算法插件开发规范_专业版.pdf"
+        if not spec_path.exists():
+            return {"status": "error", "message": f"未找到插件规范文档: {spec_path}"}
+        return {"status": "success", "url": QUrl.fromLocalFile(str(spec_path)).toString()}
+
+    @Slot(str, result=dict)
+    def downloadAlgorithmPluginSpec(self, targetPath: str) -> dict:
+        result = self._bridge.download_algorithm_plugin_spec(targetPath)
+        if result.get("ok"):
+            return {"status": "success", "path": result.get("path", "")}
+        return {"status": "error", "message": result.get("message", "插件规范下载失败")}
+
+    # ── 算法绑定 ──────────────────────────────────────────
+
+    @Slot(result=dict)
+    def getAlgorithmBindings(self) -> dict:
+        bindings = self._bridge.get_algorithm_bindings()
+        self.algorithmBindingsUpdated.emit(bindings)
+        return bindings
+
+    @Slot(str, str, result=dict)
+    def saveAlgorithmBinding(self, trainingKey: str, evaluationKey: str) -> dict:
+        return self._bridge.save_algorithm_binding(trainingKey, evaluationKey)
+
+    @Slot(str, result=dict)
+    def deleteAlgorithmBinding(self, trainingKey: str) -> dict:
+        return self._bridge.delete_algorithm_binding(trainingKey)
+
     @Slot(int, result=dict)
     def startEnhancementTask(self, taskId: int) -> dict:
         self._run_generation_in_background(taskId)
@@ -313,9 +460,17 @@ class BackendService(QObject):
         result = self._bridge.delete_task(taskId)
         return {"status": "success" if result.get("ok") else "error", "message": result.get("message", "")}
 
+    @Slot(int, str, result=dict)
+    def updateTaskTitle(self, taskId: int, title: str) -> dict:
+        result = self._bridge.update_task_title(taskId, title)
+        if result.get("ok"):
+            return {"status": "success", "data": result.get("data", {})}
+        return {"status": "error", "message": result.get("message", "Unknown error")}
+
     @Slot(int, result=dict)
     def cancelTask(self, taskId: int) -> dict:
-        return self._bridge.cancel_task(taskId)
+        self._cancel_task_in_background(taskId)
+        return {"status": "success"}
 
     @Slot(int, result=dict)
     def stopEnhancementTask(self, taskId: int) -> dict:
@@ -381,6 +536,18 @@ class BackendService(QObject):
         result = self._bridge.get_training_tasks(datasetId, status)
         self.trainingTasksUpdated.emit(result)
 
+    @Slot(int, str, result=dict)
+    def exportTrainingWeights(self, taskId: int, exportName: str) -> dict:
+        result = self._bridge.export_training_weights(taskId, exportName)
+        if result.get("ok"):
+            return {
+                "status": "success",
+                "path": result.get("path", ""),
+                "file_count": result.get("file_count", 0),
+                "files": result.get("files", []),
+            }
+        return {"status": "error", "message": result.get("message", "导出权重失败")}
+
     def _run_training_in_background(self, task_id: int):
         def worker():
             try:
@@ -391,6 +558,14 @@ class BackendService(QObject):
                     self.trainingStatusUpdated.emit(result.get("message", "Task failed"), False, 0.0)
             except Exception as exc:
                 self.trainingStatusUpdated.emit(str(exc), False, 0.0)
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _cancel_task_in_background(self, task_id: int):
+        def worker():
+            try:
+                self._bridge.cancel_task(task_id)
+            except Exception:
+                pass
         threading.Thread(target=worker, daemon=True).start()
 
     @Slot(int, result=dict)
@@ -417,6 +592,11 @@ class BackendService(QObject):
     @Slot(str, "QVariant", result=dict)
     def updateSetting(self, key: str, value):
         return self._bridge.update_setting(key, value)
+
+    @Slot(str)
+    def getSetting(self, key: str):
+        val = self._bridge.get_setting(key)
+        self.settingValueLoaded.emit(key, val if val is not None else "")
 
     @Slot(int, int, str)
     def getOperationLogs(self, page: int, pageSize: int, resourceType: str):

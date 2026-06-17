@@ -23,7 +23,7 @@ Item {
         anchors.topMargin: -16
         anchors.rightMargin: -16
         title: "数据管理帮助"
-        body: "在本页导入和管理源数据集。先选择数据类型或搜索已有数据集，再点击“导入源数据集”上传文件或文件夹。数据集创建后可查看文件明细、修改名称或删除。"
+        body: "本页用于导入、浏览和维护数据集。\n\n1. 顶部筛选区可按数据阶段和数据类型过滤列表，也可以在搜索框输入名称关键字快速定位数据集。\n2. 点击“导入源数据集”后，填写数据集名称、选择模态类型，并选择导入文件或文件夹。文件夹导入会保留目录结构，适合图像、标签、音频等成套数据。\n3. 数据集卡片展示样本数量、数据阶段、类型和存储信息。点击卡片可进入文件明细，查看目录、文件列表和样本预览。\n4. 文件明细窗口支持进入子目录、点击返回上级目录、预览图片/文本/音频等样本内容。\n5. 数据集操作按钮可用于修改名称、查看明细或删除数据集。删除前会弹出确认框，避免误删。\n6. 导入或删除后页面会自动刷新；如果外部文件发生变化，可重新进入数据集明细确认实际文件状态。"
     }
 
     // ======== 状态与数据源 ========
@@ -42,23 +42,36 @@ Item {
     property bool importing: false
     property var pendingImportArgs: null
     property var previewSample: null
+    property bool samplePreviewVisible: false
+    property string pendingPreviewKey: ""
     property string previewKind: ""
     property string previewText: ""
     property string previewSource: ""
     property string previewTitle: ""
     property string toastMessage: ""
+    property string lastSuggestedImportName: ""
+    property bool importNameManuallyEdited: false
+    property int currentPreviewImageIndex: -1
+    property int pendingExportDatasetId: -1
+    property string pendingExportDatasetName: ""
 
     // ======== 后端信号连接 ========
     Connections {
         target: backendService
         function onDatasetsUpdated(data) {
+            var items = []
             if (data && data.items) {
-                root.allDatasets = data.items
+                items = data.items
             } else if (Array.isArray(data)) {
-                root.allDatasets = data
-            } else {
-                root.allDatasets = []
+                items = data
             }
+            // 预计算缓存字段，避免 filter / delegate 渲染时重复调用 datasetStage()
+            for (var i = 0; i < items.length; i++) {
+                var item = items[i]
+                item._stage = root.datasetStage(item)
+                item._cleanName = (item.name || "").split("|Status:")[0]
+            }
+            root.allDatasets = items
             root.filterData()
         }
 
@@ -86,6 +99,9 @@ Item {
         function onSamplePreviewUpdated(data) {
             var payload = data && data.data ? data.data : data
             if (!payload) return
+            var incomingKey = String(payload.sample_id || payload.id || payload.file_path || payload.relative_path || payload.name || "")
+            if (root.pendingPreviewKey !== "" && incomingKey !== "" && incomingKey !== root.pendingPreviewKey) return
+            if (root.samplePreviewVisible && root.previewSource !== "" && payload.file_path && root.previewSource === root.localFileUrl(payload.file_path)) return
             root.previewKind = payload.preview_kind || "file"
             root.previewText = payload.text_content || payload.error || ""
             root.previewTitle = payload.name || payload.relative_path || "样本预览"
@@ -93,7 +109,8 @@ Item {
             if (root.previewKind === "audio" && root.previewSource !== "") {
                 previewPlayer.source = root.previewSource
             }
-            samplePreviewDialog.open()
+            root.samplePreviewVisible = true
+            fileDetailPopup.forceActiveFocus()
         }
 
         function onImportStatusUpdated(message, success) {
@@ -117,11 +134,12 @@ Item {
     }
 
     function filterData() {
+        var q = searchQuery.toLowerCase()
         displayedDatasets = allDatasets.filter(function(item) {
-            var n = (item.name || "").split("|Status:")[0] // 兼容处理历史数据
-            var matchSearch = n.toLowerCase().indexOf(searchQuery.toLowerCase()) !== -1
+            var cleanName = item._cleanName || (item.name || "").split("|Status:")[0]
+            var matchSearch = cleanName.toLowerCase().indexOf(q) !== -1
             var matchCategory = currentCategory === "全部" || item.type === currentCategory
-            var matchStage = currentStage === "all" || datasetStage(item) === currentStage
+            var matchStage = currentStage === "all" || (item._stage || datasetStage(item)) === currentStage
             return matchSearch && matchCategory && matchStage
         })
     }
@@ -147,11 +165,21 @@ Item {
     }
 
     function stageLabel(item) {
-        var stage = datasetStage(item)
+        var stage = item._stage || datasetStage(item)
         if (stage === "cleaned") return "清洗数据集"
         if (stage === "generated") return "生成数据集"
-        if (stage === "test") return "测试数据集"
         return "原始数据集"
+    }
+
+    function canExportDataset(item) {
+        var stage = item && item._stage ? item._stage : datasetStage(item)
+        return stage === "cleaned" || stage === "generated"
+    }
+
+    // 防止后端误判非图片扩展名导致 QML 解码失败
+    function isImageExtension(path) {
+        var ext = String(path).toLowerCase().split('.').pop()
+        return ["jpg","jpeg","png","bmp","gif","webp","tif","tiff"].indexOf(ext) >= 0
     }
 
     function sampleToFileRow(sample) {
@@ -170,6 +198,7 @@ Item {
             else if (bytes < 1073741824) sizeText = (bytes / 1048576).toFixed(1) + " MB"
             else sizeText = (bytes / 1073741824).toFixed(2) + " GB"
         }
+        var labelsText = labelTexts.length > 0 ? labelTexts.join(", ") : "-"
         return {
             sampleId: sample.id || -1,
             name: sample.name || sample.relative_path || "未命名样本",
@@ -178,7 +207,9 @@ Item {
             modified: sample.modified || sample.updated_at || "",
             previewKind: sample.preview_kind || "",
             filePath: sample.file_path || "",
-            labels: labelTexts
+            labels: labelTexts,
+            _labelsText: labelsText,
+            _isImage: root.isImageExtension(sample.file_path || sample.relative_path || "")
         }
     }
 
@@ -186,6 +217,46 @@ Item {
         var clean = String(path || "").replace(/\\/g, "/")
         if (clean.indexOf("file://") === 0) return clean
         return "file:///" + clean
+    }
+
+    // QML 内联 URL 解码（Qt 5.15 JS 引擎无 decodeURIComponent）
+    function _urlDecode(str) {
+        var result = str
+        result = result.replace(/%20/g, " ")
+        result = result.replace(/%23/g, "#")
+        result = result.replace(/%25/g, "%")
+        result = result.replace(/%26/g, "&")
+        result = result.replace(/%2B/g, "+")
+        result = result.replace(/%2C/g, ",")
+        result = result.replace(/%2F/g, "/")
+        result = result.replace(/%3A/g, ":")
+        result = result.replace(/%3B/g, ";")
+        result = result.replace(/%3D/g, "=")
+        result = result.replace(/%3F/g, "?")
+        result = result.replace(/%40/g, "@")
+        result = result.replace(/%5B/g, "[")
+        result = result.replace(/%5D/g, "]")
+        // 处理 %XX 形式的其他编码
+        result = result.replace(/%([0-9A-Fa-f]{2})/g, function(match, hex) {
+            return String.fromCharCode(parseInt(hex, 16))
+        })
+        return result
+    }
+
+    function localPathFromUrl(url) {
+        var value = String(url || "")
+        if (value.indexOf("file:///") === 0) {
+            value = value.slice("file:///".length)
+            if (!/^[A-Za-z]:\//.test(value)) {
+                value = "/" + value
+            }
+        } else if (value.indexOf("file://") === 0) {
+            value = value.slice("file://".length)
+            if (!/^[A-Za-z]:\//.test(value) && value.charAt(0) !== "/") {
+                value = "/" + value
+            }
+        }
+        return root._urlDecode(value)
     }
 
     function datasetNameFromPath(path) {
@@ -197,21 +268,102 @@ Item {
         return parts.length > 0 ? parts[parts.length - 1] : ""
     }
 
+    function importTimestamp() {
+        return Qt.formatDateTime(new Date(), "yyyyMMdd_HHmmss")
+    }
+
+    function importDefaultNameFromPath(path, isFile) {
+        var baseName = root.datasetNameFromPath(path)
+        if (isFile) {
+            var dotIndex = baseName.lastIndexOf(".")
+            if (dotIndex > 0) {
+                baseName = baseName.slice(0, dotIndex)
+            }
+        }
+        baseName = String(baseName || "").trim()
+        if (baseName === "") return ""
+        return baseName + "_" + root.importTimestamp()
+    }
+
+    function applyImportDefaultName(path, isFile) {
+        var previousSuggestedName = root.lastSuggestedImportName
+        var suggestedName = root.importDefaultNameFromPath(path, isFile)
+        if (suggestedName === "") return
+        var currentName = inputName.text.trim()
+        if (currentName === "" || currentName === previousSuggestedName || !root.importNameManuallyEdited) {
+            inputName.text = suggestedName
+            root.importNameManuallyEdited = false
+        }
+        root.lastSuggestedImportName = suggestedName
+    }
+
     function previewFile(file) {
         root.previewSample = file
+        root.currentPreviewImageIndex = root.imagePreviewIndexForFile(file)
+        var previewKey = String(file ? (file.sampleId > 0 ? file.sampleId : (file.filePath || file.name || "")) : "")
+        if (root.samplePreviewVisible && root.pendingPreviewKey === previewKey) return
+        root.pendingPreviewKey = previewKey
         if (file && file.sampleId && file.sampleId > 0) {
             backendService.getSamplePreview(file.sampleId)
+        } else if (file && file.filePath) {
+            backendService.previewFileByPath(file.filePath)
         } else {
             root.previewKind = "file"
             root.previewTitle = file && file.name ? file.name : "样本预览"
             root.previewText = "该文件没有后端样本记录，无法读取真实文件内容。"
             root.previewSource = ""
-            samplePreviewDialog.open()
+            root.samplePreviewVisible = true
+            fileDetailPopup.forceActiveFocus()
         }
+    }
+
+    function closeSamplePreview() {
+        root.samplePreviewVisible = false
+        root.pendingPreviewKey = ""
+        root.currentPreviewImageIndex = -1
+        previewPlayer.stop()
     }
 
     function openSamplePreview(sample) {
         previewFile(sample)
+    }
+
+    function previewImageFiles() {
+        var images = []
+        for (var i = 0; i < currentDirFiles.length; i++) {
+            var item = currentDirFiles[i]
+            if (item && item._isImage) images.push(item)
+        }
+        return images
+    }
+
+    function imagePreviewIndexForFile(file) {
+        if (!file || !file._isImage) return -1
+        var images = root.previewImageFiles()
+        var fileKey = String(file.sampleId > 0 ? file.sampleId : (file.filePath || file.name || ""))
+        for (var i = 0; i < images.length; i++) {
+            var item = images[i]
+            var itemKey = String(item.sampleId > 0 ? item.sampleId : (item.filePath || item.name || ""))
+            if (itemKey === fileKey) return i
+        }
+        return -1
+    }
+
+    function canPreviewPreviousImage() {
+        return root.currentPreviewImageIndex > 0
+    }
+
+    function canPreviewNextImage() {
+        var images = root.previewImageFiles()
+        return root.currentPreviewImageIndex >= 0 && root.currentPreviewImageIndex < images.length - 1
+    }
+
+    function previewAdjacentImage(step) {
+        var images = root.previewImageFiles()
+        if (images.length === 0 || root.currentPreviewImageIndex < 0) return
+        var nextIndex = root.currentPreviewImageIndex + step
+        if (nextIndex < 0 || nextIndex >= images.length) return
+        root.previewFile(images[nextIndex])
     }
 
     // 触发文件详情弹窗
@@ -221,6 +373,8 @@ Item {
         currentDirPath = ""
         currentDirDirs = []
         currentDirFiles = []
+        samplePreviewVisible = false
+        pendingPreviewKey = ""
         if (dataset.id) {
             backendService.getDatasetDirectory(dataset.id, "")
         }
@@ -263,7 +417,7 @@ Item {
                 color: "#4DD0E1"
             }
 
-            ComboBox {
+            StableComboBox {
                 id: categoryCombo
                 model: ["全部", "图像", "文本", "音频"]
                 Layout.preferredWidth: 120
@@ -291,9 +445,9 @@ Item {
                 color: "#4DD0E1"
             }
 
-            ComboBox {
+            StableComboBox {
                 id: stageCombo
-                model: ["全部", "原始数据集", "清洗数据集", "生成数据集", "测试数据集"]
+                model: ["全部", "原始数据集", "清洗数据集", "生成数据集"]
                 currentIndex: 1
                 Layout.preferredWidth: 130
                 background: Rectangle {
@@ -310,7 +464,6 @@ Item {
                 onCurrentTextChanged: {
                     if (currentText === "清洗数据集") currentStage = "cleaned"
                     else if (currentText === "生成数据集") currentStage = "generated"
-                    else if (currentText === "测试数据集") currentStage = "test"
                     else if (currentText === "原始数据集") currentStage = "raw"
                     else currentStage = "all"
                     filterData()
@@ -328,9 +481,18 @@ Item {
                     border.color: Theme.border
                     radius: 4
                 }
-                onTextChanged: {
-                    searchQuery = text
-                    filterData()
+                // 防抖：每次输入重启 250ms 定时器，停止打字后才执行过滤
+                onTextChanged: searchDebounceTimer.restart()
+            }
+
+            // 搜索防抖定时器 —— 避免每次按键都触发全量过滤+列表重建
+            Timer {
+                id: searchDebounceTimer
+                interval: 250
+                repeat: false
+                onTriggered: {
+                    root.searchQuery = searchInput.text
+                    root.filterData()
                 }
             }
 
@@ -384,12 +546,12 @@ Item {
                         anchors.rightMargin: 15
                         spacing: 10
 
-                        Label { text: "数据集名称"; font.bold: true; color: "#A0AEC0"; Layout.preferredWidth: 200 }
+                        Label { text: "数据集名称"; font.bold: true; color: Theme.muted; Layout.preferredWidth: 360 }
                         Item { Layout.fillWidth: true } // 弹簧
-                        Label { text: "类型/阶段"; font.bold: true; color: "#A0AEC0"; Layout.preferredWidth: 140 }
-                        Label { text: "文件总数"; font.bold: true; color: "#A0AEC0"; Layout.preferredWidth: 100 }
-                        Label { text: "存储占用"; font.bold: true; color: "#A0AEC0"; Layout.preferredWidth: 100 }
-                        Label { text: "操作管理"; font.bold: true; color: "#A0AEC0"; Layout.preferredWidth: 196; horizontalAlignment: Text.AlignHCenter }
+                        Label { text: "类型/阶段"; font.bold: true; color: Theme.muted; Layout.preferredWidth: 140 }
+                        Label { text: "文件总数"; font.bold: true; color: Theme.muted; Layout.preferredWidth: 100 }
+                        Label { text: "存储占用"; font.bold: true; color: Theme.muted; Layout.preferredWidth: 100 }
+                        Label { text: "操作管理"; font.bold: true; color: Theme.muted; Layout.preferredWidth: 264; horizontalAlignment: Text.AlignHCenter }
                     }
                 }
 
@@ -414,22 +576,36 @@ Item {
                             anchors.rightMargin: 15
                             spacing: 10
 
-                            Label {
-                                text: (modelData.name || "未命名").split("|Status:")[0]
-                                color: Theme.text
-                                font.pixelSize: 14
-                                font.bold: true
-                                Layout.preferredWidth: 200
-                                elide: Text.ElideRight
+                            RowLayout {
+                                Layout.preferredWidth: 360
+                                spacing: 8
+
+                                Label {
+                                    text: modelData._cleanName || (modelData.name || "未命名").split("|Status:")[0]
+                                    color: Theme.text
+                                    font.pixelSize: 14
+                                    font.bold: true
+                                    Layout.preferredWidth: modelData.parent_dataset_name ? 180 : 360
+                                    elide: Text.ElideRight
+                                }
+
+                                Label {
+                                    visible: !!modelData.parent_dataset_name
+                                    text: "原数据集：" + (modelData.parent_dataset_name || "")
+                                    color: Theme.muted
+                                    font.pixelSize: 12
+                                    Layout.fillWidth: true
+                                    elide: Text.ElideRight
+                                }
                             }
                             Item { Layout.fillWidth: true } // 弹簧
                             Label { text: (modelData.type || "图像") + " / " + root.stageLabel(modelData); color: "#4DD0E1"; Layout.preferredWidth: 140; elide: Text.ElideRight }
                             Label { text: modelData.sampleCount !== undefined ? modelData.sampleCount : "0"; color: "#94A3B8"; Layout.preferredWidth: 100 }
                             Label { text: modelData.size || "0 MB"; color: "#94A3B8"; Layout.preferredWidth: 100 }
 
-                            // 操作按钮区 (总宽度 196)
+                            // 操作按钮区
                             RowLayout {
-                                Layout.preferredWidth: 196
+                                Layout.preferredWidth: 264
                                 spacing: 8
 
                                 Button {
@@ -448,6 +624,29 @@ Item {
                                         verticalAlignment: Text.AlignVCenter
                                     }
                                     onClicked: enterFileDetail(modelData)
+                                }
+
+                                Button {
+                                    visible: root.canExportDataset(modelData)
+                                    text: "导出"
+                                    Layout.preferredWidth: 60
+                                    Layout.preferredHeight: 30
+                                    background: Rectangle {
+                                        color: parent.hovered ? "#15803D" : "#16A34A"
+                                        radius: 4
+                                    }
+                                    contentItem: Text {
+                                        text: parent.text
+                                        color: "white"
+                                        horizontalAlignment: Text.AlignHCenter
+                                        verticalAlignment: Text.AlignVCenter
+                                    }
+                                    onClicked: {
+                                        root.pendingExportDatasetId = modelData.id
+                                        root.pendingExportDatasetName = modelData._cleanName || (modelData.name || "")
+                                        exportPathInput.text = ""
+                                        exportDialog.open()
+                                    }
                                 }
 
                                 Button {
@@ -512,6 +711,131 @@ Item {
 
     // ======== 3. 弹窗组件 ========
 
+    FolderDialog {
+        id: exportFolderDialog
+        title: "选择导出目标文件夹"
+        onAccepted: {
+            var path = selectedFolder.toString()
+            exportPathInput.text = decodeURIComponent(path.replace(/^(file:\/{2,3})/, ""))
+        }
+    }
+
+    Popup {
+        id: exportDialog
+        width: 460
+        height: 250
+        modal: true
+        focus: true
+        x: Math.round((root.width - width) / 2)
+        y: Math.round((root.height - height) / 2)
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        background: Rectangle { color: Theme.panel; radius: 8; border.color: Theme.border; border.width: 1 }
+
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 20
+            spacing: 15
+
+            Text {
+                text: "导出数据集"
+                color: Theme.text
+                font.pixelSize: 16
+                font.bold: true
+            }
+
+            Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
+
+            Text {
+                text: "将导出数据集：" + (root.pendingExportDatasetName || "未命名数据集")
+                color: Theme.muted
+                font.pixelSize: 13
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+            }
+
+            ColumnLayout {
+                spacing: 5
+                Layout.fillWidth: true
+
+                Text { text: "目标导出路径:"; color: Theme.muted; font.pixelSize: 12 }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 10
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        height: 36
+                        color: Theme.control
+                        radius: 4
+                        border.color: Theme.border
+                        border.width: 1
+
+                        TextInput {
+                            id: exportPathInput
+                            color: Theme.text
+                            font.pixelSize: 13
+                            anchors.fill: parent
+                            leftPadding: 10
+                            verticalAlignment: TextInput.AlignVCenter
+                        }
+                    }
+
+                    Button {
+                        text: "浏览"
+                        Layout.preferredHeight: 36
+                        background: Rectangle { color: Theme.hover; radius: 4; border.color: Theme.border; border.width: 1 }
+                        contentItem: Text { text: parent.text; color: Theme.text; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                        onClicked: exportFolderDialog.open()
+                    }
+                }
+            }
+
+            Item { Layout.fillHeight: true }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 15
+                Item { Layout.fillWidth: true }
+
+                Button {
+                    text: "取消"
+                    Layout.preferredWidth: 80
+                    Layout.preferredHeight: 34
+                    background: Rectangle { color: "transparent"; border.color: Theme.border; border.width: 1; radius: 4 }
+                    contentItem: Text { text: parent.text; color: Theme.muted; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    onClicked: exportDialog.close()
+                }
+
+                Button {
+                    text: "开始导出"
+                    Layout.preferredWidth: 110
+                    Layout.preferredHeight: 34
+                    background: Rectangle { color: Theme.primary; radius: 4 }
+                    contentItem: Text { text: parent.text; color: "white"; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    onClicked: {
+                        var exportPath = (exportPathInput.text || "").trim()
+                        if (root.pendingExportDatasetId <= 0) {
+                            root.showToast("请选择要导出的数据集")
+                            return
+                        }
+                        if (exportPath === "") {
+                            root.showToast("请选择导出目标文件夹")
+                            return
+                        }
+                        var result = backendService.exportDataset(root.pendingExportDatasetId, exportPath)
+                        if (result && result.status === "success") {
+                            exportDialog.close()
+                            root.showToast("导出成功: " + (result.export_path || exportPath))
+                        } else {
+                            root.showToast("导出失败: " + ((result && result.message) ? result.message : "未知错误"))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // --- 新增：带有拖拽和放大缩小功能的文件详情弹窗 ---
     Popup {
         id: fileDetailPopup
@@ -526,6 +850,18 @@ Item {
         modal: true
         focus: true
         closePolicy: Popup.NoAutoClose // 必须点右上角关闭
+        Keys.onLeftPressed: {
+            if (root.samplePreviewVisible && root.previewKind === "image" && root.canPreviewPreviousImage()) {
+                root.previewAdjacentImage(-1)
+                event.accepted = true
+            }
+        }
+        Keys.onRightPressed: {
+            if (root.samplePreviewVisible && root.previewKind === "image" && root.canPreviewNextImage()) {
+                root.previewAdjacentImage(1)
+                event.accepted = true
+            }
+        }
 
         background: Rectangle {
             color: Theme.row
@@ -579,7 +915,7 @@ Item {
                         width: 32; height: 32; radius: 4; color: "transparent"
                         Text {
                             text: fileDetailPopup.isMaximized ? "🗗" : "🗖"
-                            color: "#A0AEC0"
+                            color: Theme.muted
                             font.pixelSize: 15
                             anchors.centerIn: parent
                         }
@@ -605,7 +941,10 @@ Item {
                             anchors.fill: parent; hoverEnabled: true
                             onEntered: parent.color = "#4C1D28"
                             onExited: parent.color = "transparent"
-                            onClicked: fileDetailPopup.close()
+                            onClicked: {
+                                root.closeSamplePreview()
+                                fileDetailPopup.close()
+                            }
                         }
                     }
                 }
@@ -666,85 +1005,271 @@ Item {
                 }
             }
 
-            // 内容区域：文件夹 + 文件
-            ScrollView {
+            // 内容区域：文件夹 + 文件（文件列表使用 ListView 虚拟化以支持大数据量）
+            ColumnLayout {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                clip: true
-                ScrollBar.vertical.policy: ScrollBar.AsNeeded
+                visible: !root.samplePreviewVisible
+                spacing: 0
 
-                ColumnLayout {
-                    width: parent ? parent.width - 8 : 0
-                    spacing: 0
+                // ".." 返回上级 (根目录不显示)
+                Rectangle {
+                    id: backRow
+                    visible: currentDirPath !== ""
+                    Layout.fillWidth: true
+                    height: 40
+                    color: Theme.rowAlt
+                    MouseArea {
+                        anchors.fill: parent; hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onEntered: backRow.color = Theme.hover
+                        onExited: backRow.color = Theme.rowAlt
+                        onClicked: root.navigateToBreadcrumb(currentDirPath.split("/").length - 2)
+                    }
+                    RowLayout {
+                        anchors.fill: parent; anchors.leftMargin: 16; spacing: 10
+                        Text { text: "📁"; font.pixelSize: 16 }
+                        Label { text: ".. 返回上级"; color: "#93C5FD"; font.pixelSize: 14; font.bold: true }
+                    }
+                }
 
-                    // ".." 返回上级 (根目录不显示)
-                    Rectangle {
-                        id: backRow
-                        visible: currentDirPath !== ""
+                // 文件夹列表（通常数量少，Repeater 即可）
+                Repeater {
+                    model: currentDirDirs
+                    delegate: Rectangle {
+                        id: folderDelegate
                         Layout.fillWidth: true
-                        height: 40
-                        color: Theme.rowAlt
+                        height: 42
+                        color: index % 2 === 0 ? Theme.rowAlt : "transparent"
                         MouseArea {
                             anchors.fill: parent; hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
-                            onEntered: backRow.color = Theme.hover
-                            onExited: backRow.color = Theme.rowAlt
-                            onClicked: root.navigateToBreadcrumb(currentDirPath.split("/").length - 2)
+                            onEntered: folderDelegate.color = Theme.hover
+                            onExited: folderDelegate.color = index % 2 === 0 ? Theme.rowAlt : "transparent"
+                            onClicked: root.navigateToDir(modelData)
                         }
                         RowLayout {
-                            anchors.fill: parent; anchors.leftMargin: 16; spacing: 10
-                            Text { text: "📁"; font.pixelSize: 16 }
-                            Label { text: ".. 返回上级"; color: "#93C5FD"; font.pixelSize: 14; font.bold: true }
+                            anchors.fill: parent; anchors.leftMargin: 16; anchors.rightMargin: 16; spacing: 10
+                            Text { text: "📁"; font.pixelSize: 18 }
+                            Label { text: modelData; color: "#93C5FD"; font.pixelSize: 14; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
+                            Label { text: "文件夹"; color: Theme.muted; font.pixelSize: 12 }
+                        }
+                    }
+                }
+
+                // 文件列表 → ListView 虚拟化，支持上千文件流畅滚动
+                ListView {
+                    id: fileListView
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    clip: true
+                    model: currentDirFiles
+                    cacheBuffer: 300
+                    spacing: 0
+                    boundsBehavior: Flickable.StopAtBounds
+                    ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+
+                    delegate: Rectangle {
+                        width: fileListView.width
+                        height: 40
+                        color: index % 2 === 0 ? Theme.rowAlt : "transparent"
+                        MouseArea {
+                            anchors.fill: parent; hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onEntered: parent.color = Theme.hover
+                            onExited: parent.color = index % 2 === 0 ? Theme.rowAlt : "transparent"
+                            onClicked: root.openSamplePreview(modelData)
+                        }
+                        RowLayout {
+                            anchors.fill: parent; anchors.leftMargin: 16; anchors.rightMargin: 16; spacing: 10
+                            Text { text: "📄"; font.pixelSize: 14 }
+                            Label { text: modelData.name; color: Theme.text; font.pixelSize: 13; Layout.fillWidth: true; elide: Text.ElideRight }
+                            Label { text: modelData._labelsText || "-"; color: modelData.labels && modelData.labels.length > 0 ? "#4DD0E1" : Theme.muted; font.pixelSize: 12; Layout.preferredWidth: 120; elide: Text.ElideRight }
+                            Label { text: modelData.type || ""; color: Theme.muted; font.pixelSize: 12; Layout.preferredWidth: 60 }
+                            Label { text: modelData.size || ""; color: Theme.muted; font.pixelSize: 12; Layout.preferredWidth: 80 }
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                visible: root.samplePreviewVisible
+                color: Theme.panel
+                border.color: Theme.border
+                radius: 6
+                clip: true
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: 16
+                    spacing: 12
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 10
+
+                        Label {
+                            text: root.previewTitle
+                            color: Theme.text
+                            font.pixelSize: 15
+                            font.bold: true
+                            Layout.fillWidth: true
+                            elide: Text.ElideRight
+                        }
+
+                        Button {
+                            text: "返回列表"
+                            Layout.preferredWidth: 88
+                            Layout.preferredHeight: 30
+                            background: Rectangle { color: parent.hovered ? Theme.hover : Theme.control; radius: 4; border.color: Theme.border }
+                            contentItem: Text { text: parent.text; color: Theme.text; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                            onClicked: root.closeSamplePreview()
                         }
                     }
 
-                    // 文件夹列表
-                    Repeater {
-                        model: currentDirDirs
-                        delegate: Rectangle {
-                            id: folderDelegate
-                            Layout.fillWidth: true
-                            height: 42
-                            color: index % 2 === 0 ? Theme.rowAlt : "transparent"
-                            MouseArea {
-                                anchors.fill: parent; hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onEntered: folderDelegate.color = Theme.hover
-                                onExited: folderDelegate.color = index % 2 === 0 ? Theme.rowAlt : "transparent"
-                                onClicked: root.navigateToDir(modelData)
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        color: Theme.row
+                        border.color: Theme.border
+                        radius: 6
+                        clip: true
+
+                        Image {
+                            anchors.fill: parent
+                            anchors.margins: 12
+                            visible: root.previewKind === "image" && root.previewSource !== "" && root.isImageExtension(root.previewSource)
+                            source: (root.previewKind === "image" && root.isImageExtension(root.previewSource)) ? root.previewSource : ""
+                            fillMode: Image.PreserveAspectFit
+                            asynchronous: true
+                        }
+
+                        Button {
+                            anchors.left: parent.left
+                            anchors.leftMargin: 16
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 40
+                            height: 56
+                            visible: root.previewKind === "image"
+                            enabled: root.canPreviewPreviousImage()
+                            background: Rectangle {
+                                color: parent.enabled ? Qt.rgba(15 / 255, 23 / 255, 42 / 255, parent.hovered ? 0.82 : 0.68) : Qt.rgba(148 / 255, 163 / 255, 184 / 255, 0.28)
+                                radius: 20
+                                border.color: parent.enabled ? Qt.rgba(1, 1, 1, 0.18) : "transparent"
                             }
-                            RowLayout {
-                                anchors.fill: parent; anchors.leftMargin: 16; anchors.rightMargin: 16; spacing: 10
-                                Text { text: "📁"; font.pixelSize: 18 }
-                                Label { text: modelData; color: "#93C5FD"; font.pixelSize: 14; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
-                                Label { text: "文件夹"; color: Theme.muted; font.pixelSize: 12 }
+                            contentItem: Text {
+                                text: "‹"
+                                color: parent.enabled ? "white" : "#CBD5E1"
+                                font.pixelSize: 28
+                                font.bold: true
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                            onClicked: root.previewAdjacentImage(-1)
+                        }
+
+                        Button {
+                            anchors.right: parent.right
+                            anchors.rightMargin: 16
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 40
+                            height: 56
+                            visible: root.previewKind === "image"
+                            enabled: root.canPreviewNextImage()
+                            background: Rectangle {
+                                color: parent.enabled ? Qt.rgba(15 / 255, 23 / 255, 42 / 255, parent.hovered ? 0.82 : 0.68) : Qt.rgba(148 / 255, 163 / 255, 184 / 255, 0.28)
+                                radius: 20
+                                border.color: parent.enabled ? Qt.rgba(1, 1, 1, 0.18) : "transparent"
+                            }
+                            contentItem: Text {
+                                text: "›"
+                                color: parent.enabled ? "white" : "#CBD5E1"
+                                font.pixelSize: 28
+                                font.bold: true
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                            onClicked: root.previewAdjacentImage(1)
+                        }
+
+                        ScrollView {
+                            anchors.fill: parent
+                            anchors.margins: 12
+                            visible: root.previewKind === "text"
+
+                            TextArea {
+                                text: root.previewText
+                                readOnly: true
+                                wrapMode: TextEdit.Wrap
+                                color: Theme.text
+                                selectByMouse: true
+                                background: Rectangle { color: "transparent" }
                             }
                         }
-                    }
 
-                    // 文件列表
-                    Repeater {
-                        model: currentDirFiles
-                        delegate: Rectangle {
-                            id: fileDelegate
-                            Layout.fillWidth: true
-                            height: 40
-                            color: index % 2 === 0 ? Theme.rowAlt : "transparent"
-                            MouseArea {
-                                anchors.fill: parent; hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onEntered: fileDelegate.color = Theme.hover
-                                onExited: fileDelegate.color = index % 2 === 0 ? Theme.rowAlt : "transparent"
-                                onClicked: root.openSamplePreview(modelData)
+                        ColumnLayout {
+                            anchors.centerIn: parent
+                            width: Math.min(parent.width - 60, 520)
+                            spacing: 14
+                            visible: root.previewKind === "audio"
+
+                            Text {
+                                text: root.previewTitle
+                                color: Theme.text
+                                font.pixelSize: 15
+                                font.bold: true
+                                Layout.fillWidth: true
+                                horizontalAlignment: Text.AlignHCenter
+                                elide: Text.ElideRight
                             }
+
+                            Text {
+                                text: root.previewSource !== "" ? root.previewSource : "暂无音频路径"
+                                color: Theme.muted
+                                font.pixelSize: 12
+                                Layout.fillWidth: true
+                                horizontalAlignment: Text.AlignHCenter
+                                elide: Text.ElideMiddle
+                            }
+
                             RowLayout {
-                                anchors.fill: parent; anchors.leftMargin: 16; anchors.rightMargin: 16; spacing: 10
-                                Text { text: "📄"; font.pixelSize: 14 }
-                                Label { text: modelData.name; color: Theme.text; font.pixelSize: 13; Layout.fillWidth: true; elide: Text.ElideRight }
-                                Label { text: modelData.labels && modelData.labels.length > 0 ? modelData.labels.join(", ") : "-"; color: modelData.labels && modelData.labels.length > 0 ? "#4DD0E1" : Theme.muted; font.pixelSize: 12; Layout.preferredWidth: 120; elide: Text.ElideRight }
-                                Label { text: modelData.type || ""; color: Theme.muted; font.pixelSize: 12; Layout.preferredWidth: 60 }
-                                Label { text: modelData.size || ""; color: Theme.muted; font.pixelSize: 12; Layout.preferredWidth: 80 }
+                                Layout.alignment: Qt.AlignHCenter
+                                spacing: 10
+
+                                Button {
+                                    text: previewPlayer.playbackState === MediaPlayer.PlayingState ? "暂停" : "播放"
+                                    Layout.preferredWidth: 90
+                                    Layout.preferredHeight: 34
+                                    background: Rectangle { color: parent.hovered ? "#0288D1" : "#039BE5"; radius: 4 }
+                                    contentItem: Text { text: parent.text; color: "white"; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                    onClicked: {
+                                        if (previewPlayer.playbackState === MediaPlayer.PlayingState) previewPlayer.pause()
+                                        else previewPlayer.play()
+                                    }
+                                }
+
+                                Button {
+                                    text: "停止"
+                                    Layout.preferredWidth: 90
+                                    Layout.preferredHeight: 34
+                                    background: Rectangle { color: parent.hovered ? Theme.hover : Theme.control; radius: 4; border.color: Theme.border }
+                                    contentItem: Text { text: parent.text; color: Theme.text; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                    onClicked: previewPlayer.stop()
+                                }
                             }
+                        }
+
+                        Text {
+                            anchors.centerIn: parent
+                            width: parent.width - 40
+                            visible: root.previewKind !== "image" && root.previewKind !== "text" && root.previewKind !== "audio"
+                            text: root.previewText !== "" ? root.previewText : (root.previewSource !== "" ? root.previewSource : "暂无可预览内容")
+                            color: Theme.muted
+                            font.pixelSize: 14
+                            wrapMode: Text.WordWrap
+                            horizontalAlignment: Text.AlignHCenter
                         }
                     }
                 }
@@ -787,159 +1312,18 @@ Item {
         }
     }
 
-    Popup {
-        id: samplePreviewDialog
-        width: Math.min(root.width * 0.9, 760)
-        height: Math.min(root.height * 0.9, 560)
-        x: (root.width - width) / 2
-        y: (root.height - height) / 2
-        modal: true
-        focus: true
-        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+    Component.onDestruction: {
+        toastCloseTimer.stop()
+        previewPlayer.stop()
+    }
 
-        onClosed: previewPlayer.stop()
+    MediaPlayer {
+        id: previewPlayer
+        audioOutput: previewAudio
+    }
 
-        background: Rectangle {
-            color: Theme.row
-            border.color: Theme.border
-            border.width: 1
-            radius: 8
-            clip: true
-        }
-
-        ColumnLayout {
-            anchors.fill: parent
-            anchors.margins: 18
-            spacing: 12
-
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: 10
-
-                Text {
-                    text: root.previewTitle
-                    color: Theme.text
-                    font.pixelSize: 16
-                    font.bold: true
-                    Layout.fillWidth: true
-                    elide: Text.ElideRight
-                }
-
-                Button {
-                    text: "关闭"
-                    Layout.preferredWidth: 72
-                    Layout.preferredHeight: 30
-                    background: Rectangle { color: parent.hovered ? Theme.hover : Theme.control; radius: 4; border.color: Theme.border }
-                    contentItem: Text { text: parent.text; color: Theme.text; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                    onClicked: samplePreviewDialog.close()
-                }
-            }
-
-            Rectangle {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                color: Theme.panel
-                border.color: Theme.border
-                radius: 6
-                clip: true
-
-                Image {
-                    anchors.fill: parent
-                    anchors.margins: 12
-                    visible: root.previewKind === "image" && root.previewSource !== ""
-                    source: root.previewKind === "image" ? root.previewSource : ""
-                    fillMode: Image.PreserveAspectFit
-                    asynchronous: true
-                }
-
-                ScrollView {
-                    anchors.fill: parent
-                    anchors.margins: 12
-                    visible: root.previewKind === "text"
-
-                    TextArea {
-                        text: root.previewText
-                        readOnly: true
-                        wrapMode: TextEdit.Wrap
-                        color: Theme.text
-                        selectByMouse: true
-                        background: Rectangle { color: "transparent" }
-                    }
-                }
-
-                ColumnLayout {
-                    anchors.centerIn: parent
-                    width: Math.min(parent.width - 60, 520)
-                    spacing: 14
-                    visible: root.previewKind === "audio"
-
-                    Text {
-                        text: root.previewTitle
-                        color: Theme.text
-                        font.pixelSize: 15
-                        font.bold: true
-                        Layout.fillWidth: true
-                        horizontalAlignment: Text.AlignHCenter
-                        elide: Text.ElideRight
-                    }
-
-                    Text {
-                        text: root.previewSource !== "" ? root.previewSource : "暂无音频路径"
-                        color: Theme.muted
-                        font.pixelSize: 12
-                        Layout.fillWidth: true
-                        horizontalAlignment: Text.AlignHCenter
-                        elide: Text.ElideMiddle
-                    }
-
-                    RowLayout {
-                        Layout.alignment: Qt.AlignHCenter
-                        spacing: 10
-
-                        Button {
-                            text: previewPlayer.playbackState === MediaPlayer.PlayingState ? "暂停" : "播放"
-                            Layout.preferredWidth: 90
-                            Layout.preferredHeight: 34
-                            background: Rectangle { color: parent.hovered ? "#0288D1" : "#039BE5"; radius: 4 }
-                            contentItem: Text { text: parent.text; color: "black"; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                            onClicked: {
-                                if (previewPlayer.playbackState === MediaPlayer.PlayingState) previewPlayer.pause()
-                                else previewPlayer.play()
-                            }
-                        }
-
-                        Button {
-                            text: "停止"
-                            Layout.preferredWidth: 90
-                            Layout.preferredHeight: 34
-                            background: Rectangle { color: parent.hovered ? Theme.hover : Theme.control; radius: 4; border.color: Theme.border }
-                            contentItem: Text { text: parent.text; color: Theme.text; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                            onClicked: previewPlayer.stop()
-                        }
-                    }
-                }
-
-                Text {
-                    anchors.centerIn: parent
-                    width: parent.width - 40
-                    visible: root.previewKind !== "image" && root.previewKind !== "text" && root.previewKind !== "audio"
-                    text: root.previewText !== "" ? root.previewText : (root.previewSource !== "" ? root.previewSource : "暂无可预览内容")
-                    color: Theme.muted
-                    font.pixelSize: 14
-                    wrapMode: Text.WordWrap
-                    horizontalAlignment: Text.AlignHCenter
-                }
-            }
-        }
-
-        MediaPlayer {
-            id: previewPlayer
-            audioOutput: previewAudio
-        }
-
-        AudioOutput {
-            id: previewAudio
-        }
+    AudioOutput {
+        id: previewAudio
     }
 
 
@@ -947,8 +1331,9 @@ Item {
         id: fileDialog
         title: "选择导入的文件"
         onAccepted: {
-            var path = selectedFile.toString()
-            selectedPathInput.text = decodeURIComponent(path.replace(/^(file:\/{2,3})/, ""))
+            var path = root.localPathFromUrl(selectedFile)
+            selectedPathInput.text = path
+            root.applyImportDefaultName(path, true)
         }
     }
 
@@ -956,8 +1341,9 @@ Item {
         id: folderDialog
         title: "选择导入的文件夹"
         onAccepted: {
-            var path = selectedFolder.toString()
-            selectedPathInput.text = decodeURIComponent(path.replace(/^(file:\/{2,3})/, ""))
+            var path = root.localPathFromUrl(selectedFolder)
+            selectedPathInput.text = path
+            root.applyImportDefaultName(path, false)
         }
     }
 
@@ -973,6 +1359,10 @@ Item {
         onOpened: {
             importModeCombo.currentIndex = 1
             inputType.currentIndex = 0
+            inputName.text = ""
+            selectedPathInput.text = ""
+            root.lastSuggestedImportName = ""
+            root.importNameManuallyEdited = false
         }
 
         background: Rectangle {
@@ -989,7 +1379,9 @@ Item {
                 id: inputName
                 placeholderText: "输入源数据集名称"
                 Layout.fillWidth: true
-                color: "black"
+                color: Theme.text
+                placeholderTextColor: Theme.muted
+                onTextEdited: root.importNameManuallyEdited = true
                 background: Rectangle {
                     color: Theme.row
                     border.color: Theme.border
@@ -1001,7 +1393,7 @@ Item {
                 Layout.fillWidth: true
                 spacing: 10
 
-                ComboBox {
+                StableComboBox {
                     id: importModeCombo
                     model: ["导入文件", "导入文件夹"]
                     currentIndex: 1
@@ -1013,11 +1405,18 @@ Item {
                     }
                     contentItem: Text {
                         text: importModeCombo.currentText
-                        color: "black"
+                        color: Theme.text
                         verticalAlignment: Text.AlignVCenter
-                        padding: 10
+                        leftPadding: 10
                     }
-                    onCurrentIndexChanged: selectedPathInput.text = ""
+                    onCurrentIndexChanged: {
+                        selectedPathInput.text = ""
+                        if (!root.importNameManuallyEdited || inputName.text.trim() === root.lastSuggestedImportName) {
+                            inputName.text = ""
+                            root.importNameManuallyEdited = false
+                            root.lastSuggestedImportName = ""
+                        }
+                    }
                 }
 
                 TextField {
@@ -1025,7 +1424,8 @@ Item {
                     placeholderText: "未选择路径..."
                     readOnly: true
                     Layout.fillWidth: true
-                    color: "black"
+                    color: Theme.text
+                    placeholderTextColor: Theme.muted
                     background: Rectangle {
                         color: Theme.row
                         border.color: Theme.border
@@ -1043,7 +1443,7 @@ Item {
                     }
                     contentItem: Text {
                         text: parent.text
-                        color: "black"
+                        color: Theme.text
                         horizontalAlignment: Text.AlignHCenter
                         verticalAlignment: Text.AlignVCenter
                     }
@@ -1054,7 +1454,7 @@ Item {
                 }
             }
 
-            ComboBox {
+            StableComboBox {
                 id: inputType
                 model: ["图像", "文本", "音频"]
                 currentIndex: 0
@@ -1066,9 +1466,9 @@ Item {
                 }
                 contentItem: Text {
                     text: inputType.currentText
-                    color: "black"
+                    color: Theme.text
                     verticalAlignment: Text.AlignVCenter
-                    padding: 10
+                    leftPadding: 10
                 }
             }
 
@@ -1085,7 +1485,7 @@ Item {
                 return
             }
             var finalName = inputName.text.trim()
-            if (finalName === "") finalName = root.datasetNameFromPath(path)
+            if (finalName === "") finalName = root.importDefaultNameFromPath(path, importModeCombo.currentIndex === 0)
             if (finalName === "") {
                 root.showToast("请输入源数据集名称")
                 return
@@ -1099,6 +1499,8 @@ Item {
             }
             inputName.text = ""
             selectedPathInput.text = ""
+            root.lastSuggestedImportName = ""
+            root.importNameManuallyEdited = false
             importDeferTimer.start()
         }
     }
@@ -1146,7 +1548,7 @@ Item {
                 spacing: 15
                 Label {
                     text: "数据集名称:"
-                    color: "#A0AEC0"
+                    color: Theme.muted
                     font.pixelSize: 14
                     Layout.preferredWidth: 80
                     horizontalAlignment: Text.AlignRight
@@ -1155,7 +1557,7 @@ Item {
                     id: editNameInput
                     Layout.fillWidth: true
                     Layout.preferredHeight: 36
-                    color: "black"
+                    color: Theme.text
                     font.pixelSize: 13
                     leftPadding: 10
                     verticalAlignment: TextInput.AlignVCenter
@@ -1172,12 +1574,12 @@ Item {
                 spacing: 15
                 Label {
                     text: "数据类型:"
-                    color: "#A0AEC0"
+                    color: Theme.muted
                     font.pixelSize: 14
                     Layout.preferredWidth: 80
                     horizontalAlignment: Text.AlignRight
                 }
-                ComboBox {
+                StableComboBox {
                     id: editTypeCombo
                     model: ["图像", "文本", "音频"]
                     Layout.fillWidth: true
@@ -1189,7 +1591,7 @@ Item {
                     }
                     contentItem: Text {
                         text: editTypeCombo.currentText
-                        color: "black"
+                        color: Theme.text
                         font.pixelSize: 13
                         verticalAlignment: Text.AlignVCenter
                         padding: 10
@@ -1275,7 +1677,7 @@ Item {
                     text: "确认删除"
                     Layout.preferredWidth: 80; Layout.preferredHeight: 30
                     background: Rectangle { color: "#E11D48"; radius: 4 }
-                    contentItem: Text { text: parent.text; color: "black"; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    contentItem: Text { text: parent.text; color: "white"; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                     onClicked: {
                         if (root.pendingDeleteId !== -1) {
                             backendService.deleteDataset(root.pendingDeleteId)
@@ -1355,4 +1757,5 @@ Item {
             }
         }
     }
+
 }

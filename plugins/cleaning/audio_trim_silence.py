@@ -65,6 +65,20 @@ def run(payload: dict, context) -> dict:
 
         result = _trim_if_silent(sample_path, output_dir, top_db, silence_ratio_threshold, apply_changes)
         if result is not None:
+            if result.get("error_code"):
+                suggestions.append({
+                    "sample_id": sample["id"],
+                    "issue_type": "audio_decode_failed",
+                    "suggested_action": "manual_review",
+                    "confidence": 1.0,
+                    "message": result["message"],
+                    "details": {
+                        "error_code": result["error_code"],
+                        "sample_path": str(sample_path),
+                        "processing_result": "audio_decode_failed",
+                    },
+                })
+                continue
             suggestions.append({
                 "sample_id": sample["id"],
                 "issue_type": "audio_silence",
@@ -114,8 +128,11 @@ def _trim_if_silent(path: Path, output_dir: Path, top_db: int,
             sf.write(str(out_path), cleaned, int(sr))
             output_path = str(out_path)
         return {"silence_ratio": silence_ratio, "confidence": confidence, "output_path": output_path}
-    except Exception:
-        return None
+    except Exception as exc:
+        return {
+            "error_code": "AUDIO_DECODE_FAILED",
+            "message": f"无法读取音频文件，请先转换为 wav/flac/ogg 等可解码格式后再清洗: {exc}",
+        }
 
 
 def _clamp(v: float) -> float:

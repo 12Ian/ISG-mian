@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ..models import Algorithm, AlgorithmParameter
+from ..models import Algorithm, AlgorithmBinding, AlgorithmParameter
 from .base import RepositoryBase
 
 
@@ -52,3 +52,50 @@ class AlgorithmRepository(RepositoryBase):
             .order_by(AlgorithmParameter.order_index.asc(), AlgorithmParameter.id.asc())
             .all()
         )
+
+    # ── 绑定管理 ──────────────────────────────────────────────
+
+    def get_binding_for_training(self, session, training_algo_id: int) -> AlgorithmBinding | None:
+        return (
+            session.query(AlgorithmBinding)
+            .filter(AlgorithmBinding.training_algorithm_id == training_algo_id)
+            .first()
+        )
+
+    def get_all_bindings(self, session) -> list[AlgorithmBinding]:
+        return session.query(AlgorithmBinding).order_by(AlgorithmBinding.id.asc()).all()
+
+    def set_binding(self, session, training_algo_id: int, eval_algo_id: int) -> AlgorithmBinding:
+        existing = self.get_binding_for_training(session, training_algo_id)
+        if existing:
+            existing.evaluation_algorithm_id = eval_algo_id
+            session.flush()
+            return existing
+        binding = AlgorithmBinding(
+            training_algorithm_id=training_algo_id,
+            evaluation_algorithm_id=eval_algo_id,
+        )
+        session.add(binding)
+        session.flush()
+        return binding
+
+    def delete_binding_for_training(self, session, training_algo_id: int) -> bool:
+        count = (
+            session.query(AlgorithmBinding)
+            .filter(AlgorithmBinding.training_algorithm_id == training_algo_id)
+            .delete()
+        )
+        session.flush()
+        return count > 0
+
+    def delete_bindings_for_algorithm(self, session, algo_id: int) -> int:
+        count = (
+            session.query(AlgorithmBinding)
+            .filter(
+                (AlgorithmBinding.training_algorithm_id == algo_id)
+                | (AlgorithmBinding.evaluation_algorithm_id == algo_id)
+            )
+            .delete()
+        )
+        session.flush()
+        return count

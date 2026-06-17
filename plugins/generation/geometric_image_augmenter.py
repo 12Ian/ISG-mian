@@ -11,7 +11,7 @@ PARAMETERS = [
         "name": 'rotation_degrees',
         "type": 'float',
         "label": '旋转角度',
-        "default": 0.0,
+        "default": 15.0,
         "min": -360.0,
         "max": 360.0,
         "options": [],
@@ -22,7 +22,7 @@ PARAMETERS = [
         "name": 'scale',
         "type": 'float',
         "label": '缩放比例',
-        "default": 1.0,
+        "default": 0.92,
         "min": 0.1,
         "max": 5.0,
         "options": [],
@@ -33,7 +33,7 @@ PARAMETERS = [
         "name": 'translate_x_pct',
         "type": 'float',
         "label": '水平平移百分比',
-        "default": 0.0,
+        "default": 6.0,
         "min": -100.0,
         "max": 100.0,
         "options": [],
@@ -44,7 +44,7 @@ PARAMETERS = [
         "name": 'translate_y_pct',
         "type": 'float',
         "label": '垂直平移百分比',
-        "default": 0.0,
+        "default": -4.0,
         "min": -100.0,
         "max": 100.0,
         "options": [],
@@ -97,10 +97,10 @@ def run(payload: dict, context) -> dict:
         return {"ok": False, "error_code": "NO_INPUT_SAMPLES", "message": "No source samples provided."}
 
     target_count = max(1, int(payload.get("target_count") or parameters.get("target_count") or len(samples)))
-    rotation = float(parameters.get("rotation_degrees", parameters.get("angle", 0.0)) or 0.0)
-    scale = float(parameters.get("scale", 1.0) or 1.0)
-    translate_x_pct = float(parameters.get("translate_x_pct", 0.0) or 0.0)
-    translate_y_pct = float(parameters.get("translate_y_pct", 0.0) or 0.0)
+    rotation = float(parameters.get("rotation_degrees", parameters.get("angle", 15.0)) or 15.0)
+    scale = float(parameters.get("scale", 0.92) or 0.92)
+    translate_x_pct = float(parameters.get("translate_x_pct", 6.0) or 6.0)
+    translate_y_pct = float(parameters.get("translate_y_pct", -4.0) or -4.0)
     flip_horizontal = _as_bool(parameters.get("flip_horizontal", False))
     flip_vertical = _as_bool(parameters.get("flip_vertical", False))
     border_value = int(parameters.get("border_value", 0) or 0)
@@ -111,7 +111,7 @@ def run(payload: dict, context) -> dict:
             return {"ok": False, "error_code": "CANCELLED", "message": "Generation cancelled."}
 
         sample = samples[index % len(samples)]
-        source_path = Path(sample.get("sample_path") or sample.get("path") or "")
+        source_path = Path(sample.get("sample_path") or sample.get("path") or sample.get("file_path") or "")
         image = _read_image(source_path)
         if image is None:
             return {"ok": False, "error_code": "IMAGE_READ_ERROR", "message": f"Cannot read image: {source_path}"}

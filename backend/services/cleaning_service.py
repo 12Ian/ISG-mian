@@ -9,6 +9,7 @@ from ..plugins import PluginRunner
 from ..errors import NotFoundError, ValidationError
 from ..storage import FileIndexer
 from .base import ServiceBase
+from .sample_ordering import interleave_by_top_folder
 
 
 @slots_dataclass
@@ -96,6 +97,7 @@ class CleaningService(ServiceBase):
                 algorithms.append(algorithm)
 
             samples = session.query(Sample).filter(Sample.dataset_id == dataset.id).order_by(Sample.id.asc()).all()
+            samples = interleave_by_top_folder(samples)
 
         plugin_context = context or self.task_manager.build_context(task_id)
         all_suggestions: list[dict] = []
@@ -207,6 +209,59 @@ class CleaningService(ServiceBase):
             updated.append(self.handle_suggestion(suggestion_id, action)["data"])
         return {"ok": True, "data": {"updated_count": len(updated), "items": updated}}
 
+    def manual_exclude_sample(self, task_id: int, sample_id: int) -> dict:
+        with self.session_factory() as session:
+            task = self.task_repository.get_task_model(session, task_id)
+            if task is None:
+                raise NotFoundError(f"Task {task_id} not found.")
+            if task.task_type != "cleaning":
+                raise ValidationError("Only cleaning tasks support manual sample filtering.")
+
+            sample = session.query(Sample).filter(Sample.id == sample_id).first()
+            if sample is None:
+                raise NotFoundError(f"Sample {sample_id} not found.")
+            if sample.dataset_id != task.source_dataset_id:
+                raise ValidationError("Sample does not belong to the cleaning source dataset.")
+
+            suggestion = (
+                session.query(CleaningSuggestion)
+                .filter(CleaningSuggestion.task_id == task_id, CleaningSuggestion.sample_id == sample_id)
+                .order_by(CleaningSuggestion.confidence.desc(), CleaningSuggestion.id.asc())
+                .first()
+            )
+            if suggestion is None:
+                suggestion = CleaningSuggestion(
+                    task_id=task_id,
+                    sample_id=sample_id,
+                    algorithm_id=task.algorithm_id,
+                    issue_type="manual_filter",
+                    suggested_action="exclude",
+                    status="approved",
+                    confidence=1.0,
+                    message="Manual sample exclusion",
+                    details_json={"source": "manual"},
+                )
+                session.add(suggestion)
+            else:
+                suggestion.issue_type = "manual_filter"
+                suggestion.suggested_action = "exclude"
+                suggestion.status = "approved"
+                suggestion.confidence = 1.0
+                suggestion.message = "Manual sample exclusion"
+                details = dict(suggestion.details_json or {})
+                details["source"] = "manual"
+                suggestion.details_json = details
+
+            self.task_repository.add_task_log(
+                session,
+                task_id=task_id,
+                level="info",
+                message="Cleaning sample manually excluded",
+                payload_json={"sample_id": sample_id},
+            )
+            session.commit()
+            return {"ok": True, "data": self._serialize_suggestion(suggestion)}
+
     def store_cleaned_dataset(self, task_id: int, dataset_name: str | None = None) -> dict:
         with self.session_factory() as session:
             task = self.task_repository.get_task_model(session, task_id)
@@ -250,8 +305,11 @@ class CleaningService(ServiceBase):
                 .all()
             )
             suggestions_by_sample: dict[int, list[CleaningSuggestion]] = {}
+            output_sample_ids: set[int] = set()
             for suggestion in suggestions:
                 suggestions_by_sample.setdefault(suggestion.sample_id, []).append(suggestion)
+                if suggestion.output_sample_id:
+                    output_sample_ids.add(suggestion.output_sample_id)
 
             source_samples = (
                 session.query(Sample)
@@ -263,6 +321,8 @@ class CleaningService(ServiceBase):
             stored_count = 0
             skipped_count = 0
             for sample in source_samples:
+                if sample.id in output_sample_ids:
+                    continue
                 sample_suggestions = suggestions_by_sample.get(sample.id, [])
                 if self._should_skip_sample(sample_suggestions):
                     skipped_count += 1
@@ -348,6 +408,7 @@ class CleaningService(ServiceBase):
             "path": sample.file_path,
             "sample_path": sample.file_path,
             "sample_type": sample.modality,
+            "relative_path": sample.relative_path,
             "sha256": sample.sha256,
             "metadata": sample.metadata_json,
             "status": sample.status,
@@ -392,12 +453,6 @@ class CleaningService(ServiceBase):
             sample_path = Path(sample.file_path)
             if sample_path.is_file():
                 sample_path.unlink(missing_ok=True)
-            session.query(CleaningSuggestion).filter(
-                CleaningSuggestion.sample_id == sample.id
-            ).delete(synchronize_session="fetch")
-            session.query(CleaningSuggestion).filter(
-                CleaningSuggestion.output_sample_id == sample.id
-            ).delete(synchronize_session="fetch")
             self.dataset_repository.delete_sample(session, sample)
             self._refresh_dataset_stats(session, dataset)
             return

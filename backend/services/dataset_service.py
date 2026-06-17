@@ -3,13 +3,38 @@ from __future__ import annotations
 import json
 import shutil
 from dataclasses import field
+from math import gcd
+from .._compat import to_local_isoformat
 from .._compat import slots_dataclass
 from pathlib import Path
 
 from ..errors import NotFoundError, ValidationError
-from ..models import Sample
+from ..models import Dataset, Sample
 from ..storage import FileIndexer
 from .base import ServiceBase
+
+
+def _normalize_manifest_label(label) -> dict:
+    """将 manifest 中的 label 规范化为统一的 dict 格式，保留 bbox 等字段。"""
+    if isinstance(label, dict):
+        result = {
+            "type": label.get("type", "classification"),
+            "class_name": str(label.get("class_name", label.get("name", ""))),
+            "source": "manifest",
+        }
+        bbox = label.get("bbox")
+        if bbox and len(bbox) >= 4:
+            result["bbox"] = [float(v) for v in bbox[:4]]
+        class_id = label.get("class_id")
+        if class_id is not None:
+            result["class_id"] = int(class_id)
+        # 保留其他字段
+        for key in ("split", "confidence", "area"):
+            val = label.get(key)
+            if val is not None:
+                result[key] = val
+        return result
+    return {"type": "classification", "class_name": str(label), "source": "manifest"}
 
 
 @slots_dataclass
@@ -61,12 +86,23 @@ class DatasetService(ServiceBase):
                 message=f"Created dataset {clean_name}",
             )
             session.commit()
-            return {"ok": True, "data": self._serialize_dataset(dataset)}
+            return {"ok": True, "data": self._serialize_dataset(session, dataset)}
 
     def update_dataset(self, dataset_id: int, name: str, type_name: str) -> dict:
         with self.session_factory() as session:
             dataset = self._require_dataset(session, dataset_id, include_deleted=True)
-            dataset.name = (name or dataset.name).strip() or dataset.name
+            clean_name = (name or dataset.name).strip()
+            if not clean_name:
+                raise ValidationError("Dataset name is required.")
+            duplicate = (
+                session.query(Dataset)
+                .filter(Dataset.id != dataset.id, Dataset.name == clean_name, Dataset.is_deleted.is_(False))
+                .first()
+            )
+            if duplicate:
+                raise ValidationError(f"Dataset name '{clean_name}' already exists.")
+            self._rename_dataset_storage(session, dataset, clean_name)
+            dataset.name = clean_name
             if type_name:
                 dataset.modality = type_name
             self.log_repository.add(
@@ -78,7 +114,7 @@ class DatasetService(ServiceBase):
                 message=f"Updated dataset {dataset.name}",
             )
             session.commit()
-            return {"ok": True, "data": self._serialize_dataset(dataset)}
+            return {"ok": True, "data": self._serialize_dataset(session, dataset)}
 
     def delete_dataset(self, dataset_id: int) -> dict:
         with self.session_factory() as session:
@@ -97,7 +133,53 @@ class DatasetService(ServiceBase):
                 message=f"Deleted dataset {dataset.name} (files purged)",
             )
             session.commit()
-            return {"ok": True, "data": self._serialize_dataset(dataset)}
+            return {"ok": True, "data": self._serialize_dataset(session, dataset)}
+
+    def export_dataset(self, dataset_id: int, target_dir: str) -> dict:
+        target_root = Path(str(target_dir or "").strip()).expanduser()
+        if not str(target_root):
+            raise ValidationError("Export target directory is required.")
+        if target_root.exists() and not target_root.is_dir():
+            raise ValidationError("Export target path must be a directory.")
+        target_root.mkdir(parents=True, exist_ok=True)
+
+        with self.session_factory() as session:
+            dataset = self._require_dataset(session, dataset_id, include_deleted=False)
+            dataset_status = str(dataset.status or "").lower()
+            dataset_tags = {str(tag).lower() for tag in (dataset.tags_json or [])}
+            if dataset_status not in {"cleaned", "generated"} and not ({"cleaned", "generated"} & dataset_tags):
+                raise ValidationError("Only cleaned or generated datasets can be exported from this page.")
+            source_dir = Path(str(dataset.storage_path or "").strip())
+            if not str(source_dir):
+                raise ValidationError("Dataset storage path is empty.")
+            if not source_dir.exists() or not source_dir.is_dir():
+                raise ValidationError("Dataset storage directory does not exist.")
+
+            export_dir = target_root / source_dir.name
+            suffix = 1
+            while export_dir.exists():
+                export_dir = target_root / f"{source_dir.name}_{suffix}"
+                suffix += 1
+
+            shutil.copytree(source_dir, export_dir)
+            self.log_repository.add(
+                session,
+                level="info",
+                action="export_dataset",
+                resource_type="dataset",
+                resource_id=str(dataset.id),
+                message=f"Exported dataset {dataset.name} to {export_dir}",
+            )
+            session.commit()
+            return {
+                "ok": True,
+                "data": {
+                    "dataset_id": dataset.id,
+                    "dataset_name": dataset.name,
+                    "source_path": str(source_dir),
+                    "export_path": str(export_dir),
+                },
+            }
 
     def purge_dataset_files(self, dataset_id: int) -> dict:
         with self.session_factory() as session:
@@ -117,12 +199,12 @@ class DatasetService(ServiceBase):
                 message=f"Purged dataset files for {dataset.name}",
             )
             session.commit()
-            return {"ok": True, "data": self._serialize_dataset(dataset)}
+            return {"ok": True, "data": self._serialize_dataset(session, dataset)}
 
     def get_dataset(self, dataset_id: int, include_deleted: bool = False) -> dict:
         with self.session_factory() as session:
             dataset = self._require_dataset(session, dataset_id, include_deleted=include_deleted)
-            return {"ok": True, "data": self._serialize_dataset(dataset)}
+            return {"ok": True, "data": self._serialize_dataset(session, dataset)}
 
     def get_datasets(self, page: int, page_size: int, status: str) -> dict:
         with self.session_factory() as session:
@@ -135,7 +217,7 @@ class DatasetService(ServiceBase):
             )
             return {
                 "total": total,
-                "items": [self._serialize_dataset(item) for item in items],
+                "items": [self._serialize_dataset(session, item) for item in items],
                 "page": max(page, 1),
                 "page_size": max(page_size, 1),
             }
@@ -165,7 +247,7 @@ class DatasetService(ServiceBase):
                     modality=dataset.modality,
                     file_path=str(copied),
                     relative_path=Path(record["relative_path"]).as_posix(),
-                    sha256=self.file_indexer.compute_sha256(copied),
+                    sha256=None,  # 导入时跳过 SHA256，后续可后台批量计算
                     mime_type=self.file_indexer.detect_mime_type(copied),
                     extension=copied.suffix.lower(),
                     size_bytes=copied.stat().st_size,
@@ -183,6 +265,7 @@ class DatasetService(ServiceBase):
                     message=f"Imported file {copied.name} into dataset {dataset.name}",
                 )
             self._refresh_dataset_stats(session, dataset)
+            self._write_dataset_manifest(session, dataset)
             session.commit()
             return {"ok": True, "data": {"imported_count": imported_count, "failed_count": failed_count, "errors": errors}}
 
@@ -247,13 +330,16 @@ class DatasetService(ServiceBase):
                     if isinstance(raw_labels, str):
                         raw_labels = [raw_labels]
                     if raw_labels:
-                        label_map[rel] = [{"type": "classification", "class_name": str(l), "source": "manifest"} for l in raw_labels]
+                        label_map[rel] = [_normalize_manifest_label(l) for l in raw_labels]
             except Exception:
                 import logging
                 logging.getLogger("isg").warning(f"Failed to parse manifest: {traceback.format_exc()}")
 
         records = []
-        if include_subfolders:
+        yolo_records = [] if label_map else self._collect_yolo_detection_records(folder)
+        if yolo_records:
+            records = yolo_records
+        elif include_subfolders:
             for path in folder.rglob("*"):
                 if path.is_file() and path.name != "dataset_manifest.json":
                     rel = path.relative_to(folder).as_posix()
@@ -277,9 +363,9 @@ class DatasetService(ServiceBase):
                     continue
                 copied = self.file_indexer.copy_into_dataset(source, Path(dataset.storage_path) / "raw", record["relative_path"])
                 rel_path = Path(record["relative_path"]).as_posix()
-                labels = label_map.get(rel_path, [])
+                labels = list(record.get("labels", [])) or label_map.get(rel_path, [])
                 # 无manifest标签时，从子文件夹名推断标签
-                if not labels and "/" in rel_path:
+                if not labels and not yolo_records and "/" in rel_path:
                     inferred = rel_path.split("/")[0]
                     labels = [{"type": "classification", "class_name": inferred, "source": "folder_name"}]
                 sample = self.dataset_repository.create_sample(
@@ -290,7 +376,7 @@ class DatasetService(ServiceBase):
                     modality=dataset.modality,
                     file_path=str(copied),
                     relative_path=rel_path,
-                    sha256=self.file_indexer.compute_sha256(copied),
+                    sha256=None,  # 导入时跳过 SHA256，后续可后台批量计算
                     mime_type=self.file_indexer.detect_mime_type(copied),
                     extension=copied.suffix.lower(),
                     size_bytes=copied.stat().st_size,
@@ -326,6 +412,7 @@ class DatasetService(ServiceBase):
                 extra["label_mode"] = "manifest"
                 dataset.extra_json = extra
             self._refresh_dataset_stats(session, dataset)
+            self._write_dataset_manifest(session, dataset)
             session.commit()
             return {"ok": True, "data": {"imported_count": imported_count, "failed_count": failed_count, "errors": errors}}
 
@@ -489,14 +576,14 @@ class DatasetService(ServiceBase):
             full_path = source_path / rel_path
             if not full_path.is_file():
                 continue
-            labels_json = [{"type": "classification", "class_name": str(l), "source": "manifest"} for l in labels]
+            labels_json = [_normalize_manifest_label(l) for l in labels]
             class_name = str(labels[0]) if labels else ""
             record = {
                 "source_path": full_path,
                 "relative_path": rel_path,
                 "class_name": class_name,
                 "labels": labels_json,
-                "metadata": {"source_path": str(full_path), "label_source": "manifest"},
+                "metadata": {"source_path": str(full_path), "label_source": "manifest", "split": split},
                 "split": split,
                 "sample_modality": self._guess_modality(full_path),
                 "import_format": "manifest",
@@ -594,7 +681,7 @@ class DatasetService(ServiceBase):
         dataset.storage_path = str(self._allocate_dataset_dir(dataset.id, dataset.name))
         class_distribution: dict[str, int] = {}
 
-        for record in records:
+        for idx, record in enumerate(records):
             source = record["source_path"]
             copied = self.file_indexer.copy_into_dataset(source, Path(dataset.storage_path) / "raw", record["relative_path"])
             labels = list(record.get("labels", []))
@@ -610,7 +697,7 @@ class DatasetService(ServiceBase):
                 modality=record.get("sample_modality") or modality,
                 file_path=str(copied),
                 relative_path=record["relative_path"],
-                sha256=self.file_indexer.compute_sha256(copied),
+                sha256=None,  # 导入时跳过 SHA256，后续可后台批量计算
                 mime_type=self.file_indexer.detect_mime_type(copied),
                 extension=copied.suffix.lower(),
                 size_bytes=copied.stat().st_size,
@@ -636,12 +723,18 @@ class DatasetService(ServiceBase):
                 },
             )
 
+            # 每 500 条 flush 一次，避免 session 内存膨胀
+            if (idx + 1) % 500 == 0:
+                session.flush()
+                session.expire_all()
+
         extra_json = dict(extra_json or {})
         extra_json["class_distribution"] = class_distribution
         extra_json["sample_count"] = len(records)
         extra_json["dataset_stage"] = status
         dataset.extra_json = extra_json
         self._refresh_dataset_stats(session, dataset)
+        self._write_dataset_manifest(session, dataset)
         self.log_repository.add(
             session,
             level="info",
@@ -651,7 +744,9 @@ class DatasetService(ServiceBase):
             message=f"Imported dataset bundle {dataset.name}",
             payload_json={"sample_count": len(records), "status": status},
         )
-        return self._serialize_dataset(dataset)
+        with self.session_factory() as session:
+            current = self.dataset_repository.get_dataset(session, dataset.id, include_deleted=True)
+            return self._serialize_dataset(session, current or dataset)
 
     def _collect_import_records(self, data_path: Path, label_path: Path | None, split: str) -> tuple[list[dict], str]:
         if data_path.is_file():
@@ -667,10 +762,116 @@ class DatasetService(ServiceBase):
             if list_file:
                 records = self._parse_path_label_file(list_file, data_path, split)
                 return records, "path_label_file"
+            yolo_records = self._collect_yolo_detection_records(data_path, default_split=split)
+            if yolo_records:
+                return yolo_records, "yolo_detection"
             records = self._infer_folder_tree_records(data_path, split=split)
             return records, "folder_tree"
 
         raise ValidationError("Import path does not exist.")
+
+    def _collect_yolo_detection_records(self, folder: Path, default_split: str = "train") -> list[dict]:
+        name_map = self._load_yolo_class_names(folder)
+        pairs: list[tuple[Path, Path, str]] = []
+
+        direct_images = folder / "images"
+        direct_labels = folder / "labels"
+        if direct_images.is_dir() and direct_labels.is_dir():
+            pairs.append((direct_images, direct_labels, default_split))
+
+        split_aliases = {
+            "train": "train",
+            "valid": "test",
+            "val": "test",
+            "test": "test",
+        }
+        for dirname, split in split_aliases.items():
+            images_dir = folder / dirname / "images"
+            labels_dir = folder / dirname / "labels"
+            if images_dir.is_dir() and labels_dir.is_dir():
+                pairs.append((images_dir, labels_dir, split))
+
+        records: list[dict] = []
+        seen_relative_paths: set[str] = set()
+        found_label_file = False
+        for images_dir, labels_dir, split in pairs:
+            for source in sorted(path for path in images_dir.rglob("*") if path.is_file() and path.suffix.lower() in self._IMAGE_EXTENSIONS):
+                rel_to_images = source.relative_to(images_dir)
+                label_file = labels_dir / rel_to_images.with_suffix(".txt")
+                labels = self._parse_yolo_label_file(label_file, split=split, name_map=name_map)
+                if label_file.is_file():
+                    found_label_file = True
+                relative_path = source.relative_to(folder).as_posix()
+                if relative_path in seen_relative_paths:
+                    continue
+                seen_relative_paths.add(relative_path)
+                records.append(
+                    {
+                        "source_path": source,
+                        "relative_path": relative_path,
+                        "labels": labels,
+                        "metadata": {
+                            "source_path": str(source),
+                            "label_source": str(label_file) if label_file.is_file() else "",
+                        },
+                        "split": split,
+                        "sample_modality": "image",
+                        "import_format": "yolo_detection",
+                    }
+                )
+        return records if found_label_file else []
+
+    def _parse_yolo_label_file(self, label_file: Path, *, split: str, name_map: dict[int, str]) -> list[dict]:
+        if not label_file.is_file():
+            return []
+        labels: list[dict] = []
+        for line_number, line in enumerate(label_file.read_text(encoding="utf-8").splitlines(), start=1):
+            parts = line.strip().split()
+            if len(parts) < 5:
+                continue
+            try:
+                class_id = int(parts[0])
+                bbox = [float(parts[1]), float(parts[2]), float(parts[3]), float(parts[4])]
+            except (TypeError, ValueError):
+                continue
+            class_name = name_map.get(class_id, f"class_{class_id}")
+            labels.append(
+                {
+                    "type": "detection",
+                    "class_id": class_id,
+                    "class_name": class_name,
+                    "bbox": bbox,
+                    "source": str(label_file),
+                    "split": split,
+                    "line_number": line_number,
+                }
+            )
+        return labels
+
+    def _load_yolo_class_names(self, folder: Path) -> dict[int, str]:
+        data_yaml = self._find_first_existing(folder, ["data.yaml", "data.yml"])
+        if not data_yaml:
+            return {}
+        try:
+            import yaml
+        except Exception:
+            return {}
+        try:
+            payload = yaml.safe_load(data_yaml.read_text(encoding="utf-8")) or {}
+        except Exception:
+            return {}
+        names = payload.get("names")
+        if isinstance(names, dict):
+            result = {}
+            for key, value in names.items():
+                try:
+                    result[int(key)] = str(value)
+                except (TypeError, ValueError):
+                    continue
+            return result
+        if isinstance(names, list):
+            return {idx: str(value) for idx, value in enumerate(names)}
+        return {}
 
     def _build_file_record(self, path: Path, *, split: str, label_path: Path | None) -> dict:
         labels: list[dict] = []
@@ -827,6 +1028,41 @@ class DatasetService(ServiceBase):
     def preview_samples(self, dataset_id: int, limit: int, status: str) -> dict:
         return self.get_dataset_preview_samples(dataset_id=dataset_id, limit=limit, status=status)
 
+    def preview_file_by_path(self, file_path: str) -> dict:
+        """直接按文件路径预览文件内容，不依赖数据库样本记录。"""
+        path = Path(file_path)
+        if not path.is_file():
+            return {"ok": True, "data": {
+                "name": path.name,
+                "file_path": str(path),
+                "preview_kind": "text",
+                "text_content": "",
+                "error": f"文件不存在: {path}",
+            }}
+        ext = path.suffix.lower()
+        if ext in {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tif", ".tiff"}:
+            preview_kind = "image"
+        elif ext in {".wav", ".mp3", ".aac", ".flac", ".ogg", ".m4a"}:
+            preview_kind = "audio"
+        else:
+            preview_kind = "text"
+
+        payload = {
+            "name": path.name,
+            "file_path": str(path),
+            "preview_kind": preview_kind,
+            "text_content": "",
+            "error": "",
+        }
+        if preview_kind in ("text",):
+            try:
+                payload["text_content"] = path.read_bytes()[:200 * 1024].decode("utf-8")
+            except UnicodeDecodeError:
+                payload["error"] = "无法以文本方式预览此文件（非 UTF-8 编码或二进制文件）。"
+            except OSError as exc:
+                payload["error"] = str(exc)
+        return {"ok": True, "data": payload}
+
     def get_sample_preview(self, sample_id: int) -> dict:
         with self.session_factory() as session:
             sample = session.query(Sample).filter(Sample.id == sample_id).first()
@@ -906,6 +1142,35 @@ class DatasetService(ServiceBase):
         if not dataset:
             raise NotFoundError(f"Dataset {dataset_id} not found.")
         return dataset
+
+    def _rename_dataset_storage(self, session, dataset, new_name: str) -> None:
+        current_path = Path(dataset.storage_path) if dataset.storage_path else None
+        if current_path is None:
+            return
+
+        target_path = self.paths.datasets_dir / f"{dataset.id}_{self._sanitize_name(new_name)}"
+        if current_path == target_path:
+            return
+
+        if current_path.exists():
+            if target_path.exists():
+                raise ValidationError(f"Dataset directory already exists: {target_path}")
+            current_path.rename(target_path)
+        else:
+            for subdir in [target_path, target_path / "raw", target_path / "cleaned", target_path / "generated", target_path / "preview"]:
+                subdir.mkdir(parents=True, exist_ok=True)
+
+        old_prefix = str(current_path).replace("\\", "/").rstrip("/")
+        new_prefix = str(target_path).replace("\\", "/").rstrip("/")
+        samples = self.dataset_repository.get_all_samples(session, dataset.id)
+        for sample in samples:
+            file_path = str(sample.file_path or "")
+            normalized = file_path.replace("\\", "/")
+            if not normalized.startswith(old_prefix):
+                continue
+            sample.file_path = new_prefix + normalized[len(old_prefix):]
+
+        dataset.storage_path = str(target_path)
 
     def _allocate_dataset_dir(self, dataset_id: int, name: str) -> Path:
         root = self.paths.datasets_dir / f"{dataset_id}_{self._sanitize_name(name)}"
@@ -1178,7 +1443,7 @@ class DatasetService(ServiceBase):
                     modality="image",
                     file_path=str(copied),
                     relative_path=copied.relative_to(Path(dataset.storage_path) / "raw").as_posix(),
-                    sha256=self.file_indexer.compute_sha256(copied),
+                    sha256=None,  # 导入时跳过 SHA256，后续可后台批量计算
                     mime_type=self.file_indexer.detect_mime_type(copied),
                     extension=copied.suffix.lower(),
                     size_bytes=copied.stat().st_size,
@@ -1199,8 +1464,9 @@ class DatasetService(ServiceBase):
                     resource_id=str(sample.id),
                     message=f"Imported labeled sample {copied.name} into dataset {dataset.name}",
                     payload_json={"class_name": record["class_name"], "split": record["split"]},
-                )
+            )
             self._refresh_dataset_stats(session, dataset)
+            self._write_dataset_manifest(session, dataset)
             self.log_repository.add(
                 session,
                 level="info",
@@ -1211,7 +1477,7 @@ class DatasetService(ServiceBase):
                 payload_json={"sample_count": len(records), "dataset_format": spec["dataset_format"]},
             )
             session.commit()
-            return self._serialize_dataset(dataset)
+            return self._serialize_dataset(session, dataset)
 
     def _deduplicate_records(self, records: list[dict]) -> list[dict]:
         deduped: dict[Path, dict] = {}
@@ -1220,6 +1486,113 @@ class DatasetService(ServiceBase):
             if key not in deduped or record.get("split") == "test":
                 deduped[key] = record
         return list(deduped.values())
+
+    def _write_dataset_manifest(self, session, dataset) -> None:
+        dataset_root_value = str(dataset.storage_path or "").strip()
+        if not dataset_root_value:
+            return
+        raw_dir = Path(dataset_root_value) / "raw"
+        raw_dir.mkdir(parents=True, exist_ok=True)
+        samples = sorted(
+            self.dataset_repository.get_all_samples(session, dataset.id),
+            key=lambda item: ((item.relative_path or ""), item.id),
+        )
+        split_counts: dict[str, int] = {}
+        class_distribution: dict[str, dict[str, int]] = {}
+        label_to_id: dict[str, int] = {}
+        manifest_samples: dict[str, dict] = {}
+
+        for index, sample in enumerate(samples, start=1):
+            split = self._manifest_split(sample, dataset.status)
+            split_counts[split] = split_counts.get(split, 0) + 1
+            labels: list[dict] = []
+            for label in sample.labels_json or []:
+                normalized = self._manifest_label_payload(label)
+                if not normalized:
+                    continue
+                labels.append(normalized)
+                class_name = str(normalized.get("class_name") or "").strip()
+                if class_name:
+                    dist = class_distribution.setdefault(class_name, {"train": 0, "val": 0, "test": 0, "total": 0})
+                    if split not in dist:
+                        dist[split] = 0
+                    dist[split] += 1
+                    dist["total"] += 1
+                class_id = normalized.get("class_id")
+                if class_name and class_id is not None and class_name not in label_to_id:
+                    try:
+                        label_to_id[class_name] = int(class_id)
+                    except (TypeError, ValueError):
+                        pass
+
+            manifest_samples[f"sample_{index:06d}"] = {
+                "path": (sample.relative_path or sample.name or "").replace("\\", "/"),
+                "labels": labels,
+                "split": split,
+            }
+
+        extra = dataset.extra_json or {}
+        source_path = str(extra.get("source_path") or extra.get("source_root") or dataset_root_value)
+        manifest = {
+            "dataset_name": dataset.name,
+            "modality": dataset.modality,
+            "source": source_path,
+            "split_ratio": self._format_split_ratio(split_counts),
+            "class_distribution": class_distribution,
+            "total_samples": len(samples),
+            "label_to_id": label_to_id,
+            "samples": manifest_samples,
+        }
+        (raw_dir / "dataset_manifest.json").write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+    def _manifest_split(self, sample, dataset_status: str) -> str:
+        metadata = sample.metadata_json or {}
+        split = str(metadata.get("split") or "").strip().lower()
+        if not split:
+            labels = sample.labels_json or []
+            if labels:
+                split = str(labels[0].get("split") or "").strip().lower()
+        if split == "valid":
+            return "val"
+        if split:
+            return split
+        return "test" if str(dataset_status or "").lower() == "test" else "train"
+
+    def _manifest_label_payload(self, label: dict) -> dict:
+        if not isinstance(label, dict):
+            return {}
+        payload: dict[str, object] = {}
+        class_name = label.get("class_name", label.get("name", ""))
+        if class_name not in (None, ""):
+            payload["class_name"] = str(class_name)
+        class_id = label.get("class_id")
+        if class_id is not None:
+            try:
+                payload["class_id"] = int(class_id)
+            except (TypeError, ValueError):
+                pass
+        bbox = label.get("bbox")
+        if isinstance(bbox, (list, tuple)) and len(bbox) >= 4:
+            try:
+                payload["bbox"] = [float(value) for value in bbox[:4]]
+            except (TypeError, ValueError):
+                pass
+        return payload
+
+    def _format_split_ratio(self, split_counts: dict[str, int]) -> str:
+        ordered_keys = [key for key in ("train", "val", "test") if split_counts.get(key)]
+        ordered_keys.extend(key for key in split_counts.keys() if key not in {"train", "val", "test"} and split_counts.get(key))
+        values = [int(split_counts[key]) for key in ordered_keys if int(split_counts.get(key, 0)) > 0]
+        if not values:
+            return ""
+        divisor = values[0]
+        for value in values[1:]:
+            divisor = gcd(divisor, value)
+        divisor = max(divisor, 1)
+        return ":".join(str(value // divisor) for value in values)
 
     def _load_training_parameters(self, parameter_path: str) -> dict:
         if not (parameter_path or "").strip():
@@ -1237,9 +1610,18 @@ class DatasetService(ServiceBase):
             raise ValidationError("Training parameter file must contain a JSON object.")
         return {key: data[key] for key in self._TRAINING_PARAMETER_ALLOWLIST if key in data}
 
-    def _serialize_dataset(self, dataset) -> dict:
+    def _serialize_dataset(self, session, dataset) -> dict:
         status = (dataset.status or "").lower()
         tags = list(dataset.tags_json or [])
+        parent_dataset_name = ""
+        if dataset.parent_dataset_id:
+            parent_dataset = self.dataset_repository.get_dataset(
+                session,
+                dataset.parent_dataset_id,
+                include_deleted=True,
+            )
+            if parent_dataset is not None:
+                parent_dataset_name = parent_dataset.name
         return {
             "id": dataset.id,
             "name": dataset.name,
@@ -1248,6 +1630,7 @@ class DatasetService(ServiceBase):
             "status": dataset.status,
             "stage": "generated" if status == "generated" or "generated" in {str(tag).lower() for tag in tags} else ("cleaned" if status == "cleaned" or "cleaned" in {str(tag).lower() for tag in tags} else "raw"),
             "parent_dataset_id": dataset.parent_dataset_id,
+            "parent_dataset_name": parent_dataset_name,
             "storage_path": dataset.storage_path,
             "total_samples": dataset.total_samples,
             "size_bytes": dataset.size_bytes,
@@ -1270,7 +1653,7 @@ class DatasetService(ServiceBase):
             "extension": sample.extension,
             "metadata": sample.metadata_json or {},
             "labels": sample.labels_json or [],
-            "updated_at": sample.updated_at.isoformat() if sample.updated_at else "",
+            "updated_at": to_local_isoformat(sample.updated_at),
         }
 
     def _preview_kind(self, sample) -> str:
@@ -1283,10 +1666,6 @@ class DatasetService(ServiceBase):
             return "audio"
         if extension in {".txt", ".csv", ".json", ".md", ".log", ".yaml", ".yml", ".xml", ".py", ".js", ".html", ".css", ".cfg", ".ini", ".toml"} or mime_type.startswith("text/"):
             return "text"
-        if sample.modality == "image":
-            return "image"
-        if sample.modality == "audio":
-            return "audio"
-        if sample.modality == "text":
-            return "text"
+        # 不依赖 modality 兜底：未知扩展名返回 "file"
+        # 防止 .npy/.cache 等非媒体文件被误判为图片导致 QML 解码错误
         return "file"

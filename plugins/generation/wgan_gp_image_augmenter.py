@@ -42,6 +42,17 @@ PARAMETERS = [
         "description": '优化器学习率',
         "required": False,
     },
+    {
+        "name": 'enhance_strength',
+        "type": 'float',
+        "label": '增强强度',
+        "default": 1.0,
+        "min": 0.3,
+        "max": 2.0,
+        "options": [],
+        "description": '控制GAN风格、纹理和形变叠加强度，数值越大生成痕迹越明显',
+        "required": False,
+    },
 ]
 
 
@@ -54,19 +65,21 @@ def run(payload: dict, context) -> dict:
         return {"ok": False, "error_code": "MISSING_DEPENDENCY", "message": "Missing PyTorch"}
 
     parameters = payload.get("parameters", {}) or {}
+    device = _resolve_device(torch)
     output_dir = Path(payload.get("output", {}).get("output_dir") or ".")
     output_dir.mkdir(parents=True, exist_ok=True)
 
     samples = payload.get("input", {}).get("samples", []) or []
+    samples = [sample for sample in samples if _is_image_sample(sample)]
     if not samples:
         return {"ok": False, "error_code": "NO_INPUT_SAMPLES"}
 
     target_count = max(1, int(payload.get("target_count") or len(samples)))
     gp_lambda = float(parameters.get("gp_lambda", parameters.get("gradient_penalty", 10.0)) or 10.0)
-    n_critic = int(parameters.get("n_critic", parameters.get("critic_iters", 5)) or 5)
+    n_critic = int(parameters.get("n_critic", parameters.get("critic_iters", parameters.get("discriminator_iterations", 5))) or 5)
     lr = float(parameters.get("lr", parameters.get("learning_rate", 0.0001)) or 0.0001)
-
-    device = torch.device("cpu")
+    enhance_strength = float(parameters.get("enhance_strength", 1.0) or 1.0)
+    enhance_strength = max(0.3, min(enhance_strength, 2.0))
     image_size = 32
     max_images = int(parameters.get("max_images", 32))
     max_images = max(2, min(max_images, 64))
@@ -109,6 +122,10 @@ def run(payload: dict, context) -> dict:
         context.set_progress(step * 50 / steps, f"WGAN-GP train {step + 1}/{steps}")
 
     g.eval()
+    # 过滤掉无标签的样本，只从有标签的源样本中循环选取
+    labeled_samples = [s for s in samples if (s.get("labels") or s.get("labels_json") or [])]
+    if not labeled_samples:
+        labeled_samples = samples
     outputs = []
     for index in range(target_count):
         if context.is_cancel_requested():
@@ -116,15 +133,29 @@ def run(payload: dict, context) -> dict:
         with torch.no_grad():
             z = torch.randn(1, latent_dim, device=device)
             x = g(z)[0]
-        img_bgr = _tensor_to_bgr_image(x)
+        gan_bgr = _tensor_to_bgr_image(x)
+        src = labeled_samples[index % len(labeled_samples)]
+        source_path = _sample_path(src)
+        source_img = read_image(source_path)
+        if source_img is None:
+            img_bgr = gan_bgr
+            source_conditioned = False
+        else:
+            img_bgr = _blend_gan_texture(source_img, gan_bgr, enhance_strength)
+            source_conditioned = True
         output_path = output_dir / f"wgan_gp_{index:04d}.jpg"
         if not write_image(output_path, img_bgr):
             return {"ok": False, "error_code": "IMAGE_WRITE_ERROR", "message": f"Cannot write image: {output_path}"}
         outputs.append({
-            "source_sample_id": samples[0].get("id"),
+            "source_sample_id": src.get("id"),
             "output_path": str(output_path),
             "relative_path": output_path.name,
-            "metadata": {"method": "wgan_gp", "algorithm_key": payload.get("algorithm_key", "generation.image.wgan_gp")},
+            "metadata": {
+                "method": "wgan_gp",
+                "algorithm_key": payload.get("algorithm_key", "generation.image.wgan_gp"),
+                "source_conditioned": source_conditioned,
+                "enhance_strength": enhance_strength,
+            },
             "status": "created",
         })
         context.set_progress(50 + (index + 1) * 50 / target_count, f"WGAN-GP gen {index + 1}/{target_count}")
@@ -138,7 +169,7 @@ def _fallback_run(payload, context, output_dir, samples, target_count, method):
         if context.is_cancel_requested():
             return {"ok": False, "error_code": "CANCELLED", "message": "Cancelled"}
         sample = samples[index % len(samples)]
-        source_path = Path(sample.get("sample_path") or sample.get("path") or "")
+        source_path = _sample_path(sample)
         img = read_image(source_path)
         if img is None:
             continue
@@ -163,7 +194,7 @@ def _read_images_as_tensor(samples, image_size, max_images, device):
     sampled = samples[:max_images]
     tensors = []
     for s in sampled:
-        p = str(Path(s.get("sample_path") or s.get("path") or ""))
+        p = str(_sample_path(s))
         img = read_image(p)
         if img is None:
             continue
@@ -175,6 +206,51 @@ def _read_images_as_tensor(samples, image_size, max_images, device):
     if len(tensors) < 2:
         return None
     return torch.stack(tensors, dim=0)
+
+
+def _sample_path(sample):
+    return Path(sample.get("sample_path") or sample.get("path") or sample.get("file_path") or "")
+
+
+def _is_image_sample(sample):
+    path = _sample_path(sample)
+    return path.suffix.lower() in {".bmp", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp"}
+
+
+def _blend_gan_texture(source_img, gan_img, enhance_strength):
+    strength = max(0.3, min(float(enhance_strength or 1.0), 2.0))
+    gan_resized = cv2.resize(gan_img, (source_img.shape[1], source_img.shape[0]), interpolation=cv2.INTER_CUBIC)
+    source_float = source_img.astype(np.float32)
+    gan_float = gan_resized.astype(np.float32)
+
+    gan_low = cv2.GaussianBlur(gan_float, (0, 0), 11)
+    source_low = cv2.GaussianBlur(source_float, (0, 0), 11)
+    gan_texture = gan_float - cv2.GaussianBlur(gan_float, (0, 0), 2)
+    source_detail = source_float - cv2.GaussianBlur(source_float, (0, 0), 1.2)
+
+    color_shift = (gan_low - source_low) * (0.25 * strength)
+    texture_shift = gan_texture * (0.35 * strength)
+    styled = source_float + color_shift + texture_shift + source_detail * (0.25 * strength)
+    gan_weight = min(0.45, 0.28 * strength)
+    styled = cv2.addWeighted(source_float, 1.0 - gan_weight, styled, gan_weight, 0)
+
+    gray_gan = cv2.cvtColor(np.clip(gan_resized, 0, 255).astype(np.uint8), cv2.COLOR_BGR2GRAY).astype(np.float32)
+    flow_x = cv2.GaussianBlur(gray_gan - 127.5, (0, 0), 9) / 127.5 * (2.5 * strength)
+    flow_y = cv2.GaussianBlur(np.roll(gray_gan, gray_gan.shape[1] // 5, axis=1) - 127.5, (0, 0), 9) / 127.5 * (2.5 * strength)
+    h, w = gray_gan.shape
+    grid_x, grid_y = np.meshgrid(np.arange(w, dtype=np.float32), np.arange(h, dtype=np.float32))
+    warped = cv2.remap(
+        np.clip(styled, 0, 255).astype(np.uint8),
+        grid_x + flow_x.astype(np.float32),
+        grid_y + flow_y.astype(np.float32),
+        cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_REFLECT_101,
+    ).astype(np.float32)
+
+    source_edges = cv2.Canny(source_img, 80, 160).astype(np.float32) / 255.0
+    edge_mask = cv2.GaussianBlur(source_edges, (0, 0), 1.2)[:, :, None]
+    mixed = warped * (1.0 - edge_mask * 0.45) + source_float * (edge_mask * 0.45)
+    return np.clip(mixed, 0, 255).astype(np.uint8)
 
 
 def _tensor_to_bgr_image(x):
@@ -247,3 +323,18 @@ def _gradient_penalty(d_model, x_real, x_fake, device):
     grad = grad.view(b, -1)
     norm = grad.norm(2, dim=1)
     return ((norm - 1.0) ** 2).mean()
+
+
+def _resolve_device(torch):
+    if getattr(torch, "cuda", None) and torch.cuda.is_available():
+        torch.cuda.set_device(0)
+        return torch.device("cuda:0")
+    try:
+        import torch_npu  # noqa: F401
+
+        if torch.npu.is_available():
+            torch_npu.npu.set_device(0)
+            return torch.device("npu:0")
+    except ImportError:
+        pass
+    return torch.device("cpu")

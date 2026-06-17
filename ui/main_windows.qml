@@ -3,6 +3,7 @@ import QtQuick.Window 2.15
 import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
 import "."
+import "views"
 
 ApplicationWindow {
     id: root
@@ -10,6 +11,15 @@ ApplicationWindow {
     width: 1400
     height: 800
     title: qsTr("智能应用增量样本生成软件")
+
+    Component.onCompleted: backendService.getSetting("ui.theme")
+
+    Connections {
+        target: backendService
+        function onSettingValueLoaded(key, value) {
+            if (key === "ui.theme" && value) Theme.setMode(String(value))
+        }
+    }
 
     // 全局主题配色属性
     property color bgDark: Theme.bg
@@ -19,6 +29,25 @@ ApplicationWindow {
     property color textColor: Theme.text
     property color textMuted: Theme.muted
     property color borderColor: Theme.border
+
+    // ================= 全局跨页面状态管理器 =================
+    // 导航切换会销毁重建 Loader，通过这些属性保持评估/训练状态不丢失
+    QtObject {
+        id: appState
+
+        // 评估历史 (序列化为 JSON 数组)
+        property string evalHistoryJson: "[]"
+        // 训练任务队列 (序列化为 JSON 数组)
+        property string evalTaskQueueJson: "[]"
+        // 评估结果 (序列化为 JSON 数组)
+        property string evalResultJson: "[]"
+        // 评估指标表头
+        property string evalMetricHeadersJson: "[]"
+        // 训练中标记
+        property bool evalIsTraining: false
+        // 任务计数器
+        property int evalTaskCounter: 1
+    }
 
     color: bgDark
 
@@ -75,9 +104,9 @@ ApplicationWindow {
         ListModel {
                 id: navModel
                 // 核心功能
-                ListElement { isHeader: false; name: "数据管理"; source: "views/DataManageView.qml"; icon: "📁" }
-                ListElement { isHeader: false; name: "数据清洗"; source: "views/DataCleanView.qml"; icon: "🧹" }
+                ListElement { isHeader: false; name: "数据管理"; source: "views/DataManageView.qml"; icon: "🗄️" }
                 ListElement { isHeader: false; name: "数据生成"; source: "views/SampleGenView.qml"; icon: "⚡" }
+                ListElement { isHeader: false; name: "数据清洗"; source: "views/DataCleanView.qml"; icon: "🧹" }
                 ListElement { isHeader: false; name: "多专业智能应用仿真模型"; source: "views/EvaluateView.qml"; icon: "📈" }
 
 
@@ -179,7 +208,7 @@ Component {
             hoverEnabled: true
             onClicked: {
                 navList.currentIndex = index
-                mainLoader.source = model.source
+                viewStack.currentIndex = index
             }
             onEntered: if(navList.currentIndex !== index) itemBg.color = Qt.rgba(255/255, 255/255, 255/255, 0.05)
             onExited: if(navList.currentIndex !== index) itemBg.color = "transparent"
@@ -190,7 +219,7 @@ Component {
         }
     }
 
-    // ================= 右侧主工作区 (动态加载器) =================
+    // ================= 右侧主工作区 (StackLayout: 所有页面常驻不销毁) =================
     Item {
         id: mainContentArea
         anchors.top: header.bottom
@@ -198,14 +227,29 @@ Component {
         anchors.left: sidebar.right
         anchors.right: parent.right
 
-        Loader {
-            id: mainLoader
+        property bool page0Loaded: true
+        property bool page1Loaded: false; property bool page2Loaded: false
+        property bool page3Loaded: false; property bool page4Loaded: false
+        property bool page5Loaded: false
+        function markLoaded(idx) {
+            if (idx===1) page1Loaded=true; else if (idx===2) page2Loaded=true
+            else if (idx===3) page3Loaded=true; else if (idx===4) page4Loaded=true
+            else if (idx===5) page5Loaded=true
+        }
+
+        StackLayout {
+            id: viewStack
             anchors.fill: parent
             anchors.margins: 20
-            source: "views/DataManageView.qml"
+            currentIndex: 0
+            onCurrentIndexChanged: mainContentArea.markLoaded(currentIndex)
 
-            Behavior on opacity { NumberAnimation { duration: 300 } }
-            onSourceChanged: { opacity = 0; opacity = 1 }
+            Loader { source: "views/DataManageView.qml";  active: true;                 asynchronous: true }
+            Loader { source: "views/SampleGenView.qml";    active: mainContentArea.page1Loaded;          asynchronous: true }
+            Loader { source: "views/DataCleanView.qml";    active: mainContentArea.page2Loaded;          asynchronous: true }
+            Loader { source: "views/EvaluateView.qml";     active: true;          asynchronous: true }
+            Loader { source: "views/AlgoConfigView.qml";   active: mainContentArea.page4Loaded;          asynchronous: true }
+            Loader { source: "views/SystemSettingsView.qml"; active: mainContentArea.page5Loaded;        asynchronous: true }
         }
     }
 }

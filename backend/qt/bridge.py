@@ -1,9 +1,10 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import shutil
+from datetime import datetime
 from pathlib import Path
 
-from .._compat import slots_dataclass
+from .._compat import slots_dataclass, to_local_isoformat
 
 from ..service_facade import BackendServiceFacade
 from ..errors import NotFoundError, ValidationError
@@ -43,6 +44,12 @@ class BackendBridge:
         except Exception as exc:
             return _normalize_error(exc)
 
+    def export_dataset(self, dataset_id: int, target_dir: str) -> dict:
+        try:
+            return self.facade.dataset_service.export_dataset(dataset_id, target_dir)
+        except Exception as exc:
+            return _normalize_error(exc)
+
     def get_datasets(self, page: int, page_size: int, status: str) -> dict:
         try:
             result = self.facade.dataset_service.get_datasets(page, page_size, status)
@@ -79,6 +86,12 @@ class BackendBridge:
             if result.get("ok") and "data" in result:
                 result["data"] = self.to_qml_sample(result["data"])
             return result
+        except Exception as exc:
+            return _normalize_error(exc)
+
+    def preview_file_by_path(self, file_path: str) -> dict:
+        try:
+            return self.facade.dataset_service.preview_file_by_path(file_path)
         except Exception as exc:
             return _normalize_error(exc)
 
@@ -170,6 +183,24 @@ class BackendBridge:
         except Exception as exc:
             return _normalize_error(exc)
 
+    def get_algorithm_bindings(self) -> dict:
+        try:
+            return self.facade.algorithm_service.get_bindings()
+        except Exception as exc:
+            return _normalize_error(exc)
+
+    def save_algorithm_binding(self, training_key: str, evaluation_key: str) -> dict:
+        try:
+            return self.facade.algorithm_service.set_binding(training_key, evaluation_key)
+        except Exception as exc:
+            return _normalize_error(exc)
+
+    def delete_algorithm_binding(self, training_key: str) -> dict:
+        try:
+            return self.facade.algorithm_service.delete_binding(training_key)
+        except Exception as exc:
+            return _normalize_error(exc)
+
     def get_tasks(self, task_type: str, status: str, page: int, page_size: int) -> dict:
         try:
             result = self.facade.task_repository.list_tasks(
@@ -197,6 +228,20 @@ class BackendBridge:
                     return {"ok": False, "error_code": "NOT_FOUND", "message": f"Task {task_id} not found."}
                 session.commit()
                 return {"ok": True, "data": result}
+        except Exception as exc:
+            return _normalize_error(exc)
+
+    def update_task_title(self, task_id: int, title: str) -> dict:
+        try:
+            clean_title = (title or "").strip()
+            if not clean_title:
+                raise ValidationError("Task title cannot be empty.")
+            with self.facade.session_factory() as session:
+                task = self.facade.task_repository.update_task_title(session, task_id, clean_title)
+                if task is None:
+                    return {"ok": False, "error_code": "NOT_FOUND", "message": f"Task {task_id} not found."}
+                session.commit()
+                return {"ok": True, "data": self.facade.task_repository._serialize_task(task, session=session)}
         except Exception as exc:
             return _normalize_error(exc)
 
@@ -243,6 +288,12 @@ class BackendBridge:
     def batch_approve_cleaning_suggestions(self, suggestion_ids: list[int], action: str) -> dict:
         try:
             return self.facade.cleaning_service.batch_handle_suggestions(suggestion_ids, action)
+        except Exception as exc:
+            return _normalize_error(exc)
+
+    def manual_exclude_cleaning_sample(self, task_id: int, sample_id: int) -> dict:
+        try:
+            return self.facade.cleaning_service.manual_exclude_sample(task_id, sample_id)
         except Exception as exc:
             return _normalize_error(exc)
 
@@ -367,6 +418,49 @@ class BackendBridge:
         except Exception as exc:
             return _normalize_error(exc)
 
+    def export_training_weights(self, task_id: int, export_name: str = "") -> dict:
+        try:
+            with self.facade.session_factory() as session:
+                task = self.facade.task_repository.get_task_model(session, task_id)
+                if task is None:
+                    return {"ok": False, "error_code": "NOT_FOUND", "message": f"Task {task_id} not found."}
+                if task.task_type != "training":
+                    raise ValidationError("仅支持导出训练任务权重。")
+
+                result_json = task.result_json or {}
+                artifacts = result_json.get("artifacts") or []
+                weight_files = []
+                for artifact in artifacts:
+                    artifact_path = Path(str(artifact or "")).expanduser()
+                    if artifact_path.is_file():
+                        weight_files.append(artifact_path)
+
+                if not weight_files:
+                    raise ValidationError("该训练记录没有可导出的权重文件。")
+
+                default_name = export_name or task.title or f"训练任务_{task.id}"
+
+            desktop_dir = Path.home() / "Desktop"
+            desktop_dir.mkdir(parents=True, exist_ok=True)
+            export_dir = self._build_export_dir(
+                desktop_dir,
+                f"导出权重_{self._sanitize_export_name(default_name)}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+            )
+            export_dir.mkdir(parents=True, exist_ok=True)
+
+            copied_files = []
+            for src in weight_files:
+                copied_files.append(str(self._copy_with_unique_name(src, export_dir)))
+
+            return {
+                "ok": True,
+                "path": str(export_dir),
+                "file_count": len(copied_files),
+                "files": copied_files,
+            }
+        except Exception as exc:
+            return _normalize_error(exc)
+
     def run_evaluation_task(self, task_id: int) -> dict:
         try:
             self.facade.task_manager.start(task_id)
@@ -392,16 +486,108 @@ class BackendBridge:
         except Exception as exc:
             return _normalize_error(exc)
 
+    def get_setting(self, key: str):
+        try:
+            return self.facade.settings_service.get_setting(key)
+        except Exception:
+            return None
+
     def ensure_default_settings(self) -> None:
         self.facade.settings_service.ensure_defaults()
 
     def seed_default_algorithms(self) -> None:
-        from ..seed_data import DEFAULT_ALGORITHMS
+        from ..seed_data import DEFAULT_ALGORITHMS, DEFAULT_BINDINGS
         existing = self.facade.algorithm_service.get_algorithms("", "")
-        existing_keys = {a["key"] for a in existing}
+        existing_map = {a["key"]: a for a in existing}
         for algo in DEFAULT_ALGORITHMS:
-            if algo["key"] not in existing_keys:
+            if algo["key"] in existing_map:
+                continue  # 已有算法不覆盖，保留用户修改
+            else:
                 self.facade.algorithm_service.create_algorithm(dict(algo))
+        self._repair_training_validation_rules(existing_map)
+        self._merge_legacy_algorithm_aliases()
+
+    def _repair_training_validation_rules(self, existing_map: dict) -> None:
+        """修复已有训练算法的 validation_rules_json：
+        若为空 {} 但种子数据中存在对应的 scenario_key，则补齐。"""
+        from ..seed_data import DEFAULT_ALGORITHMS
+        from ..models import Algorithm
+
+        seed_vr_map = {}
+        for algo in DEFAULT_ALGORITHMS:
+            vr_json = algo.get("validation_rules_json")
+            if algo.get("category") == "training" and isinstance(vr_json, dict) and vr_json.get("scenario_key"):
+                seed_vr_map[algo["key"]] = vr_json
+
+        if not seed_vr_map:
+            return
+
+        with self.facade.session_factory() as session:
+            for algo_key, seed_vr in seed_vr_map.items():
+                existing = session.query(Algorithm).filter(Algorithm.key == algo_key).first()
+                if existing is None:
+                    continue
+                current_vr = existing.validation_rules_json or {}
+                # 仅在当前值为空或缺少 scenario_key 时修复
+                if not isinstance(current_vr, dict) or not current_vr.get("scenario_key"):
+                    existing.validation_rules_json = seed_vr
+            session.commit()
+
+    def _merge_legacy_algorithm_aliases(self) -> None:
+        from ..models import (
+            Algorithm,
+            AlgorithmParameter,
+            CleaningSuggestion,
+            EvaluationResult,
+            GenerationOutput,
+            Task,
+        )
+
+        aliases = {"图片低分辨率清洗": "cleaning.image_resolution_filter"}
+        with self.facade.session_factory() as session:
+            for legacy_key, target_key in aliases.items():
+                legacy = session.query(Algorithm).filter(Algorithm.key == legacy_key).first()
+                target = session.query(Algorithm).filter(Algorithm.key == target_key).first()
+                if legacy is None or target is None or legacy.id == target.id:
+                    continue
+
+                for model in (Task, CleaningSuggestion, GenerationOutput, EvaluationResult):
+                    session.query(model).filter(model.algorithm_id == legacy.id).update(
+                        {model.algorithm_id: target.id},
+                        synchronize_session=False,
+                    )
+                self._replace_algorithm_id_in_task_payloads(session, legacy.id, target.id)
+                session.query(AlgorithmParameter).filter(AlgorithmParameter.algorithm_id == legacy.id).delete(
+                    synchronize_session=False
+                )
+                session.delete(legacy)
+            session.commit()
+
+    def _replace_algorithm_id_in_task_payloads(self, session, legacy_id: int, target_id: int) -> None:
+        from ..models import Task
+
+        for task in session.query(Task).all():
+            changed = False
+            parameters = dict(task.parameters_json or {})
+            payload = dict(task.payload_json or {})
+            for container in (parameters, payload):
+                algorithm_ids = list(container.get("algorithm_ids", []))
+                replaced_ids = [target_id if item == legacy_id else item for item in algorithm_ids]
+                if replaced_ids != algorithm_ids:
+                    container["algorithm_ids"] = replaced_ids
+                    changed = True
+            if changed:
+                task.parameters_json = parameters
+                task.payload_json = payload
+
+        # 播种默认训练→评估绑定
+        existing_bindings = self.facade.algorithm_service.get_bindings()
+        for training_key, eval_key in DEFAULT_BINDINGS.items():
+            if training_key not in existing_bindings:
+                try:
+                    self.facade.algorithm_service.set_binding(training_key, eval_key)
+                except Exception:
+                    pass  # 绑定失败的静默跳过（算法可能尚未注册）
 
     def reflect_parameters(self, script_path: str) -> dict:
         """从 .py 脚本反射参数列表。"""
@@ -423,6 +609,21 @@ class BackendBridge:
                 return {"ok": True, "path": str(dest)}
             if dest.exists():
                 dest.unlink()
+            shutil.copy2(src, dest)
+            return {"ok": True, "path": str(dest)}
+        except Exception as exc:
+            return _normalize_error(exc)
+
+    def download_algorithm_plugin_spec(self, target_path: str) -> dict:
+        try:
+            src = Path(__file__).resolve().parents[2] / "docs" / "ISG算法插件开发规范_专业版.pdf"
+            if not src.is_file():
+                return {"ok": False, "error_code": "NOT_FOUND", "message": f"未找到插件规范文档: {src}"}
+
+            dest = Path(target_path).expanduser()
+            if dest.suffix.lower() != ".pdf":
+                dest = dest.with_suffix(".pdf")
+            dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dest)
             return {"ok": True, "path": str(dest)}
         except Exception as exc:
@@ -460,8 +661,11 @@ class BackendBridge:
 
     def to_qml_sample(self, item: dict) -> dict:
         size_bytes = int(item.get("size_bytes") or 0)
+        file_path = item.get("file_path", "")
         return {
             **item,
+            "path": item.get("path") or file_path,
+            "sample_path": item.get("sample_path") or file_path,
             "type": self._qml_modality_label(item.get("modality", "")),
             "size": self._format_size(size_bytes),
             "modified": item.get("updated_at", ""),
@@ -543,7 +747,7 @@ class BackendBridge:
             "parameters": task.parameters_json or {},
             "payload": task.payload_json or {},
             "result": task.result_json or {},
-            "created_at": task.created_at.isoformat() if task.created_at else "",
+            "created_at": to_local_isoformat(task.created_at),
         }
 
     def _serialize_task_log(self, item) -> dict:
@@ -562,5 +766,37 @@ class BackendBridge:
             "level": item.level,
             "message": item.message,
             "payload": item.payload_json,
-            "created_at": item.created_at.isoformat() if item.created_at else "",
+            "created_at": to_local_isoformat(item.created_at),
         }
+
+    def _sanitize_export_name(self, value: str) -> str:
+        cleaned = "".join("_" if ch in '\\/:*?"<>|' else ch for ch in str(value or "").strip())
+        cleaned = cleaned.strip().strip(".")
+        return cleaned or "训练任务"
+
+    def _build_export_dir(self, base_dir: Path, folder_name: str) -> Path:
+        candidate = base_dir / folder_name
+        if not candidate.exists():
+            return candidate
+        index = 2
+        while True:
+            next_candidate = base_dir / f"{folder_name}_{index}"
+            if not next_candidate.exists():
+                return next_candidate
+            index += 1
+
+    def _copy_with_unique_name(self, src: Path, target_dir: Path) -> Path:
+        destination = target_dir / src.name
+        if not destination.exists():
+            shutil.copy2(src, destination)
+            return destination
+
+        stem = src.stem
+        suffix = src.suffix
+        index = 2
+        while True:
+            candidate = target_dir / f"{stem}_{index}{suffix}"
+            if not candidate.exists():
+                shutil.copy2(src, candidate)
+                return candidate
+            index += 1

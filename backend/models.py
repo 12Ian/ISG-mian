@@ -108,6 +108,17 @@ class AlgorithmParameter(Base):
     order_index = Column(Integer, default=0, nullable=False)
 
 
+class AlgorithmBinding(Base):
+    """训练算法与评估算法的绑定关系。一个训练算法最多绑定一个评估算法。"""
+    __tablename__ = "algorithm_bindings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    training_algorithm_id = Column(Integer, ForeignKey("algorithms.id"), nullable=False, unique=True, index=True)
+    evaluation_algorithm_id = Column(Integer, ForeignKey("algorithms.id"), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
 class Task(Base):
     __tablename__ = "tasks"
 

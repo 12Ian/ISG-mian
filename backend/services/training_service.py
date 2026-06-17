@@ -8,6 +8,7 @@ from ..errors import NotFoundError, ValidationError
 from ..models import Algorithm, Dataset, Sample
 from ..plugins import PluginRunner
 from .base import ServiceBase
+from .sample_ordering import interleave_by_top_folder
 
 
 @slots_dataclass
@@ -35,12 +36,12 @@ class TrainingService(ServiceBase):
             if dataset.is_deleted or dataset.status == "deleted":
                 raise ValidationError("Dataset must be active for training.")
 
-            samples = (
-                session.query(Sample)
+            has_sample = (
+                session.query(Sample.id)
                 .filter(Sample.dataset_id == dataset.id, Sample.status != "deleted")
-                .all()
+                .first()
             )
-            if not samples:
+            if not has_sample:
                 raise ValidationError("Dataset must contain at least one active sample.")
 
             algorithm = self.algorithm_repository.get_algorithm(session, algorithm_id)
@@ -101,6 +102,7 @@ class TrainingService(ServiceBase):
                 .order_by(Sample.id.asc())
                 .all()
             )
+            samples = interleave_by_top_folder(samples)
             if not samples:
                 raise ValidationError("Dataset must contain at least one active sample.")
 
@@ -153,6 +155,8 @@ class TrainingService(ServiceBase):
             "id": sample.id,
             "name": sample.name,
             "path": sample.file_path,
+            "sample_path": sample.file_path,
+            "relative_path": sample.relative_path,
             "status": sample.status,
             "metadata": sample.metadata_json,
             "labels": sample.labels_json or [],

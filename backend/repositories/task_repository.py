@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import shutil
 from pathlib import Path
 
+from .._compat import to_local_isoformat
 from ..models import Task, TaskLog, CleaningSuggestion, GenerationOutput, EvaluationResult
 from ..models import Dataset
 from .base import RepositoryBase
@@ -71,7 +72,7 @@ class TaskRepository(RepositoryBase):
                         "level": item.level,
                         "message": item.message,
                         "payload_json": item.payload_json,
-                        "created_at": item.created_at.isoformat() if item.created_at else "",
+                        "created_at": to_local_isoformat(item.created_at),
                     }
                     for item in items
                 ],
@@ -112,6 +113,14 @@ class TaskRepository(RepositoryBase):
 
         return task_info
 
+    def update_task_title(self, session, task_id: int, title: str) -> Task | None:
+        task = self.get_task_model(session, task_id)
+        if task is None:
+            return None
+        task.title = title
+        session.flush()
+        return task
+
     def get_running_task_ids(self) -> list[int]:
         with self.session_factory() as session:
             rows = session.query(Task.id).filter(Task.status == "running").all()
@@ -139,7 +148,7 @@ class TaskRepository(RepositoryBase):
             "result_json": task.result_json,
             "error_message": task.error_message or "",
             "output_dir": task.output_dir or "",
-            "created_at": task.created_at.isoformat() if task.created_at else "",
+            "created_at": to_local_isoformat(task.created_at),
         }
 
     def _dataset_payload(self, session, dataset_id: int | None) -> dict:
