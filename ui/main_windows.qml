@@ -10,6 +10,7 @@ ApplicationWindow {
     visible: true
     width: 1400
     height: 800
+    font.family: "Noto Sans CJK SC"
     title: qsTr("智能应用增量样本生成软件")
 
     Component.onCompleted: backendService.getSetting("ui.theme")

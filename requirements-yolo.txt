@@ -1,0 +1,16 @@
+ultralytics
+torch
+torchvision
+pyyaml
+numpy
+pandas
+matplotlib
+opencv-python
+Pillow
+scipy
+requests
+psutil
+packaging
+tqdm
+albumentations
+thop
