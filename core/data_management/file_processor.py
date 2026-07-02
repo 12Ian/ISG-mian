@@ -11,7 +11,6 @@ class FileProcessor:
         """处理上传的文件"""
         db = SessionLocal()
         try:
-            # 创建存储目录
             dataset = db.query(Dataset).filter(Dataset.id == dataset_id).first()
             if not dataset:
                 return {"status": "error", "message": "数据集不存在"}
@@ -19,20 +18,16 @@ class FileProcessor:
             storage_path = dataset.storage_path
             os.makedirs(storage_path, exist_ok=True)
             
-            # 保存文件
             file_path = os.path.join(storage_path, file.filename)
-            with open(file_path, "wb") as f:
-                shutil.copyfileobj(file.file, f)
+            with open(file_path, "wb") as target_file:
+                shutil.copyfileobj(file.file, target_file)
             
-            # 提取元数据
             metadata = self.extract_metadata(file_path, file.content_type)
             
-            # 验证文件
             if not self.validate_file(file_path, file.content_type):
                 os.remove(file_path)
                 return {"status": "error", "message": "文件验证失败"}
             
-            # 创建样本记录
             sample = Sample(
                 dataset_id=dataset_id,
                 name=file.filename,
@@ -52,11 +47,9 @@ class FileProcessor:
         """处理导入的文件夹"""
         db = SessionLocal()
         try:
-            # 检查文件夹是否存在
             if not os.path.isdir(folder_path):
                 return {"status": "error", "message": "文件夹不存在"}
             
-            # 创建存储目录
             dataset = db.query(Dataset).filter(Dataset.id == dataset_id).first()
             if not dataset:
                 return {"status": "error", "message": "数据集不存在"}
@@ -64,37 +57,31 @@ class FileProcessor:
             storage_path = dataset.storage_path
             os.makedirs(storage_path, exist_ok=True)
             
-            # 递归处理文件
             processed_count = 0
-            for root, dirs, files in os.walk(folder_path):
+            for root, _dirs, file_names in os.walk(folder_path):
                 if not include_subfolders and root != folder_path:
                     continue
                 
-                for file_name in files:
-                    file_path = os.path.join(root, file_name)
-                    # 复制文件
-                    relative_path = os.path.relpath(file_path, folder_path)
-                    dest_path = os.path.join(storage_path, relative_path)
-                    os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-                    shutil.copy2(file_path, dest_path)
+                for file_name in file_names:
+                    source_path = os.path.join(root, file_name)
+                    relative_path = os.path.relpath(source_path, folder_path)
+                    stored_path = os.path.join(storage_path, relative_path)
+                    os.makedirs(os.path.dirname(stored_path), exist_ok=True)
+                    shutil.copy2(source_path, stored_path)
                     
-                    # 提取文件类型
                     import mimetypes
-                    file_type, _ = mimetypes.guess_type(file_path)
+                    file_type, _ = mimetypes.guess_type(source_path)
                     if not file_type:
                         file_type = "application/octet-stream"
                     
-                    # 提取元数据
-                    metadata = self.extract_metadata(dest_path, file_type)
+                    metadata = self.extract_metadata(stored_path, file_type)
                     
-                    # 验证文件
-                    if self.validate_file(dest_path, file_type):
-                        # 创建样本记录
+                    if self.validate_file(stored_path, file_type):
                         sample = Sample(
                             dataset_id=dataset_id,
                             name=relative_path,
-                            path=dest_path,
-                            size=os.path.getsize(dest_path),
+                            path=stored_path,
+                            size=os.path.getsize(stored_path),
                             type=file_type.split("/")[0],
                             sample_metadata=metadata
                         )
@@ -110,7 +97,6 @@ class FileProcessor:
         """提取文件元数据"""
         metadata = {}
         
-        # 根据文件类型提取不同的元数据
         if file_type.startswith("image/"):
             try:
                 from PIL import Image
@@ -131,8 +117,8 @@ class FileProcessor:
                 pass
         elif file_type.startswith("text/") or file_type == "application/json" or file_type == "application/csv":
             try:
-                with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-                    content = f.read()
+                with open(file_path, "r", encoding="utf-8", errors="ignore") as text_file:
+                    content = text_file.read()
                     metadata["lines"] = len(content.splitlines())
                     metadata["characters"] = len(content)
             except Exception:
@@ -142,11 +128,9 @@ class FileProcessor:
 
     def validate_file(self, file_path: str, file_type: str) -> bool:
         """验证文件有效性"""
-        # 检查文件大小
         if os.path.getsize(file_path) == 0:
             return False
         
-        # 根据文件类型进行不同的验证
         if file_type.startswith("image/"):
             try:
                 from PIL import Image
@@ -164,11 +148,10 @@ class FileProcessor:
                 return False
         elif file_type.startswith("text/") or file_type == "application/json" or file_type == "application/csv":
             try:
-                with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-                    f.read()
+                with open(file_path, "r", encoding="utf-8", errors="ignore") as text_file:
+                    text_file.read()
                 return True
             except Exception:
                 return False
         
-        # 其他类型的文件默认通过验证
         return True

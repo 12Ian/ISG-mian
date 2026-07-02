@@ -81,20 +81,19 @@ class DataManager:
         total = query.count()
         items = query.offset((page - 1) * page_size).limit(page_size).all()
         
-        # 转换为字典列表
-        items_list = []
-        for item in items:
-            items_list.append({
-                "id": item.id,
-                "name": item.name,
-                "type": item.type,
-                "status": item.status,
-                "total_samples": item.total_samples,
-                "size": item.size,
-                "created_at": item.created_at
+        dataset_items = []
+        for dataset in items:
+            dataset_items.append({
+                "id": dataset.id,
+                "name": dataset.name,
+                "type": dataset.type,
+                "status": dataset.status,
+                "total_samples": dataset.total_samples,
+                "size": dataset.size,
+                "created_at": dataset.created_at
             })
         
-        return {"total": total, "items": items_list}
+        return {"total": total, "items": dataset_items}
 
     def get_dataset(self, dataset_id: int) -> Optional[Dataset]:
         """获取数据集详情"""
@@ -123,14 +122,11 @@ class DataManager:
         
         name = dataset.name
         
-        # 删除文件
-        import shutil
         if os.path.exists(dataset.storage_path):
             shutil.rmtree(dataset.storage_path)
         
         self.db.delete(dataset)
         
-        # 记录活动日志
         log = SystemLog(
             user_id=1,
             action="delete",
@@ -170,10 +166,8 @@ class DataManager:
         
         result = self.file_processor.process_file(file, dataset_id)
         if result["status"] == "success":
-            # 更新数据集统计信息
             self._update_dataset_stats(dataset_id)
             
-            # 记录活动日志
             log = SystemLog(
                 user_id=1,
                 action="create",
@@ -194,10 +188,8 @@ class DataManager:
         
         result = self.file_processor.process_folder(folder_path, dataset_id, include_subfolders)
         if result["status"] == "success":
-            # 更新数据集统计信息
             self._update_dataset_stats(dataset_id)
             
-            # 记录活动日志
             log = SystemLog(
                 user_id=1,
                 action="create",
@@ -219,20 +211,19 @@ class DataManager:
         total = query.count()
         items = query.order_by(Sample.created_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
         
-        # 转换为字典列表
-        items_list = []
-        for item in items:
-            items_list.append({
-                "id": item.id,
-                "name": item.name,
-                "type": item.type,
-                "status": item.status,
-                "size": item.size,
-                "path": item.path,
-                "created_at": item.created_at
+        sample_items = []
+        for sample in items:
+            sample_items.append({
+                "id": sample.id,
+                "name": sample.name,
+                "type": sample.type,
+                "status": sample.status,
+                "size": sample.size,
+                "path": sample.path,
+                "created_at": sample.created_at
             })
         
-        return {"total": total, "items": items_list}
+        return {"total": total, "items": sample_items}
 
     def get_dataset_preview_samples(self, dataset_id: int, limit: int = 20, status: Optional[str] = None) -> Dict[str, Any]:
         query = self.db.query(Sample).filter(Sample.dataset_id == dataset_id)
@@ -245,18 +236,18 @@ class DataManager:
             return {"total": total, "items": []}
 
         items = query.order_by(func.random()).limit(safe_limit).all()
-        items_list = []
-        for item in items:
-            items_list.append({
-                "id": item.id,
-                "name": item.name,
-                "type": item.type,
-                "status": item.status,
-                "size": item.size,
-                "path": item.path,
-                "created_at": item.created_at
+        sample_items = []
+        for sample in items:
+            sample_items.append({
+                "id": sample.id,
+                "name": sample.name,
+                "type": sample.type,
+                "status": sample.status,
+                "size": sample.size,
+                "path": sample.path,
+                "created_at": sample.created_at
             })
-        return {"total": total, "items": items_list}
+        return {"total": total, "items": sample_items}
 
     def get_sample(self, sample_id: int) -> Optional[Sample]:
         """获取样本详情"""
@@ -268,14 +259,12 @@ class DataManager:
         if not sample:
             return False
         
-        # 删除文件
         if os.path.exists(sample.path):
             os.remove(sample.path)
         
         self.db.delete(sample)
         self.db.commit()
         
-        # 更新数据集统计信息
         self._update_dataset_stats(sample.dataset_id)
         return True
 
@@ -287,7 +276,6 @@ class DataManager:
         for sample_id in sample_ids:
             sample = self.get_sample(sample_id)
             if sample:
-                # 删除文件
                 if os.path.exists(sample.path):
                     os.remove(sample.path)
                 
@@ -297,7 +285,6 @@ class DataManager:
         
         self.db.commit()
         
-        # 更新数据集统计信息
         for dataset_id in dataset_ids:
             self._update_dataset_stats(dataset_id)
         
@@ -330,7 +317,6 @@ class DataManager:
                 "col": self._get_activity_color(log.action)
             })
         
-        # 如果没有日志记录，返回一些默认的活动
         if not activities:
             default_activities = [
                 {"title": "导入了新的船舶图像数据集", "time": "今天 09:45", "col": "#165DFF"},
@@ -345,16 +331,10 @@ class DataManager:
     
     def get_system_stats(self) -> Dict[str, Any]:
         """获取系统整体数据指标"""
-        # 总数据集数量
         total_datasets = self.db.query(Dataset).count()
-        
-        # 总样本数
         total_samples = self.db.query(Sample).count()
-        
-        # 已处理样本数
         processed_samples = self.db.query(Sample).filter(Sample.status.in_(["processed", "cleaned", "enhanced"])).count()
         
-        # 计算总存储空间
         total_size = 0
         datasets = self.db.query(Dataset).all()
         for dataset in datasets:
@@ -425,7 +405,6 @@ class DataManager:
     
     def get_data_type_distribution(self) -> Dict[str, Any]:
         """获取数据类型分布"""
-        # 统计各类型的样本数量
         type_counts = {}
         samples = self.db.query(Sample).all()
         
@@ -434,24 +413,21 @@ class DataManager:
                 type_counts[sample.type] = 0
             type_counts[sample.type] += 1
         
-        # 如果没有样本，返回默认数据
         if not type_counts:
             return {
                 "labels": ["图像", "音频", "文本"],
                 "data": [45, 30, 25]
             }
         
-        # 转换为前端需要的格式
         labels = []
         data = []
+        type_map = {
+            "image": "图像",
+            "audio": "音频",
+            "text": "文本",
+            "application": "其他"
+        }
         for type_name, count in type_counts.items():
-            # 转换类型名称为中文
-            type_map = {
-                "image": "图像",
-                "audio": "音频",
-                "text": "文本",
-                "application": "其他"
-            }
             labels.append(type_map.get(type_name, type_name))
             data.append(count)
         
