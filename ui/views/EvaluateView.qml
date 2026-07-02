@@ -1983,7 +1983,7 @@ Item {
                         RowLayout {
                             Layout.fillWidth: true
                             Text { text: "评估结果"; color: root.textColor; font.pixelSize: 14; font.bold: true }
-                            Text { text: evalResultModel.count > 0 ? ("共 " + evalResultModel.count + " 条结果") : "执行评估后在这里查看指标结果"; color: root.textMuted; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
+                            Text { text: evalResultModel.count > 0 ? ("共 " + evalResultModel.count + " 条结果") : "执行评估后可查看指标结果"; color: root.textMuted; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
                         }
 
                         Rectangle {

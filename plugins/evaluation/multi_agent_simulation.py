@@ -59,8 +59,8 @@ def run(payload: dict, context) -> dict:
         "model_name": "multi-agent-simulation",
         "metrics": report["metrics"],
         "summary": (
-            f"{agent_count} agents evaluated {target_count} target samples against "
-            f"{baseline_count} baseline samples; overall score {overall_score}."
+            f"{agent_count} 个智能体完成仿真评估：目标数据集 {target_count} 个样本，"
+            f"基准数据集 {baseline_count} 个样本，综合得分 {overall_score}。"
         ),
         "artifacts": [{"type": "report", "path": str(report_path)}],
     }

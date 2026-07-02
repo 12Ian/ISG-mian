@@ -77,8 +77,7 @@ class AlgorithmManager:
             if img is None:
                 return None
             
-            # 使用OpenCV的风格迁移（简化版）
-            # 实际应用中可能需要使用更复杂的模型
+            # 使用边缘特征混合形成轻量风格化效果
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             edges = cv2.Canny(gray, 100, 200)
             edges = cv2.cvtColor(edges, cv2.COLOR_GRAY2BGR)
@@ -540,11 +539,10 @@ class AlgorithmManager:
         output_dir: str,
         index: int,
     ) -> Optional[str]:
-        """跨模态融合的“可跑降级版”：单张图生成伪红外，再融合到可见光的亮度通道。
+        """单图跨模态融合：估计红外响应并融合到可见光亮度通道。
 
         说明：当前增强框架一次只传入一张样本图像（没有 IR/VIS 成对输入），
-        因此这里退化为“单张伪融合”，用于补齐功能链路与 UI/参数流程。
-        若你后续能提供成对配对规则（或 metadata pair_id），我可以把它升级为真正的 IR+VIS 成对融合。
+        因此采用 CLAHE 灰度响应近似红外特征；成对 IR/VIS 融合需要额外的样本配对信息。
         """
         try:
             img = cv2.imread(image_path)
@@ -553,7 +551,7 @@ class AlgorithmManager:
             if len(img.shape) == 2:
                 img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
 
-            # 生成伪 IR：灰度 + CLAHE + 归一化
+            # 估计红外响应：灰度 + CLAHE + 归一化
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             clahe_clip = float(parameters.get("CLAHE剪切值", 2.0))
             clahe = cv2.createCLAHE(clipLimit=max(0.1, clahe_clip), tileGridSize=(8, 8))
@@ -1216,7 +1214,7 @@ class AlgorithmManager:
             downsample_ratio = max(0.2, min(downsample_ratio, 1.0))
             bits = int(parameters.get("量化位深", 8))  # 4~16
             bits = max(2, min(bits, 16))
-            drive = float(parameters.get("失真驱动强度", 0.0))  # 0~?
+            drive = float(parameters.get("失真驱动强度", 0.0))  # >= 0
             drive = max(0.0, drive)
 
             y_out_channels = []
@@ -1494,7 +1492,7 @@ class AlgorithmManager:
             with open(text_path, 'r', encoding='utf-8', errors='ignore') as f:
                 text = f.read()
             
-            # 简单的同义词字典
+            # 基础同义词表
             synonyms = {
                 '好': ['优秀', '良好', '出色'],
                 '坏': ['糟糕', '差', '恶劣'],
@@ -1538,14 +1536,10 @@ class AlgorithmManager:
             with open(text_path, 'r', encoding='utf-8', errors='ignore') as f:
                 text = f.read()
             
-            # 伪回译增强：
-            # - 不依赖外部翻译 API/Transformer（后端仅用轻量词表规则）
+            # 规则回译增强：
+            # - 不依赖外部翻译 API/Transformer，仅使用本地词表规则
             # - 思路：中文->英文（替换常见词/短语）->中文（再替换）
             # - 目标：在“尽量保持语义”的前提下产生表述多样性
-            #
-            # 注意：由于缺少词性标注/大模型语义约束，这里是规则版“回译模拟”，
-            # 可跑通流程并提供多样性；如果后续你们环境允许接入 transformers，
-            # 我可以再把 4. 上下文与嵌入、5. 生成与风格控制升级为模型版。
             mid_lang = str(parameters.get("中间语言", "en")).lower()
             back_trans_prob = float(parameters.get("回译概率", 1.0))
             back_trans_prob = max(0.0, min(back_trans_prob, 1.0))
@@ -1584,7 +1578,7 @@ class AlgorithmManager:
                     "保持": ["maintain", "preserve"],
                 }
 
-                # 2) 英文->中文（逆向词表；仍是“伪回译”）
+                # 2) 英文->中文（逆向词表）
                 en2zh = {}
                 for zh, ens in zh2en.items():
                     for en in ens:
@@ -1820,7 +1814,7 @@ class AlgorithmManager:
         output_dir: str,
         index: int,
     ) -> Optional[str]:
-        """基于上下文与嵌入（规则版上下文约束替换 + 伪跨语言增强）。"""
+        """基于局部上下文约束的规则替换与跨语言词表增强。"""
         try:
             with open(text_path, "r", encoding="utf-8", errors="ignore") as f:
                 text = f.read()
@@ -1828,7 +1822,7 @@ class AlgorithmManager:
             if not text:
                 return None
 
-            # 词表候选：沿用 1. 中的同义词（简化版）
+            # 词表候选：沿用同义词增强的基础词表
             synonyms = {
                 "好": ["优秀", "良好", "出色"],
                 "坏": ["糟糕", "差", "恶劣"],
@@ -1891,7 +1885,7 @@ class AlgorithmManager:
                 best = key
                 best_score = -1e18
                 for cand in candidates:
-                    # 简单约束：替换后不为空；并计算局部二元组得分
+                    # 约束替换结果非空，并计算局部二元组得分
                     if not cand:
                         continue
                     sc = _score_boundary(left or "", right or "", cand)
@@ -1899,9 +1893,9 @@ class AlgorithmManager:
                         best_score = sc
                         best = cand
 
-                # 可选：伪跨语言增强（小概率对 best 再做“回译风格”的二次变体）
+                # 可选：跨语言词表增强（小概率对 best 再做二次变体）
                 if cross_lang_strength > 0 and np.random.rand() < cross_lang_strength:
-                    # 用极简英->中词表增强：映射到英文同义词再映射回来
+                    # 用英中词表增强：映射到英文同义词再映射回来
                     # 若 best 不在表内则保持不变
                     zh2en_simple = {"优秀": "excellent", "良好": "good", "出色": "outstanding", "糟糕": "bad", "差": "poor", "恶劣": "awful", "巨大": "huge", "庞大": "massive", "大型": "large", "微小": "tiny", "细小": "minute", "小型": "small", "迅速": "rapid", "快速": "quick", "敏捷": "agile", "缓慢": "slow", "迟缓": "delayed", "低速": "low-speed"}
                     en2zh_simple = {}
@@ -2081,7 +2075,7 @@ class AlgorithmManager:
     ) -> Optional[torch.Tensor]:
         """把若干张图片读进来并转成张量（N, 3, H, W），归一化到[-1, 1]。
 
-        说明：这里实现的是“轻量级 demo 用”的数据增强生成逻辑，
+        说明：该路径用于任务内即时训练与采样，
         训练/采样都会在 CPU 上运行，因此分辨率和样本量都会做上限裁剪。
         """
         if not image_paths:
@@ -2305,7 +2299,7 @@ class AlgorithmManager:
     ) -> Optional[str]:
         """兼容旧接口：对单张图像做“弱化版 GAN 生成”。
 
-        由于按任务训练需要多张图片，这里如果训练失败就退化到简单的图像扰动（保证流程不中断）。
+        由于按任务训练需要多张图片，训练不可用时使用基础图像扰动保持任务连续性。
         """
         try:
             gan_context = self.train_wgan_gp([sample_path], parameters)

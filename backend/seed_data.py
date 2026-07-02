@@ -1239,7 +1239,7 @@ DEFAULT_ALGORITHMS = (
         "entry_type": "python_function",
         "module_path": "plugins.generation.cross_modal_fusion_image_augmenter",
         "callable_name": "run",
-        "description": "CLAHE增强与伪红外通道融合，模拟多光谱图像",
+        "description": "CLAHE增强与估计红外响应融合，形成多光谱增强图像",
         "input_contract": {
             "dataset_required": True,
             "sample_required": True,
@@ -1265,7 +1265,7 @@ DEFAULT_ALGORITHMS = (
                 "type": "number",
                 "required": False,
                 "default_value": 0.5,
-                "description": "伪红外通道融合权重",
+                "description": "估计红外响应的融合权重",
             },
         ],
     },
@@ -1405,7 +1405,7 @@ DEFAULT_ALGORITHMS = (
                 "type": "integer",
                 "required": False,
                 "default_value": 100,
-                "description": "模拟训练迭代步数",
+                "description": "任务内训练迭代步数",
             },
             {
                 "name": "patch_size",

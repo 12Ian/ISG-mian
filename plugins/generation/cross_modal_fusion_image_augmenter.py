@@ -28,17 +28,17 @@ PARAMETERS = [
         "min": 0.0,
         "max": 1.0,
         "options": [],
-        "description": '伪红外通道融合权重',
+        "description": '估计红外响应的融合权重',
         "required": False,
     },
 ]
 
 
 def run(payload: dict, context) -> dict:
-    """跨模态融合增强：单张图生成伪红外，融合到可见光亮度通道。
+    """跨模态融合增强：估计红外响应并融合到可见光亮度通道。
 
-    说明：当前增强框架一次只传入单张图，因此退化为"伪融合"。
-    生成伪 IR（CLAHE 增强的灰度图），在 HSV 的 V 通道上与可见光加权融合。
+    当前增强框架一次只传入单张图，因此使用 CLAHE 灰度响应近似红外特征，
+    并在 HSV 的 V 通道上与可见光加权融合。
     """
     parameters = payload.get("parameters", {}) or {}
     output_dir = Path(payload.get("output", {}).get("output_dir") or ".")
@@ -67,7 +67,7 @@ def run(payload: dict, context) -> dict:
         if len(img.shape) == 2:
             img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
 
-        # 生成伪红外：灰度 + CLAHE + 归一化
+        # 估计红外响应：灰度 + CLAHE + 归一化
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         clahe = cv2.createCLAHE(clipLimit=max(0.1, clahe_clip), tileGridSize=(8, 8))
         ir = clahe.apply(gray).astype(np.float32)

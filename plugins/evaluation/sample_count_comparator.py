@@ -5,7 +5,7 @@ from pathlib import Path
 PARAMETERS = []
 
 def run(payload: dict, context) -> dict:
-    """Compare baseline and target dataset sample counts as a simple evaluation metric."""
+    """对比基准数据集与目标数据集的样本规模。"""
     baseline_samples = payload.get("input", {}).get("baseline_dataset", {}).get("samples", [])
     target_samples = payload.get("input", {}).get("target_dataset", {}).get("samples", [])
 
@@ -30,5 +30,5 @@ def run(payload: dict, context) -> dict:
             "sample_ratio": round(ratio, 2),
         },
         "artifacts": [{"type": "report", "path": str(report_path)}],
-        "summary": f"Target has {target_count} samples vs baseline {baseline_count} (ratio: {ratio:.2f})",
+        "summary": f"目标数据集 {target_count} 个样本，基准数据集 {baseline_count} 个样本，比例 {ratio:.2f}。",
     }

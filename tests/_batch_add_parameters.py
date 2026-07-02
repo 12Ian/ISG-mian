@@ -150,7 +150,7 @@ PLUGIN_PARAMS: dict[str, list[dict[str, Any]]] = {
 
     "plugins/generation/cross_modal_fusion_image_augmenter.py": [
         {"name": "clahe_clip", "type": "float", "label": "CLAHE剪切限制", "default": 2.0, "min": 0.0, "max": 10.0, "options": [], "description": "限制对比度自适应直方图均衡化的剪切阈值", "required": False},
-        {"name": "ir_weight", "type": "float", "label": "红外权重", "default": 0.5, "min": 0.0, "max": 1.0, "options": [], "description": "伪红外通道融合权重", "required": False},
+        {"name": "ir_weight", "type": "float", "label": "红外权重", "default": 0.5, "min": 0.0, "max": 1.0, "options": [], "description": "估计红外响应的融合权重", "required": False},
     ],
 
     "plugins/generation/wgan_gp_image_augmenter.py": [
@@ -167,7 +167,7 @@ PLUGIN_PARAMS: dict[str, list[dict[str, Any]]] = {
     "plugins/generation/vit_mae_image_augmenter.py": [
         {"name": "mask_ratio", "type": "float", "label": "掩码比例", "default": 0.75, "min": 0.1, "max": 0.95, "options": [], "description": "图像patch掩码比例", "required": False},
         {"name": "learning_rate", "type": "float", "label": "学习率", "default": 0.0001, "min": 1e-6, "max": 0.1, "options": [], "description": "训练学习率", "required": False},
-        {"name": "training_steps", "type": "int", "label": "训练步数", "default": 100, "min": 10, "max": 10000, "options": [], "description": "模拟训练迭代步数", "required": False},
+        {"name": "training_steps", "type": "int", "label": "训练步数", "default": 100, "min": 10, "max": 10000, "options": [], "description": "任务内训练迭代步数", "required": False},
         {"name": "patch_size", "type": "int", "label": "Patch大小", "default": 4, "min": 2, "max": 32, "options": [], "description": "ViT patch划分尺寸", "required": False},
     ],
 

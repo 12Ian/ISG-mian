@@ -513,24 +513,24 @@ class BackendBridge:
         from ..seed_data import DEFAULT_ALGORITHMS
         from ..models import Algorithm
 
-        seed_vr_map = {}
+        seed_validation_rules = {}
         for algo in DEFAULT_ALGORITHMS:
             vr_json = algo.get("validation_rules_json")
             if algo.get("category") == "training" and isinstance(vr_json, dict) and vr_json.get("scenario_key"):
-                seed_vr_map[algo["key"]] = vr_json
+                seed_validation_rules[algo["key"]] = vr_json
 
-        if not seed_vr_map:
+        if not seed_validation_rules:
             return
 
         with self.facade.session_factory() as session:
-            for algo_key, seed_vr in seed_vr_map.items():
+            for algo_key, default_validation_rules in seed_validation_rules.items():
                 existing = session.query(Algorithm).filter(Algorithm.key == algo_key).first()
                 if existing is None:
                     continue
-                current_vr = existing.validation_rules_json or {}
+                current_validation_rules = existing.validation_rules_json or {}
                 # 仅在当前值为空或缺少 scenario_key 时修复
-                if not isinstance(current_vr, dict) or not current_vr.get("scenario_key"):
-                    existing.validation_rules_json = seed_vr
+                if not isinstance(current_validation_rules, dict) or not current_validation_rules.get("scenario_key"):
+                    existing.validation_rules_json = default_validation_rules
             session.commit()
 
     def _merge_legacy_algorithm_aliases(self) -> None:
@@ -564,6 +564,7 @@ class BackendBridge:
             session.commit()
 
     def _replace_algorithm_id_in_task_payloads(self, session, legacy_id: int, target_id: int) -> None:
+        from ..seed_data import DEFAULT_BINDINGS
         from ..models import Task
 
         for task in session.query(Task).all():
@@ -580,7 +581,7 @@ class BackendBridge:
                 task.parameters_json = parameters
                 task.payload_json = payload
 
-        # 播种默认训练→评估绑定
+        # 同步默认训练→评估绑定
         existing_bindings = self.facade.algorithm_service.get_bindings()
         for training_key, eval_key in DEFAULT_BINDINGS.items():
             if training_key not in existing_bindings:
