@@ -40,7 +40,7 @@ class PluginRunner:
         }
 
     def reflect_parameters(self, script_path: str) -> dict[str, Any]:
-        """从 .py 脚本文件中反射参数列表和入口函数信息。"""
+        """读取脚本参数，并确认 run 入口存在。"""
         path = Path(script_path)
         result = _reflect_parameters(path)
         if not result.get("ok"):

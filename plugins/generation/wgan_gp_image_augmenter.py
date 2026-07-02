@@ -50,7 +50,7 @@ PARAMETERS = [
         "min": 0.3,
         "max": 2.0,
         "options": [],
-        "description": '控制GAN风格、纹理和形变叠加强度，数值越大生成痕迹越明显',
+        "description": '控制GAN风格、纹理和形变叠加强度',
         "required": False,
     },
 ]

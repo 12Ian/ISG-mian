@@ -510,13 +510,13 @@ DEFAULT_ALGORITHMS = (
     },
     {
         "key": "training.demo_classifier",
-        "name": "Demo分类器训练",
+        "name": "基础分类器训练",
         "category": "training",
         "modality": "multimodal",
         "entry_type": "python_function",
         "module_path": "plugins.training.demo_classifier",
         "callable_name": "run",
-        "description": "最小训练demo，模拟训练循环并产生模型checkpoint文件",
+        "description": "最小训练流程，模拟训练循环并产出模型checkpoint文件",
         "input_contract": {"dataset_required": True, "sample_required": True},
         "output_contract": {"produces": ["model_checkpoint"], "artifact_types": ["checkpoint"]},
         "validation_rules_json": {"scenario_key": "underwater_target_detection_recognition"},
@@ -1277,7 +1277,7 @@ DEFAULT_ALGORITHMS = (
         "entry_type": "python_function",
         "module_path": "plugins.generation.wgan_gp_image_augmenter",
         "callable_name": "run",
-        "description": "使用WGAN-GP生成对抗网络进行图像生成增强(演示版本)",
+        "description": "使用WGAN-GP生成对抗网络进行图像生成增强",
         "input_contract": {
             "dataset_required": True,
             "sample_required": True,
@@ -1321,7 +1321,7 @@ DEFAULT_ALGORITHMS = (
                 "default_value": 1.0,
                 "min_value": 0.3,
                 "max_value": 2.0,
-                "description": "控制GAN风格、纹理和形变叠加强度，数值越大生成痕迹越明显",
+                "description": "控制GAN风格、纹理和形变叠加强度",
             },
         ],
     },
@@ -1333,7 +1333,7 @@ DEFAULT_ALGORITHMS = (
         "entry_type": "python_function",
         "module_path": "plugins.generation.diffusion_image_augmenter",
         "callable_name": "run",
-        "description": "基于扩散模型的图像生成增强(演示版本)",
+        "description": "基于扩散模型的图像生成增强",
         "input_contract": {
             "dataset_required": True,
             "sample_required": True,
@@ -1371,7 +1371,7 @@ DEFAULT_ALGORITHMS = (
         "entry_type": "python_function",
         "module_path": "plugins.generation.vit_mae_image_augmenter",
         "callable_name": "run",
-        "description": "基于ViT掩码自编码器的图像生成增强(演示版本)",
+        "description": "基于ViT掩码自编码器的图像生成增强",
         "input_contract": {
             "dataset_required": True,
             "sample_required": True,
@@ -2818,7 +2818,7 @@ DEFAULT_ALGORITHMS = (
     },
 )
 
-# 默认训练→评估算法绑定 (training_key → evaluation_key)
+# 训练算法默认关联的评估插件
 DEFAULT_BINDINGS: dict[str, str] = {
     "training.image.sonar_oltr_classifier": "evaluation.multimodal.sonar_oltr_plud",
     "training.image.yolov5_detector": "evaluation.image.yolov5_evaluator",

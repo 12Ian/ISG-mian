@@ -1,9 +1,4 @@
-"""Minimal demo training plugin.
-
-Simulates a training loop across epochs, updates progress in the DB, and
-produces a mock model checkpoint file so the full train→evaluate pipeline
-can be exercised end-to-end.
-"""
+"""基础分类训练插件。"""
 
 from __future__ import annotations
 
@@ -28,7 +23,7 @@ PARAMETERS = [
 
 
 def run(payload: dict, context: dict | None = None) -> dict:
-    """Simulate training and write a fake checkpoint."""
+    """执行训练流程并写入 checkpoint。"""
     task_id = payload.get("task_id", 0)
     input_data = payload.get("input", {})
     output_dir = Path(payload.get("output", {}).get("output_dir", ""))
@@ -49,14 +44,12 @@ def run(payload: dict, context: dict | None = None) -> dict:
         if is_cancelled and is_cancelled():
             return {"ok": False, "error_code": "CANCELLED", "message": "Training cancelled"}
 
-        # simulate per-sample processing time
         for _ in samples:
             time.sleep(0.02)
             step += 1
             if progress and step % max(total_steps // 10, 1) == 0:
                 progress(step / total_steps * 100.0, f"Epoch {epoch + 1}/{epochs} step {step}/{total_steps}")
 
-    # Write a mock checkpoint
     checkpoint_path = output_dir / "model_checkpoint.pt"
     checkpoint_data = {
         "task_id": task_id,
@@ -81,7 +74,7 @@ def run(payload: dict, context: dict | None = None) -> dict:
                     "epochs": epochs,
                     "sample_count": sample_count,
                 },
-                "summary": f"Demo classifier trained for {epochs} epochs on {sample_count} samples. "
+                "summary": f"Classifier trained for {epochs} epochs on {sample_count} samples. "
                 f"Final accuracy: {checkpoint_data['accuracy']}, loss: {checkpoint_data['loss']}",
             }
         ],

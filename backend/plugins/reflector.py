@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""从 .py 插件文件中反射 PARAMETERS 参数列表。"""
+"""读取插件脚本中的 PARAMETERS。"""
 
 from __future__ import annotations
 
@@ -14,43 +14,32 @@ _ALLOWED_TYPES = {"string", "int", "float", "bool", "select"}
 
 
 def _setup_package_context(module, path: Path) -> None:
-    """检测文件内容中是否有相对导入，如有则设置包的上下文。
-
-    对于 plugins/generation/xxx.py，设置 __package__ = "plugins.generation"。
-    """
+    """给带相对导入的插件补上包名。"""
     try:
         content = path.read_text(encoding="utf-8")
     except Exception:
         return
 
-    has_relative = any(
+    has_relative_import = any(
         line.strip().startswith(("from .", "from .."))
         for line in content.split("\n")
     )
-    if not has_relative:
+    if not has_relative_import:
         return
 
-    # 从路径推断包名：plugins/generation/xxx.py → plugins.generation
     parts = list(path.parts)
-    # 找到 "plugins" 在路径中的位置
     try:
         plugins_idx = parts.index("plugins")
     except ValueError:
         return
 
-    # 包名从 plugins 开始，直到文件所在目录
-    pkg_parts = parts[plugins_idx:-1]  # 去掉文件名
-    if pkg_parts:
-        module.__package__ = ".".join(pkg_parts)
+    package_parts = parts[plugins_idx:-1]
+    if package_parts:
+        module.__package__ = ".".join(package_parts)
 
 
 def reflect_parameters(script_path: Path) -> dict[str, Any]:
-    """加载 .py 脚本，提取并校验 PARAMETERS 变量。
-
-    Returns:
-        {"ok": True, "parameters": [...]}
-        {"ok": False, "error": "..."}
-    """
+    """加载脚本并返回规范化后的参数列表。"""
     path = Path(script_path).resolve()
     if not path.exists():
         return {"ok": False, "error": f"文件不存在: {path}"}
@@ -66,7 +55,6 @@ def reflect_parameters(script_path: Path) -> dict[str, Any]:
 
         module = importlib.util.module_from_spec(spec)
 
-        # 检测是否需要包的相对导入支持
         _setup_package_context(module, path)
 
         sys.modules[module_name] = module

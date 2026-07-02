@@ -501,36 +501,34 @@ class BackendBridge:
         existing_map = {a["key"]: a for a in existing}
         for algo in DEFAULT_ALGORITHMS:
             if algo["key"] in existing_map:
-                continue  # 已有算法不覆盖，保留用户修改
-            else:
-                self.facade.algorithm_service.create_algorithm(dict(algo))
+                continue
+            self.facade.algorithm_service.create_algorithm(dict(algo))
         self._repair_training_validation_rules(existing_map)
         self._merge_legacy_algorithm_aliases()
+        self._seed_default_bindings(DEFAULT_BINDINGS)
 
     def _repair_training_validation_rules(self, existing_map: dict) -> None:
-        """修复已有训练算法的 validation_rules_json：
-        若为空 {} 但种子数据中存在对应的 scenario_key，则补齐。"""
+        """补齐旧训练算法缺失的场景规则。"""
         from ..seed_data import DEFAULT_ALGORITHMS
         from ..models import Algorithm
 
-        seed_vr_map = {}
+        seed_rules_by_key = {}
         for algo in DEFAULT_ALGORITHMS:
-            vr_json = algo.get("validation_rules_json")
-            if algo.get("category") == "training" and isinstance(vr_json, dict) and vr_json.get("scenario_key"):
-                seed_vr_map[algo["key"]] = vr_json
+            rules = algo.get("validation_rules_json")
+            if algo.get("category") == "training" and isinstance(rules, dict) and rules.get("scenario_key"):
+                seed_rules_by_key[algo["key"]] = rules
 
-        if not seed_vr_map:
+        if not seed_rules_by_key:
             return
 
         with self.facade.session_factory() as session:
-            for algo_key, seed_vr in seed_vr_map.items():
+            for algo_key, seed_rules in seed_rules_by_key.items():
                 existing = session.query(Algorithm).filter(Algorithm.key == algo_key).first()
                 if existing is None:
                     continue
-                current_vr = existing.validation_rules_json or {}
-                # 仅在当前值为空或缺少 scenario_key 时修复
-                if not isinstance(current_vr, dict) or not current_vr.get("scenario_key"):
-                    existing.validation_rules_json = seed_vr
+                current_rules = existing.validation_rules_json or {}
+                if not isinstance(current_rules, dict) or not current_rules.get("scenario_key"):
+                    existing.validation_rules_json = seed_rules
             session.commit()
 
     def _merge_legacy_algorithm_aliases(self) -> None:
@@ -580,14 +578,14 @@ class BackendBridge:
                 task.parameters_json = parameters
                 task.payload_json = payload
 
-        # 播种默认训练→评估绑定
+    def _seed_default_bindings(self, default_bindings: dict) -> None:
         existing_bindings = self.facade.algorithm_service.get_bindings()
-        for training_key, eval_key in DEFAULT_BINDINGS.items():
+        for training_key, eval_key in default_bindings.items():
             if training_key not in existing_bindings:
                 try:
                     self.facade.algorithm_service.set_binding(training_key, eval_key)
                 except Exception:
-                    pass  # 绑定失败的静默跳过（算法可能尚未注册）
+                    pass
 
     def reflect_parameters(self, script_path: str) -> dict:
         """从 .py 脚本反射参数列表。"""
