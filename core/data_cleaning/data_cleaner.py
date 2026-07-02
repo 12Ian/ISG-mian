@@ -46,19 +46,18 @@ class DataCleaner:
         total = query.count()
         items = query.order_by(CleaningTask.created_at.desc()).all()
         
-        # 转换为字典列表
-        items_list = []
-        for item in items:
-            items_list.append({
-                "id": item.id,
-                "dataset_id": item.dataset_id,
-                "modality": item.modality,
-                "status": item.status,
-                "progress": item.progress,
-                "created_at": item.created_at
+        task_items = []
+        for task in items:
+            task_items.append({
+                "id": task.id,
+                "dataset_id": task.dataset_id,
+                "modality": task.modality,
+                "status": task.status,
+                "progress": task.progress,
+                "created_at": task.created_at
             })
         
-        return {"total": total, "items": items_list}
+        return {"total": total, "items": task_items}
 
     def get_cleaning_task(self, task_id: int) -> Optional[CleaningTask]:
         """获取清洗任务详情"""
@@ -105,8 +104,7 @@ class DataCleaner:
         self.db.commit()
         
         try:
-            normalized = self._normalize_parameters(task.modality, task.parameters or {})
-            # 获取数据集中的样本
+            clean_options = self._normalize_parameters(task.modality, task.parameters or {})
             samples = self.db.query(Sample).filter(
                 Sample.dataset_id == task.dataset_id,
                 Sample.type == task.modality,
@@ -123,8 +121,8 @@ class DataCleaner:
                 return {"status": "success", "message": "cleaning task completed", "processed_count": 0}
 
             duplicate_sample_ids = set()
-            if task.modality == "image" and normalized.get("deduplicate", False):
-                duplicate_sample_ids = set(self._detect_image_duplicates(samples, normalized.get("deduplicate_params", {})))
+            if task.modality == "image" and clean_options.get("deduplicate", False):
+                duplicate_sample_ids = set(self._detect_image_duplicates(samples, clean_options.get("deduplicate_params", {})))
                 for dup_id in duplicate_sample_ids:
                     suggestion = CleaningSuggestion(
                         task_id=task.id,
@@ -143,12 +141,10 @@ class DataCleaner:
                         self.db.commit()
                     continue
 
-                # 检测质量问题
                 issues = self.multi_modal_processor.detect_quality_issues(
-                    sample.path, sample.type, normalized
+                    sample.path, sample.type, clean_options
                 )
                 
-                # 生成清洗建议
                 for issue in issues:
                     suggestion = CleaningSuggestion(
                         task_id=task.id,
@@ -187,21 +183,20 @@ class DataCleaner:
         total = query.count()
         items = query.order_by(CleaningSuggestion.created_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
         
-        # 转换为字典列表
-        items_list = []
-        for item in items:
-            sample = self.db.query(Sample).filter(Sample.id == item.sample_id).first()
-            items_list.append({
-                "id": item.id,
-                "sample_id": item.sample_id,
-                "sample_name": sample.name if sample else f"sample_{item.sample_id}",
-                "suggestion": item.suggestion,
-                "confidence": item.confidence,
-                "status": item.status,
-                "created_at": item.created_at
+        suggestion_items = []
+        for suggestion in items:
+            sample = self.db.query(Sample).filter(Sample.id == suggestion.sample_id).first()
+            suggestion_items.append({
+                "id": suggestion.id,
+                "sample_id": suggestion.sample_id,
+                "sample_name": sample.name if sample else f"sample_{suggestion.sample_id}",
+                "suggestion": suggestion.suggestion,
+                "confidence": suggestion.confidence,
+                "status": suggestion.status,
+                "created_at": suggestion.created_at
             })
         
-        return {"total": total, "items": items_list}
+        return {"total": total, "items": suggestion_items}
 
     def approve_cleaning_suggestion(self, suggestion_id: int, action: str) -> Dict[str, str]:
         """审批清洗建议"""
@@ -217,17 +212,14 @@ class DataCleaner:
         
         suggestion.status = "approved" if action == "approve" else "rejected"
         
-        # 如果批准，执行清洗操作
         if action == "approve":
             sample = self.db.query(Sample).filter(
                 Sample.id == suggestion.sample_id
             ).first()
             if sample:
-                # 根据建议类型执行清洗
                 if suggestion.suggestion == "去模糊":
                     self.multi_modal_processor.clean_image(sample.path, {"deblur": True})
                 elif suggestion.suggestion == "去重":
-                    # 处理重复样本
                     dataset_id = sample.dataset_id
                     try:
                         if os.path.exists(sample.path):
@@ -258,17 +250,14 @@ class DataCleaner:
             if suggestion:
                 suggestion.status = "approved" if action == "approve" else "rejected"
                 
-                # 如果批准，执行清洗操作
                 if action == "approve":
                     sample = self.db.query(Sample).filter(
                         Sample.id == suggestion.sample_id
                     ).first()
                     if sample:
-                        # 根据建议类型执行清洗
                         if suggestion.suggestion == "去模糊":
                             self.multi_modal_processor.clean_image(sample.path, {"deblur": True})
                         elif suggestion.suggestion == "去重":
-                            # 处理重复样本
                             try:
                                 if os.path.exists(sample.path):
                                     os.remove(sample.path)
@@ -296,38 +285,38 @@ class DataCleaner:
         if threshold > 16:
             threshold = 16
 
-        hashes: Dict[str, int] = {}
-        hash_list: List[str] = []
+        seen_hashes: Dict[str, int] = {}
+        hash_index: List[str] = []
         duplicates: List[int] = []
         for sample in samples:
-            h = self.multi_modal_processor.compute_image_ahash(sample.path)
-            if not h:
+            image_hash = self.multi_modal_processor.compute_image_ahash(sample.path)
+            if not image_hash:
                 continue
             if threshold == 0:
-                if h in hashes:
+                if image_hash in seen_hashes:
                     duplicates.append(sample.id)
                 else:
-                    hashes[h] = sample.id
+                    seen_hashes[image_hash] = sample.id
                 continue
 
-            if len(hash_list) > 5000:
-                if h in hashes:
+            if len(hash_index) > 5000:
+                if image_hash in seen_hashes:
                     duplicates.append(sample.id)
                 else:
-                    hashes[h] = sample.id
-                    hash_list.append(h)
+                    seen_hashes[image_hash] = sample.id
+                    hash_index.append(image_hash)
                 continue
 
-            is_dup = False
-            for prev in hash_list:
-                if self.multi_modal_processor.hamming_distance_hex64(h, prev) <= threshold:
-                    is_dup = True
+            matched_duplicate = False
+            for previous_hash in hash_index:
+                if self.multi_modal_processor.hamming_distance_hex64(image_hash, previous_hash) <= threshold:
+                    matched_duplicate = True
                     break
-            if is_dup:
+            if matched_duplicate:
                 duplicates.append(sample.id)
             else:
-                hashes[h] = sample.id
-                hash_list.append(h)
+                seen_hashes[image_hash] = sample.id
+                hash_index.append(image_hash)
         return duplicates
 
     def _update_dataset_stats(self, dataset_id: int):

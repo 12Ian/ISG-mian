@@ -54,61 +54,56 @@ class MultiModalProcessor:
             import cv2
             import numpy as np
 
-            img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-            if img is None:
+            gray_image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+            if gray_image is None:
                 return ""
-            img = cv2.resize(img, (8, 8), interpolation=cv2.INTER_AREA)
-            avg = img.mean()
-            bits = (img > avg).astype(np.uint8).flatten()
-            value = 0
-            for b in bits:
-                value = (value << 1) | int(b)
-            return f"{value:016x}"
+            resized = cv2.resize(gray_image, (8, 8), interpolation=cv2.INTER_AREA)
+            average_gray = resized.mean()
+            hash_bits = (resized > average_gray).astype(np.uint8).flatten()
+            hash_value = 0
+            for bit in hash_bits:
+                hash_value = (hash_value << 1) | int(bit)
+            return f"{hash_value:016x}"
         except Exception:
             return ""
 
     def hamming_distance_hex64(self, hex_a: str, hex_b: str) -> int:
         try:
-            a = int(hex_a, 16)
-            b = int(hex_b, 16)
+            left_hash = int(hex_a, 16)
+            right_hash = int(hex_b, 16)
         except Exception:
             return 999
-        x = a ^ b
+        diff_bits = left_hash ^ right_hash
         try:
-            return x.bit_count()
+            return diff_bits.bit_count()
         except Exception:
             count = 0
-            while x:
-                x &= x - 1
+            while diff_bits:
+                diff_bits &= diff_bits - 1
                 count += 1
             return count
 
     def clean_image(self, image_path: str, parameters: Dict[str, Any]):
         """清洗图像数据"""
         try:
-            # 读取图像
             import cv2
 
-            img = cv2.imread(image_path)
-            if img is None:
+            image = cv2.imread(image_path)
+            if image is None:
                 return False
             
-            # 去模糊
             if parameters.get('deblur', False):
-                img = self._deblur_image(img)
+                image = self._deblur_image(image)
             
-            # 调整大小
             if 'resize' in parameters:
-                width = parameters['resize'].get('width', img.shape[1])
-                height = parameters['resize'].get('height', img.shape[0])
-                img = cv2.resize(img, (width, height))
+                width = parameters['resize'].get('width', image.shape[1])
+                height = parameters['resize'].get('height', image.shape[0])
+                image = cv2.resize(image, (width, height))
             
-            # 去噪声
             if parameters.get('denoise', False):
-                img = cv2.fastNlMeansDenoisingColored(img, None, 10, 10, 7, 21)
+                image = cv2.fastNlMeansDenoisingColored(image, None, 10, 10, 7, 21)
             
-            # 保存清洗后的图像
-            cv2.imwrite(image_path, img)
+            cv2.imwrite(image_path, image)
             return True
         except Exception:
             return False
@@ -116,19 +111,15 @@ class MultiModalProcessor:
     def clean_text(self, text_path: str, parameters: Dict[str, Any]):
         """清洗文本数据"""
         try:
-            # 读取文本
             with open(text_path, 'r', encoding='utf-8', errors='ignore') as f:
                 text = f.read()
             
-            # 去除多余空白
             if parameters.get('remove_whitespace', True):
                 text = re.sub(r'\s+', ' ', text).strip()
             
-            # 去除特殊字符
             if parameters.get('remove_special_chars', False):
                 text = re.sub(r'[^\w\s]', '', text)
             
-            # 保存清洗后的文本
             with open(text_path, 'w', encoding='utf-8') as f:
                 f.write(text)
             return True
@@ -138,7 +129,6 @@ class MultiModalProcessor:
     def clean_tabular(self, tabular_path: str, parameters: Dict[str, Any]):
         """清洗表格数据"""
         try:
-            # 读取表格数据
             pd = self._load_pandas()
 
             if tabular_path.endswith('.csv'):
@@ -148,16 +138,12 @@ class MultiModalProcessor:
             else:
                 return False
             
-            # 处理缺失值
             if parameters.get('handle_missing', True):
-                # 填充缺失值
                 df = df.fillna(parameters.get('fill_value', 0))
             
-            # 去除重复行
             if parameters.get('remove_duplicates', True):
                 df = df.drop_duplicates()
             
-            # 保存清洗后的表格
             if tabular_path.endswith('.csv'):
                 df.to_csv(tabular_path, index=False)
             elif tabular_path.endswith('.xlsx'):
@@ -186,17 +172,16 @@ class MultiModalProcessor:
         try:
             import cv2
 
-            img = cv2.imread(image_path)
-            if img is None:
+            image = cv2.imread(image_path)
+            if image is None:
                 issues.append({
                     'suggestion': '无效图像',
                     'confidence': 1.0
                 })
                 return issues
             
-            # 检测模糊
             if parameters.get('detect_blur', True):
-                gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+                gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
                 laplacian = cv2.Laplacian(gray, cv2.CV_64F)
                 blur_score = laplacian.var()
                 if blur_score < 100:
@@ -205,9 +190,8 @@ class MultiModalProcessor:
                         'confidence': 1.0 - (blur_score / 100)
                     })
             
-            # 检测低对比度
             if parameters.get('detect_contrast', True):
-                gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+                gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
                 min_val, max_val, _, _ = cv2.minMaxLoc(gray)
                 contrast = (max_val - min_val) / (max_val + min_val) if (max_val + min_val) > 0 else 0
                 if contrast < 0.3:
@@ -228,14 +212,12 @@ class MultiModalProcessor:
             with open(text_path, 'r', encoding='utf-8', errors='ignore') as f:
                 text = f.read()
             
-            # 检测空文本
             if len(text.strip()) == 0:
                 issues.append({
                     'suggestion': '空文本',
                     'confidence': 1.0
                 })
             
-            # 检测文本长度
             if parameters.get('min_length', 0) > 0:
                 if len(text) < parameters['min_length']:
                     issues.append({
@@ -261,7 +243,6 @@ class MultiModalProcessor:
             else:
                 return issues
             
-            # 检测缺失值
             if parameters.get('detect_missing', True):
                 missing_count = df.isnull().sum().sum()
                 total_cells = df.shape[0] * df.shape[1]
@@ -273,7 +254,6 @@ class MultiModalProcessor:
                             'confidence': missing_ratio
                         })
             
-            # 检测重复行
             if parameters.get('detect_duplicates', True):
                 duplicate_count = df.duplicated().sum()
                 if duplicate_count > 0:
@@ -288,13 +268,11 @@ class MultiModalProcessor:
 
     def _deblur_image(self, img):
         """去模糊图像"""
-        # 使用高斯模糊的逆过程
         import cv2
         import numpy as np
 
-        kernel = np.array([[1, 1, 1], [1, -8, 1], [1, 1, 1]])
-        img = cv2.filter2D(img, -1, kernel)
-        return img
+        sharpen_kernel = np.array([[1, 1, 1], [1, -8, 1], [1, 1, 1]])
+        return cv2.filter2D(img, -1, sharpen_kernel)
 
     def _load_pandas(self):
         try:
