@@ -6,7 +6,7 @@ from ..backend_catalog import get_generation_algorithms
 
 
 class AlgorithmManager:
-    """Demo enhancement algorithms with stable extension points."""
+    """Built-in enhancement algorithms with stable extension points."""
 
     def get_algorithms(self, modality: Optional[str] = None):
         return get_generation_algorithms(modality)

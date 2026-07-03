@@ -786,7 +786,12 @@ Item {
     }
 
     // ================= 全局状态保存/恢复 =================
+    function hasBackendService() {
+        return typeof backendService !== "undefined" && backendService !== null
+    }
+
     function saveToAppState() {
+        if (!root.hasBackendService()) return
         // 把 ListModel 序列化为 JSON 持久化到后端数据库
         var histArr = []
         for (var hi = 0; hi < evalHistoryModel.count; hi++) {
@@ -835,11 +840,13 @@ Item {
     }
 
     function restoreFromAppState() {
+        if (!root.hasBackendService()) return
         // 从后端数据库加载持久化状态
         backendService.getSetting("eval_state")
     }
 
     function restoreTrainingTasksFromBackend() {
+        if (!root.hasBackendService()) return
         // 场景加载完成后，以数据库状态同步训练队列
         if (scenarioModel.count === 0) return
         backendService.getTrainingTasks(0, "")
@@ -1983,7 +1990,7 @@ Item {
                         RowLayout {
                             Layout.fillWidth: true
                             Text { text: "评估结果"; color: root.textColor; font.pixelSize: 14; font.bold: true }
-                            Text { text: evalResultModel.count > 0 ? ("共 " + evalResultModel.count + " 条结果") : "执行评估后在这里查看指标结果"; color: root.textMuted; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
+                            Text { text: evalResultModel.count > 0 ? ("共 " + evalResultModel.count + " 条结果") : "执行评估后可查看指标结果"; color: root.textMuted; font.pixelSize: 11; Layout.fillWidth: true; elide: Text.ElideRight }
                         }
 
                         Rectangle {

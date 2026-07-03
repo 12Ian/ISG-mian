@@ -86,12 +86,12 @@ def run(payload: dict, context) -> dict:
             if len(parts) > 2 and np.random.rand() < concise:
                 out = "。".join(parts[: max(1, len(parts) // 2)]) + "。"
 
-        of = output_dir / f"{sp.stem}_style_{index:04d}{sp.suffix or '.txt'}"
-        of.write_text(out, encoding="utf-8")
+        output_path = output_dir / f"{sp.stem}_style_{index:04d}{sp.suffix or '.txt'}"
+        output_path.write_text(out, encoding="utf-8")
         outputs.append({
             "source_sample_id": sample.get("id"),
-            "output_path": str(of),
-            "relative_path": of.name,
+            "output_path": str(output_path),
+            "relative_path": output_path.name,
             "metadata": {"method": "style_controlled", "style": style},
             "status": "created",
         })

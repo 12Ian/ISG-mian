@@ -2204,7 +2204,7 @@ Item {
                             Layout.fillWidth: true; Layout.fillHeight: true; color: root.bgDark; radius: 6; border.color: root.borderColor; border.width: 1; clip: true
                             ColumnLayout {
                                 anchors.centerIn: parent; spacing: 10; visible: previewModel.count === 0 && !root.isGenerating
-                                Text { text: root.isCompleted ? "LOADING_RESULTS" : "AWAITING_TASK"; color: root.textMuted; font.pixelSize: 14; font.family: "Courier"; font.bold: true; Layout.alignment: Qt.AlignHCenter }
+                                Text { text: root.isCompleted ? "正在加载结果" : "等待任务执行"; color: root.textMuted; font.pixelSize: 14; font.family: "Courier"; font.bold: true; Layout.alignment: Qt.AlignHCenter }
                             }
                             ListView {
                                 id: taskMonitorList
@@ -2945,7 +2945,7 @@ Item {
                         ColumnLayout {
                             anchors.centerIn: parent; spacing: 10
                             visible: previewModel.count === 0
-                            Text { text: "LOADING_RESULTS"; color: root.textMuted; font.pixelSize: 14; font.family: "Courier"; font.bold: true; Layout.alignment: Qt.AlignHCenter }
+                            Text { text: "正在加载结果"; color: root.textMuted; font.pixelSize: 14; font.family: "Courier"; font.bold: true; Layout.alignment: Qt.AlignHCenter }
                         }
                         ListView {
                             id: detailFileListView

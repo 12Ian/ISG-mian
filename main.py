@@ -90,7 +90,7 @@ class BackendService(QObject):
                 if result.get("ok"):
                     status_signal.emit(success_msg, True)
                 else:
-                    status_signal.emit(result.get("message", "Task failed"), False)
+                    status_signal.emit(result.get("message", "任务执行失败"), False)
             except Exception as exc:
                 status_signal.emit(str(exc), False)
 
@@ -101,9 +101,9 @@ class BackendService(QObject):
             try:
                 result = self._bridge.run_generation_task(task_id)
                 if result.get("ok"):
-                    self.generationStatusUpdated.emit("Generation complete", True, 100.0)
+                    self.generationStatusUpdated.emit("生成任务已完成", True, 100.0)
                 else:
-                    self.generationStatusUpdated.emit(result.get("message", "Task failed"), False, 0.0)
+                    self.generationStatusUpdated.emit(result.get("message", "任务执行失败"), False, 0.0)
             except Exception as exc:
                 self.generationStatusUpdated.emit(str(exc), False, 0.0)
 
@@ -219,7 +219,7 @@ class BackendService(QObject):
             self.datasetsUpdated.emit(self._bridge.get_datasets(1, 100, ""))
             self.importStatusUpdated.emit(f"已导入 {imported_count} 个文件，失败 {failed_count} 个", True)
             return {"status": "success", "data": data}
-        message = result.get("message", "Unknown error")
+        message = result.get("message", "未知错误")
         self.importStatusUpdated.emit(message, False)
         return {"status": "error", "message": message}
 
@@ -230,14 +230,14 @@ class BackendService(QObject):
         if result.get("ok"):
             self.datasetsUpdated.emit(self._bridge.get_datasets(1, 100, ""))
             return {"status": "success", "data": result.get("data", {})}
-        return {"status": "error", "message": result.get("message", "Unknown error")}
+        return {"status": "error", "message": result.get("message", "未知错误")}
 
     @Slot(str, str, str, result=dict)
     def createDataset(self, name: str, type_: str, description: str) -> dict:
         result = self._bridge.create_dataset(name, type_, description)
         if result.get("ok"):
             return {"status": "success", "id": result["data"]["id"], "name": result["data"]["name"], "dataset_status": result["data"]["status"]}
-        return {"status": "error", "message": result.get("message", "Unknown error")}
+        return {"status": "error", "message": result.get("message", "未知错误")}
 
     @Slot(int, str, str, result=dict)
     def updateDataset(self, datasetId: int, name: str, typeName: str) -> dict:
@@ -273,7 +273,7 @@ class BackendService(QObject):
         result = self._bridge.create_cleaning_task(datasetId, algorithm_ids, parameters or {})
         if not result.get("ok"):
             self.cleaningStatusUpdated.emit(result.get("message", "Error"), False)
-            return {"status": "error", "message": result.get("message", "Unknown error")}
+            return {"status": "error", "message": result.get("message", "未知错误")}
 
         task_id = result["data"]["task_id"]
         self._run_in_background(
@@ -322,7 +322,7 @@ class BackendService(QObject):
         algorithm_ids = [int(item.strip()) for item in str(algorithm or "").split(",") if item.strip()]
         result = self._bridge.create_generation_task(datasetId, 0, algorithm_ids, parameters or {}, targetCount)
         if not result.get("ok"):
-            return {"status": "error", "message": result.get("message", "Unknown error")}
+            return {"status": "error", "message": result.get("message", "未知错误")}
         return {"status": "success", "id": result["data"]["task_id"], "task_status": result["data"]["status"], "target_dataset_id": result["data"].get("target_dataset_id", 0), "target_dataset_name": result["data"].get("target_dataset_name", "")}
 
     @Slot(int, str)
@@ -465,7 +465,7 @@ class BackendService(QObject):
         result = self._bridge.update_task_title(taskId, title)
         if result.get("ok"):
             return {"status": "success", "data": result.get("data", {})}
-        return {"status": "error", "message": result.get("message", "Unknown error")}
+        return {"status": "error", "message": result.get("message", "未知错误")}
 
     @Slot(int, result=dict)
     def cancelTask(self, taskId: int) -> dict:
@@ -490,7 +490,7 @@ class BackendService(QObject):
     def createEvaluationTask(self, scenarioId: int, baselineDatasetId: int, enhancedDatasetId: int, algorithmId: int, parameters: dict) -> dict:
         result = self._bridge.create_evaluation_task(scenarioId, baselineDatasetId, enhancedDatasetId, algorithmId, parameters or {})
         if not result.get("ok"):
-            return {"status": "error", "message": result.get("message", "Unknown error")}
+            return {"status": "error", "message": result.get("message", "未知错误")}
         return {"id": result["data"]["task_id"], "status": "success"}
 
     @Slot(str)
@@ -528,7 +528,7 @@ class BackendService(QObject):
     def createTrainingTask(self, scenarioId: int, datasetId: int, algorithmId: int, parameters: dict) -> dict:
         result = self._bridge.create_training_task(scenarioId, datasetId, algorithmId, parameters or {})
         if not result.get("ok"):
-            return {"status": "error", "message": result.get("message", "Unknown error")}
+            return {"status": "error", "message": result.get("message", "未知错误")}
         return {"status": "success", "id": result["data"]["task_id"], "task_status": result["data"]["status"]}
 
     @Slot(int, str)
@@ -555,7 +555,7 @@ class BackendService(QObject):
                 if result.get("ok"):
                     self.trainingStatusUpdated.emit("Training complete", True, 100.0)
                 else:
-                    self.trainingStatusUpdated.emit(result.get("message", "Task failed"), False, 0.0)
+                    self.trainingStatusUpdated.emit(result.get("message", "任务执行失败"), False, 0.0)
             except Exception as exc:
                 self.trainingStatusUpdated.emit(str(exc), False, 0.0)
         threading.Thread(target=worker, daemon=True).start()
@@ -579,7 +579,7 @@ class BackendService(QObject):
         if result.get("ok"):
             self.testSetImported.emit(result["data"])
             return {"status": "success", "data": result["data"]}
-        return {"status": "error", "message": result.get("message", "Unknown error")}
+        return {"status": "error", "message": result.get("message", "未知错误")}
 
     @Slot()
     def getSystemStatus(self):
@@ -619,14 +619,14 @@ def start_qml_app():
     qml_file = os.path.join(current_dir, "ui", "main_windows.qml")
 
     if not os.path.exists(qml_file):
-        print(f"Error: QML file not found -> {qml_file}")
+        print(f"错误：未找到 QML 文件 -> {qml_file}")
         sys.exit(-1)
 
-    engine.warnings.connect(lambda warnings: print("\nQML warnings:\n" + "\n".join([w.toString() for w in warnings])))
+    engine.warnings.connect(lambda warnings: print("\nQML 警告:\n" + "\n".join([w.toString() for w in warnings])))
     engine.load(QUrl.fromLocalFile(qml_file))
 
     if not engine.rootObjects():
-        print("Error: QML failed to load; see warnings above.")
+        print("错误：QML 加载失败，请查看上方警告。")
         sys.exit(-1)
 
     sys.exit(app.exec())
