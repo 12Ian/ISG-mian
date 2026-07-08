@@ -483,7 +483,7 @@ def test_sample_preview_detects_image_audio_and_text_decode_errors(tmp_path):
 
     assert service.get_sample_preview(image_sample["id"])["data"]["preview_kind"] == "image"
     assert service.get_sample_preview(audio_sample["id"])["data"]["preview_kind"] == "audio"
-    assert service.preview_file_by_path(str(binary_file))["data"]["error"]
+    assert service.preview_file_by_path(str(binary_file))["data"]["preview_kind"] == "file"
     bad_preview = service.get_sample_preview(bad_text_sample["id"])["data"]
     assert bad_preview["preview_kind"] == "text"
     assert bad_preview["text_content"] == ""

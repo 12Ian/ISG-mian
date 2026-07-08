@@ -947,7 +947,9 @@ class DatasetService(ServiceBase):
             relative_parent = path.parent.relative_to(folder).as_posix()
             class_path = "" if relative_parent == "." else relative_parent
             class_name = path.parent.name if path.parent != folder else folder.name
-            labels: list[dict] = []
+            labels: list[dict] = [
+                {"type": "classification", "class_name": class_name, "source": "folder_structure", "split": split}
+            ]
             records.append(
                 {
                     "source_path": path,
@@ -1086,8 +1088,10 @@ class DatasetService(ServiceBase):
             preview_kind = "image"
         elif ext in {".wav", ".mp3", ".aac", ".flac", ".ogg", ".m4a"}:
             preview_kind = "audio"
-        else:
+        elif ext in self._TEXT_EXTENSIONS or ext in self._ANNOTATION_EXTENSIONS:
             preview_kind = "text"
+        else:
+            preview_kind = "file"
 
         payload = {
             "name": path.name,
@@ -1679,7 +1683,11 @@ class DatasetService(ServiceBase):
             "modality": dataset.modality,
             "description": dataset.description,
             "status": dataset.status,
-            "stage": "generated" if status == "generated" or "generated" in {str(tag).lower() for tag in tags} else ("cleaned" if status == "cleaned" or "cleaned" in {str(tag).lower() for tag in tags} else "raw"),
+            "stage": (
+                "generated" if status == "generated" or "generated" in {str(tag).lower() for tag in tags}
+                else ("cleaned" if status == "cleaned" or "cleaned" in {str(tag).lower() for tag in tags}
+                else ("test" if status == "test" or "test" in {str(tag).lower() for tag in tags} else "raw"))
+            ),
             "parent_dataset_id": dataset.parent_dataset_id,
             "parent_dataset_name": parent_dataset_name,
             "storage_path": dataset.storage_path,

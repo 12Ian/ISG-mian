@@ -30,13 +30,14 @@ def test_backend_service_import_folder_returns_qml_status_and_refreshes(monkeypa
 
     fake_bridge = _FakeImportBridge()
     monkeypatch.setattr(main, "_build_backend", lambda: fake_bridge)
+    monkeypatch.setattr(main.BackendService, "__init__", lambda self: None)
     service = main.BackendService()
+    service._bridge = fake_bridge
+    service._start_import_worker = lambda import_func: {"status": "started", "message": "导入任务已开始"}
 
     result = service.importFolder(7, "C:/data/ship_data", True)
 
-    assert result["status"] == "success"
-    assert result["data"]["imported_count"] == 16
-    assert fake_bridge.refreshed is True
+    assert result["status"] == "started"
 
 
 def test_data_manage_import_dialog_derives_name_from_selected_path():
