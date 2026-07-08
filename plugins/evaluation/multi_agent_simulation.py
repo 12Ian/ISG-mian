@@ -52,15 +52,15 @@ def run(payload: dict, context) -> dict:
         },
     }
     report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-    context.set_progress(100.0, "multi-agent simulation complete")
+    context.set_progress(100.0, "多智能体仿真评估完成")
 
     return {
         "ok": True,
         "model_name": "multi-agent-simulation",
         "metrics": report["metrics"],
         "summary": (
-            f"{agent_count} agents evaluated {target_count} target samples against "
-            f"{baseline_count} baseline samples; overall score {overall_score}."
+            f"{agent_count} 个智能体完成仿真评估，增强数据集 {target_count} 个样本，"
+            f"基准数据集 {baseline_count} 个样本，综合得分 {overall_score}。"
         ),
         "artifacts": [{"type": "report", "path": str(report_path)}],
     }

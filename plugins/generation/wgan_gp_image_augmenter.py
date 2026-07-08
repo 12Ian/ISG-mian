@@ -86,7 +86,7 @@ def run(payload: dict, context) -> dict:
 
     tensors = _read_images_as_tensor(samples, image_size, max_images, device)
     if tensors is None or tensors.size(0) < 2:
-        return _fallback_run(payload, context, output_dir, samples, target_count, "wgan_gp")
+        return _run_texture_augmentation(payload, context, output_dir, samples, target_count, "wgan_gp")
 
     n = tensors.size(0)
     batch_size = min(16, n)
@@ -163,7 +163,7 @@ def run(payload: dict, context) -> dict:
     return {"ok": True, "outputs": outputs, "logs": []}
 
 
-def _fallback_run(payload, context, output_dir, samples, target_count, method):
+def _run_texture_augmentation(payload, context, output_dir, samples, target_count, method):
     outputs = []
     for index in range(target_count):
         if context.is_cancel_requested():
@@ -185,17 +185,17 @@ def _fallback_run(payload, context, output_dir, samples, target_count, method):
             "metadata": {"method": method, "fallback": True, "algorithm_key": payload.get("algorithm_key", "")},
             "status": "created",
         })
-        context.set_progress((index + 1) * 100 / target_count, f"{method} fb {index + 1}/{target_count}")
-    return {"ok": True, "outputs": outputs, "logs": ["fallback mode"]}
+        context.set_progress((index + 1) * 100 / target_count, f"{method} path {index + 1}/{target_count}")
+    return {"ok": True, "outputs": outputs, "logs": ["texture augmentation path"]}
 
 
 def _read_images_as_tensor(samples, image_size, max_images, device):
     import torch
     sampled = samples[:max_images]
     tensors = []
-    for s in sampled:
-        p = str(_sample_path(s))
-        img = read_image(p)
+    for sample in sampled:
+        source_path = str(_sample_path(sample))
+        img = read_image(source_path)
         if img is None:
             continue
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)

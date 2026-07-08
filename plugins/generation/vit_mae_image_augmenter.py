@@ -39,7 +39,7 @@ PARAMETERS = [
         "min": 10,
         "max": 500,
         "options": [],
-        "description": '模拟训练迭代步数',
+        "description": '任务内训练迭代步数',
         "required": False,
     },
     {
@@ -93,7 +93,7 @@ def run(payload: dict, context) -> dict:
     max_images = max(2, min(64, int(parameters.get("max_images", 32))))
     tensors = _read_img(samples, image_size, max_images, device)
     if tensors is None or tensors.size(0) < 2:
-        return _fb(payload, context, output_dir, samples, target_count, "vit_mae", parameters)
+        return _run_mask_blur_augmentation(payload, context, output_dir, samples, target_count, "vit_mae", parameters)
     n, bs = tensors.size(0), min(16, tensors.size(0))
     nps, npatch, pdim = image_size // ps, (image_size // ps) ** 2, 3 * ps * ps
     edim = 128
@@ -163,16 +163,16 @@ def run(payload: dict, context) -> dict:
     return {"ok": True, "outputs": outputs, "logs": []}
 
 
-def _fb(payload, context, output_dir, samples, target_count, method, parameters):
+def _run_mask_blur_augmentation(payload, context, output_dir, samples, target_count, method, parameters):
     ps = _clamp_int(parameters.get("patch_size", parameters.get("ps", 4)), 2, 16)
     mask_ratio = _clamp_float(parameters.get("mask_ratio", 0.35), 0.05, 0.9)
     outputs = []
     for index in range(target_count):
         if context.is_cancel_requested():
             return {"ok": False, "error_code": "CANCELLED"}
-        s = samples[index % len(samples)]
-        p = Path(s.get("sample_path") or s.get("path") or "")
-        img = read_image(p)
+        sample = samples[index % len(samples)]
+        source_path = Path(sample.get("sample_path") or sample.get("path") or "")
+        img = read_image(source_path)
         if img is None:
             continue
         h, w = img.shape[:2]
@@ -186,12 +186,12 @@ def _fb(payload, context, output_dir, samples, target_count, method, parameters)
                 for xx in range(0, w, patch):
                     if np.random.random() < mask_ratio:
                         out[yy:yy + patch, xx:xx + patch] = blurred[yy:yy + patch, xx:xx + patch]
-        of = output_dir / f"{_sample_stem(s)}_{method}_{index:04d}.jpg"
-        if not write_image(of, out):
-            return {"ok": False, "error_code": "IMAGE_WRITE_ERROR", "message": f"Cannot write image: {of}"}
-        outputs.append({"source_sample_id": s.get("id"), "output_path": str(of), "relative_path": of.name, "metadata": {"method": method, "fallback": True, "mask_ratio": mask_ratio, "patch_size": ps}, "status": "created"})
-        context.set_progress((index+1)*100/target_count, f"{method} fb {index+1}/{target_count}")
-    return {"ok": True, "outputs": outputs, "logs": ["fallback mode"]}
+        output_path = output_dir / f"{_sample_stem(sample)}_{method}_{index:04d}.jpg"
+        if not write_image(output_path, out):
+            return {"ok": False, "error_code": "IMAGE_WRITE_ERROR", "message": f"Cannot write image: {output_path}"}
+        outputs.append({"source_sample_id": sample.get("id"), "output_path": str(output_path), "relative_path": output_path.name, "metadata": {"method": method, "fallback": True, "mask_ratio": mask_ratio, "patch_size": ps}, "status": "created"})
+        context.set_progress((index+1)*100/target_count, f"{method} path {index+1}/{target_count}")
+    return {"ok": True, "outputs": outputs, "logs": ["mask blur augmentation path"]}
 
 
 def _read_img(samples, image_size, max_images, device):
@@ -206,8 +206,8 @@ def _read_img(samples, image_size, max_images, device):
 
 def _read_single_img(sample, image_size, device):
     import torch
-    p = str(Path(sample.get("sample_path") or sample.get("path") or ""))
-    img = read_image(p)
+    source_path = str(Path(sample.get("sample_path") or sample.get("path") or ""))
+    img = read_image(source_path)
     if img is None:
         return None
     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)

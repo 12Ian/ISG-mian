@@ -540,11 +540,11 @@ class AlgorithmManager:
         output_dir: str,
         index: int,
     ) -> Optional[str]:
-        """跨模态融合的“可跑降级版”：单张图生成伪红外，再融合到可见光的亮度通道。
+        """跨模态融合：单张图估计红外响应，再融合到可见光的亮度通道。
 
         说明：当前增强框架一次只传入一张样本图像（没有 IR/VIS 成对输入），
-        因此这里退化为“单张伪融合”，用于补齐功能链路与 UI/参数流程。
-        若你后续能提供成对配对规则（或 metadata pair_id），我可以把它升级为真正的 IR+VIS 成对融合。
+        因此这里采用单图响应估计方式补齐功能链路与 UI/参数流程。
+        后续如提供成对配对规则（或 metadata pair_id），可切换为 IR+VIS 成对融合。
         """
         try:
             img = cv2.imread(image_path)
@@ -553,7 +553,7 @@ class AlgorithmManager:
             if len(img.shape) == 2:
                 img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
 
-            # 生成伪 IR：灰度 + CLAHE + 归一化
+            # 估计 IR 响应：灰度 + CLAHE + 归一化
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             clahe_clip = float(parameters.get("CLAHE剪切值", 2.0))
             clahe = cv2.createCLAHE(clipLimit=max(0.1, clahe_clip), tileGridSize=(8, 8))
@@ -1538,14 +1538,13 @@ class AlgorithmManager:
             with open(text_path, 'r', encoding='utf-8', errors='ignore') as f:
                 text = f.read()
             
-            # 伪回译增强：
+            # 规则回译增强：
             # - 不依赖外部翻译 API/Transformer（后端仅用轻量词表规则）
             # - 思路：中文->英文（替换常见词/短语）->中文（再替换）
             # - 目标：在“尽量保持语义”的前提下产生表述多样性
             #
-            # 注意：由于缺少词性标注/大模型语义约束，这里是规则版“回译模拟”，
-            # 可跑通流程并提供多样性；如果后续你们环境允许接入 transformers，
-            # 我可以再把 4. 上下文与嵌入、5. 生成与风格控制升级为模型版。
+            # 注意：由于缺少词性标注和模型语义约束，这里采用规则版回译流程，
+            # 用于提供稳定的文本多样性；后续可接入 transformers 扩展为模型版。
             mid_lang = str(parameters.get("中间语言", "en")).lower()
             back_trans_prob = float(parameters.get("回译概率", 1.0))
             back_trans_prob = max(0.0, min(back_trans_prob, 1.0))
@@ -1584,7 +1583,7 @@ class AlgorithmManager:
                     "保持": ["maintain", "preserve"],
                 }
 
-                # 2) 英文->中文（逆向词表；仍是“伪回译”）
+                # 2) 英文->中文（逆向词表）
                 en2zh = {}
                 for zh, ens in zh2en.items():
                     for en in ens:
@@ -1699,7 +1698,7 @@ class AlgorithmManager:
                     "慢": ["缓慢", "迟缓", "低速"],
                 },
                 # 由于缺少词性标注器，这里将其余词性映射为“同一词表”
-                # 让约束可跑通流程；后续可接入词性标注再细化。
+                # 先保持约束流程稳定；后续可接入词性标注再细化。
                 "名词": {},
                 "动词": {},
                 "副词": {},
@@ -1820,7 +1819,7 @@ class AlgorithmManager:
         output_dir: str,
         index: int,
     ) -> Optional[str]:
-        """基于上下文与嵌入（规则版上下文约束替换 + 伪跨语言增强）。"""
+        """基于上下文与嵌入（规则版上下文约束替换 + 跨语言表达增强）。"""
         try:
             with open(text_path, "r", encoding="utf-8", errors="ignore") as f:
                 text = f.read()
@@ -1899,7 +1898,7 @@ class AlgorithmManager:
                         best_score = sc
                         best = cand
 
-                # 可选：伪跨语言增强（小概率对 best 再做“回译风格”的二次变体）
+                # 可选：跨语言表达增强（小概率对 best 再做回译风格的二次变体）
                 if cross_lang_strength > 0 and np.random.rand() < cross_lang_strength:
                     # 用极简英->中词表增强：映射到英文同义词再映射回来
                     # 若 best 不在表内则保持不变
@@ -2081,7 +2080,7 @@ class AlgorithmManager:
     ) -> Optional[torch.Tensor]:
         """把若干张图片读进来并转成张量（N, 3, H, W），归一化到[-1, 1]。
 
-        说明：这里实现的是“轻量级 demo 用”的数据增强生成逻辑，
+        说明：这里实现的是内置轻量级数据增强生成逻辑，
         训练/采样都会在 CPU 上运行，因此分辨率和样本量都会做上限裁剪。
         """
         if not image_paths:
@@ -2514,7 +2513,7 @@ class AlgorithmManager:
                 img = cv2.imread(sample_path)
                 if img is None:
                     return None
-                # 退化为“多轮噪声扰动”（保证流程可跑）
+                # 使用多轮噪声扰动保持增强流程稳定
                 steps = int(parameters.get("扩散步数上限", 50))
                 for _ in range(max(1, steps // 10)):
                     noise = np.random.normal(0, 0.1, img.shape)

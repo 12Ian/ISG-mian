@@ -22,9 +22,9 @@ Item {
     // ================= 数据模型 =================
     ListModel {
         id: statsModel
-        ListElement { title: "总数据集"; val: "0"; sub: "↑ 0% vs 上月"; subC: "#52C41A"; prog: 0; progC: Theme.primary }
-        ListElement { title: "总样本数"; val: "0"; sub: "↑ 0% vs 上月"; subC: "#52C41A"; prog: 0; progC: "#36CFC9" }
-        ListElement { title: "已处理样本"; val: "0"; sub: "↓ 0% vs 上月"; subC: "#FF4D4F"; prog: 0; progC: Theme.warning }
+        ListElement { title: "总数据集"; val: "0"; sub: "↑ 0% 较上月"; subC: "#52C41A"; prog: 0; progC: Theme.primary }
+        ListElement { title: "总样本数"; val: "0"; sub: "↑ 0% 较上月"; subC: "#52C41A"; prog: 0; progC: "#36CFC9" }
+        ListElement { title: "已处理样本"; val: "0"; sub: "↓ 0% 较上月"; subC: "#FF4D4F"; prog: 0; progC: Theme.warning }
         ListElement { title: "存储空间"; val: "0 GB"; sub: "0% 已使用"; subC: Theme.muted; prog: 0; progC: "#52C41A" }
     }
     
@@ -55,9 +55,9 @@ Item {
         target: backendService
         function onSystemStatsUpdated(stats) {
             // 更新数据指标卡片
-            statsModel.set(0, { val: stats.total_datasets, sub: "↑ 12% vs 上月", subC: "#52C41A", prog: stats.total_datasets / 60 });
-            statsModel.set(1, { val: stats.total_samples, sub: "↑ 23% vs 上月", subC: "#52C41A", prog: stats.total_samples / 25000 });
-            statsModel.set(2, { val: stats.processed_samples, sub: "↓ 4% vs 上月", subC: "#FF4D4F", prog: stats.processed_samples / 20000 });
+            statsModel.set(0, { val: stats.total_datasets, sub: "↑ 12% 较上月", subC: "#52C41A", prog: stats.total_datasets / 60 });
+            statsModel.set(1, { val: stats.total_samples, sub: "↑ 23% 较上月", subC: "#52C41A", prog: stats.total_samples / 25000 });
+            statsModel.set(2, { val: stats.processed_samples, sub: "↓ 4% 较上月", subC: "#FF4D4F", prog: stats.processed_samples / 20000 });
             statsModel.set(3, { val: stats.total_storage, sub: stats.storage_usage + "% 已使用", subC: Theme.muted, prog: stats.storage_usage / 100 });
         }
         
@@ -67,7 +67,7 @@ Item {
             
             // 判空保护
             if (!activities) {
-                console.log("提示：获取到的 activities 为空");
+                console.log("提示：获取到的活动列表为空");
                 return;
             }
             
@@ -82,7 +82,7 @@ Item {
             
             // 判空保护
             if (!datasets || !datasets.items) {
-                console.log("提示：获取到的 datasets 为空或格式不正确");
+                console.log("提示：获取到的数据集列表为空或格式不正确");
                 return;
             }
             
@@ -238,7 +238,7 @@ Item {
                             var result = backendService.createDataset(datasetName, datasetType, "");
                             
                             if (result && result.status === "success") {
-                                // 模拟导入操作
+                                // 创建完成后刷新数据集列表
                                 console.log("数据集创建成功，ID: " + result.id);
                                 importDataPopup.close();
                                 // 重新获取数据集列表

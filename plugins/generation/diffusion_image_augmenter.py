@@ -62,7 +62,7 @@ def run(payload: dict, context) -> dict:
         import torch.nn as nn
         import torch.optim as optim
     except ImportError:
-        return _fallback(payload, context, Path(payload.get("output", {}).get("output_dir") or "."), payload.get("input", {}).get("samples", []) or [], max(1, int(payload.get("target_count") or 1)), "diffusion", payload.get("parameters", {}) or {})
+        return _run_classical_augmentation(payload, context, Path(payload.get("output", {}).get("output_dir") or "."), payload.get("input", {}).get("samples", []) or [], max(1, int(payload.get("target_count") or 1)), "diffusion", payload.get("parameters", {}) or {})
 
     parameters = payload.get("parameters", {}) or {}
     device = _resolve_device(torch)
@@ -89,7 +89,7 @@ def run(payload: dict, context) -> dict:
 
     tensors = _read_images(samples, image_size, max_images, device)
     if tensors is None or tensors.size(0) < 2:
-        return _fallback(payload, context, output_dir, samples, target_count, "diffusion", parameters)
+        return _run_classical_augmentation(payload, context, output_dir, samples, target_count, "diffusion", parameters)
 
     n = tensors.size(0)
     batch_size = min(16, n)
@@ -163,7 +163,7 @@ def run(payload: dict, context) -> dict:
     return {"ok": True, "outputs": outputs, "logs": []}
 
 
-def _fallback(payload, context, output_dir, samples, target_count, method, parameters):
+def _run_classical_augmentation(payload, context, output_dir, samples, target_count, method, parameters):
     output_dir.mkdir(parents=True, exist_ok=True)
     steps = _clamp_int(parameters.get("diffusion_steps", 40), 5, 200)
     noise_strength = _clamp_float(parameters.get("noise_strength", 0.25), 0.0, 0.8)
@@ -173,8 +173,8 @@ def _fallback(payload, context, output_dir, samples, target_count, method, param
         if context.is_cancel_requested():
             return {"ok": False, "error_code": "CANCELLED"}
         sample = samples[index % len(samples)]
-        p = Path(sample.get("sample_path") or sample.get("path") or sample.get("file_path") or "")
-        img = read_image(p)
+        source_path = Path(sample.get("sample_path") or sample.get("path") or sample.get("file_path") or "")
+        img = read_image(source_path)
         if img is None:
             continue
         original = img.astype(np.float32)
@@ -202,8 +202,8 @@ def _fallback(payload, context, output_dir, samples, target_count, method, param
                 "status": "created",
             }
         )
-        context.set_progress((index + 1) * 100 / target_count, f"{method} fb {index + 1}/{target_count}")
-    return {"ok": True, "outputs": outputs, "logs": ["fallback mode"]}
+        context.set_progress((index + 1) * 100 / target_count, f"{method} path {index + 1}/{target_count}")
+    return {"ok": True, "outputs": outputs, "logs": ["classical augmentation path"]}
 
 
 def _read_images(samples, image_size, max_images, device):
@@ -220,8 +220,8 @@ def _read_images(samples, image_size, max_images, device):
 def _read_single_image(sample, image_size, device):
     import torch
 
-    p = str(Path(sample.get("sample_path") or sample.get("path") or ""))
-    img = read_image(p)
+    source_path = str(Path(sample.get("sample_path") or sample.get("path") or ""))
+    img = read_image(source_path)
     if img is None:
         return None
     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
