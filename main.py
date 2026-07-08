@@ -261,6 +261,12 @@ class BackendService(QObject):
             }
         return {"status": "error", "message": result.get("message", "")}
 
+    @Slot(int, result=dict)
+    def exportDatasetToDesktop(self, datasetId: int) -> dict:
+        desktop_dir = Path.home() / "Desktop"
+        desktop_dir.mkdir(parents=True, exist_ok=True)
+        return self.exportDataset(datasetId, str(desktop_dir))
+
 
     @Slot(str, result=list)
     def getCleaningStrategies(self, modality: str) -> list:

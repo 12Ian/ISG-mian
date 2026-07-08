@@ -627,7 +627,6 @@ Item {
                                 }
 
                                 Button {
-                                    visible: root.canExportDataset(modelData)
                                     text: "导出"
                                     Layout.preferredWidth: 60
                                     Layout.preferredHeight: 30
@@ -642,10 +641,16 @@ Item {
                                         verticalAlignment: Text.AlignVCenter
                                     }
                                     onClicked: {
-                                        root.pendingExportDatasetId = modelData.id
-                                        root.pendingExportDatasetName = modelData._cleanName || (modelData.name || "")
-                                        exportPathInput.text = ""
-                                        exportDialog.open()
+                                        if (!modelData.id) {
+                                            root.showToast("请选择要导出的数据集")
+                                            return
+                                        }
+                                        var result = backendService.exportDatasetToDesktop(modelData.id)
+                                        if (result && result.status === "success") {
+                                            root.showToast("导出成功: " + (result.export_path || "桌面"))
+                                        } else {
+                                            root.showToast("导出失败: " + ((result && result.message) ? result.message : "未知错误"))
+                                        }
                                     }
                                 }
 

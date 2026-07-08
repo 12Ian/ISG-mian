@@ -146,10 +146,6 @@ class DatasetService(ServiceBase):
 
         with self.session_factory() as session:
             dataset = self._require_dataset(session, dataset_id, include_deleted=False)
-            dataset_status = str(dataset.status or "").lower()
-            dataset_tags = {str(tag).lower() for tag in (dataset.tags_json or [])}
-            if dataset_status not in {"cleaned", "generated"} and not ({"cleaned", "generated"} & dataset_tags):
-                raise ValidationError("Only cleaned or generated datasets can be exported from this page.")
             source_dir = Path(str(dataset.storage_path or "").strip())
             if not str(source_dir):
                 raise ValidationError("Dataset storage path is empty.")
