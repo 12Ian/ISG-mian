@@ -43,6 +43,25 @@ class DatasetService(ServiceBase):
     log_repository: object
     file_indexer: FileIndexer = field(default_factory=FileIndexer)
     _IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tif", ".tiff"}
+    _TEXT_EXTENSIONS = {".txt", ".csv", ".json", ".jsonl", ".xml", ".md", ".yaml", ".yml", ".log"}
+    _AUDIO_EXTENSIONS = {".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac"}
+    _TABLE_EXTENSIONS = {".tsv", ".xlsx", ".xls", ".parquet", ".arrow"}
+    _ARRAY_EXTENSIONS = {".npy", ".npz", ".mat", ".h5", ".hdf5"}
+    _MODEL_DATA_EXTENSIONS = {".pt", ".pth", ".onnx", ".pkl", ".pickle", ".joblib", ".cache"}
+    _ANNOTATION_EXTENSIONS = {".names", ".data", ".cfg", ".ini", ".toml"}
+    _SUPPORTED_IMPORT_EXTENSIONS = (
+        _IMAGE_EXTENSIONS
+        | _TEXT_EXTENSIONS
+        | _AUDIO_EXTENSIONS
+        | _TABLE_EXTENSIONS
+        | _ARRAY_EXTENSIONS
+        | _MODEL_DATA_EXTENSIONS
+        | _ANNOTATION_EXTENSIONS
+    )
+    _BLOCKED_IMPORT_EXTENSIONS = {
+        ".exe", ".dll", ".msi", ".bat", ".cmd", ".ps1", ".vbs", ".scr", ".com",
+        ".sh", ".jar", ".so", ".dylib", ".apk", ".app", ".sys", ".drv",
+    }
     _TRAINING_PARAMETER_ALLOWLIST = {
         "dataset",
         "backbone",
@@ -235,6 +254,10 @@ class DatasetService(ServiceBase):
                     failed_count += 1
                     errors.append({"path": str(source), "reason": "missing_file"})
                     continue
+                if not self._is_supported_import_file(source):
+                    failed_count += 1
+                    errors.append({"path": str(source), "reason": "unsupported_file_type"})
+                    continue
                 copied = self.file_indexer.copy_into_dataset(source, Path(dataset.storage_path) / "raw", record["relative_path"])
                 sample = self.dataset_repository.create_sample(
                     session,
@@ -261,6 +284,8 @@ class DatasetService(ServiceBase):
                     resource_id=str(sample.id),
                     message=f"Imported file {copied.name} into dataset {dataset.name}",
                 )
+            if imported_count == 0 and errors:
+                raise ValidationError("未发现可导入的数据文件")
             self._refresh_dataset_stats(session, dataset)
             self._write_dataset_manifest(session, dataset)
             session.commit()
@@ -338,18 +363,27 @@ class DatasetService(ServiceBase):
             records = yolo_records
         elif include_subfolders:
             for path in folder.rglob("*"):
-                if path.is_file() and path.name != "dataset_manifest.json":
+                if path.is_file() and path.name != "dataset_manifest.json" and self._is_supported_import_file(path):
                     rel = path.relative_to(folder).as_posix()
                     records.append({"source_path": path, "relative_path": rel})
         else:
             for path in folder.iterdir():
-                if path.is_file() and path.name != "dataset_manifest.json":
+                if path.is_file() and path.name != "dataset_manifest.json" and self._is_supported_import_file(path):
                     rel = path.name
                     records.append({"source_path": path, "relative_path": rel})
 
+        unsupported_files = [
+            path
+            for path in (folder.rglob("*") if include_subfolders else folder.iterdir())
+            if path.is_file() and path.name != "dataset_manifest.json" and not self._is_supported_import_file(path)
+        ]
+        if not records:
+            raise ValidationError("未发现可导入的数据文件")
+
         imported_count = 0
         failed_count = 0
-        errors: list[dict] = []
+        errors: list[dict] = [{"path": str(path), "reason": "unsupported_file_type"} for path in unsupported_files]
+        failed_count += len(unsupported_files)
         with self.session_factory() as session:
             dataset = self._require_dataset(session, dataset_id, include_deleted=False)
             for record in records:
@@ -750,6 +784,8 @@ class DatasetService(ServiceBase):
 
     def _collect_import_records(self, data_path: Path, label_path: Path | None, split: str) -> tuple[list[dict], str]:
         if data_path.is_file():
+            if not self._is_supported_import_file(data_path):
+                raise ValidationError("未发现可导入的数据文件")
             records = [self._build_file_record(data_path, split=split, label_path=label_path)]
             return records, "single_file"
 
@@ -769,6 +805,12 @@ class DatasetService(ServiceBase):
             return records, "folder_tree"
 
         raise ValidationError("Import path does not exist.")
+
+    def _is_supported_import_file(self, path: Path) -> bool:
+        extension = path.suffix.lower()
+        if extension in self._BLOCKED_IMPORT_EXTENSIONS:
+            return False
+        return extension == "" or extension in self._SUPPORTED_IMPORT_EXTENSIONS
 
     def _collect_yolo_detection_records(self, folder: Path, default_split: str = "train") -> list[dict]:
         name_map = self._load_yolo_class_names(folder)
@@ -898,7 +940,7 @@ class DatasetService(ServiceBase):
     def _infer_folder_tree_records(self, folder: Path, split: str = "train") -> list[dict]:
         records = []
         ignored_names = {"train_abs.txt", "kfold_train.txt", "kfold_val.txt", "labels.txt", "annotations.txt", "annotations.json", "params.json"}
-        for path in sorted(p for p in folder.rglob("*") if p.is_file()):
+        for path in sorted(p for p in folder.rglob("*") if p.is_file() and self._is_supported_import_file(p)):
             if path.name in ignored_names:
                 continue
             relative_path = path.relative_to(folder).as_posix()

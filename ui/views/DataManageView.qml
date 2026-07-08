@@ -1328,6 +1328,13 @@ Item {
     FileDialog {
         id: fileDialog
         title: "选择导入的文件"
+        nameFilters: [
+            "常用数据文件 (*.jpg *.jpeg *.png *.bmp *.gif *.webp *.tif *.tiff *.txt *.csv *.tsv *.json *.jsonl *.xml *.md *.yaml *.yml *.log *.wav *.mp3 *.flac *.ogg *.m4a *.aac *.npy *.npz *.mat *.h5 *.hdf5 *.parquet *.arrow *.xlsx *.xls *.pt *.pth *.onnx *.pkl *.pickle *.joblib *.cache *.names *.data *.cfg *.ini *.toml)",
+            "图片文件 (*.jpg *.jpeg *.png *.bmp *.gif *.webp *.tif *.tiff)",
+            "文本与标注文件 (*.txt *.csv *.tsv *.json *.jsonl *.xml *.md *.yaml *.yml *.log *.names *.data *.cfg *.ini *.toml)",
+            "音频文件 (*.wav *.mp3 *.flac *.ogg *.m4a *.aac)",
+            "数组/模型/缓存文件 (*.npy *.npz *.mat *.h5 *.hdf5 *.parquet *.arrow *.pt *.pth *.onnx *.pkl *.pickle *.joblib *.cache)"
+        ]
         onAccepted: {
             var path = root.localPathFromUrl(selectedFile)
             selectedPathInput.text = path

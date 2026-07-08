@@ -161,6 +161,42 @@ def test_dataset_service_import_folder_keeps_relative_paths(tmp_path):
     assert "raw/part-a/sample.txt" in samples["items"][0]["file_path"].replace("\\", "/")
 
 
+def test_dataset_service_rejects_unsupported_file_types(tmp_path):
+    from backend.errors import ValidationError
+
+    service, _paths = build_dataset_service(tmp_path)
+    blocked_file = tmp_path / "tool.exe"
+    blocked_file.write_bytes(b"MZ")
+    dataset_id = service.create_dataset("blocked-demo", "text", "")["data"]["id"]
+
+    try:
+        service.import_files(dataset_id, [str(blocked_file)])
+        assert False, "unsupported executable file should be rejected"
+    except ValidationError as exc:
+        assert "未发现可导入的数据文件" in str(exc)
+
+
+def test_dataset_service_import_folder_skips_unsupported_file_types(tmp_path):
+    service, _paths = build_dataset_service(tmp_path)
+    folder = tmp_path / "mixed"
+    folder.mkdir()
+    (folder / "sample.txt").write_text("ok", encoding="utf-8")
+    (folder / "features.npz").write_bytes(b"npz")
+    (folder / "data_batch_1").write_bytes(b"binary dataset")
+    (folder / "plugin.dll").write_bytes(b"dll")
+    dataset_id = service.create_dataset("mixed-folder", "text", "")["data"]["id"]
+
+    imported = service.import_folder(dataset_id, str(folder), include_subfolders=True)
+    samples = service.get_dataset_samples(dataset_id, page=1, page_size=20, status="")
+
+    assert imported["ok"] is True
+    assert imported["data"]["imported_count"] == 3
+    assert imported["data"]["failed_count"] == 1
+    assert imported["data"]["errors"][0]["reason"] == "unsupported_file_type"
+    assert samples["total"] == 3
+    assert {item["name"] for item in samples["items"]} == {"sample.txt", "features.npz", "data_batch_1"}
+
+
 def test_dataset_service_import_folder_parses_yolo_bbox_labels(tmp_path):
     service, _paths = build_dataset_service(tmp_path)
     folder = tmp_path / "yolo"
@@ -423,7 +459,7 @@ def test_dataset_payload_includes_lineage_tags_extra_and_sample_preview_contract
     assert preview["data"]["error"] == ""
 
 
-def test_sample_preview_detects_image_audio_unknown_and_text_decode_errors(tmp_path):
+def test_sample_preview_detects_image_audio_and_text_decode_errors(tmp_path):
     service, _paths = build_dataset_service(tmp_path)
     image_file = tmp_path / "image.png"
     image_file.write_bytes(b"\x89PNG\r\n\x1a\n")
@@ -436,21 +472,18 @@ def test_sample_preview_detects_image_audio_unknown_and_text_decode_errors(tmp_p
 
     image_ds = service.create_dataset("image-preview", "image", "")["data"]["id"]
     audio_ds = service.create_dataset("audio-preview", "audio", "")["data"]["id"]
-    other_ds = service.create_dataset("other-preview", "other", "")["data"]["id"]
     text_ds = service.create_dataset("bad-text-preview", "text", "")["data"]["id"]
     service.import_files(image_ds, [str(image_file)])
     service.import_files(audio_ds, [str(audio_file)])
-    service.import_files(other_ds, [str(binary_file)])
     service.import_files(text_ds, [str(bad_text_file)])
 
     image_sample = service.get_dataset_samples(image_ds, 1, 20, "")["items"][0]
     audio_sample = service.get_dataset_samples(audio_ds, 1, 20, "")["items"][0]
-    other_sample = service.get_dataset_samples(other_ds, 1, 20, "")["items"][0]
     bad_text_sample = service.get_dataset_samples(text_ds, 1, 20, "")["items"][0]
 
     assert service.get_sample_preview(image_sample["id"])["data"]["preview_kind"] == "image"
     assert service.get_sample_preview(audio_sample["id"])["data"]["preview_kind"] == "audio"
-    assert service.get_sample_preview(other_sample["id"])["data"]["preview_kind"] == "file"
+    assert service.preview_file_by_path(str(binary_file))["data"]["error"]
     bad_preview = service.get_sample_preview(bad_text_sample["id"])["data"]
     assert bad_preview["preview_kind"] == "text"
     assert bad_preview["text_content"] == ""
