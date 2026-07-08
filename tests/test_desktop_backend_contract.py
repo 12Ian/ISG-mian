@@ -176,6 +176,17 @@ def test_default_backend_facade_can_create_dataset(tmp_path):
     assert Path(result["data"]["storage_path"]).exists()
 
 
+def test_data_management_import_runs_in_background_thread():
+    main_py = Path("main.py").read_text(encoding="utf-8")
+    qml = Path("ui/views/DataManageView.qml").read_text(encoding="utf-8")
+
+    assert "def _start_import_worker" in main_py
+    assert "threading.Thread(target=run_import, daemon=True).start()" in main_py
+    assert "return {\"status\": \"started\"" in main_py
+    assert "if (importResult && importResult.status === \"started\")" in qml
+    assert "function onImportStatusUpdated" in qml
+
+
 def test_bridge_dataset_payload_has_qml_compatibility_fields(tmp_path):
     from backend import (
         BackendPaths,

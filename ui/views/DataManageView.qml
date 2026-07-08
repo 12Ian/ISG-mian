@@ -115,6 +115,9 @@ Item {
 
         function onImportStatusUpdated(message, success) {
             root.showToast(message)
+            root.importing = false
+            root.pendingImportArgs = null
+            root.loadData()
         }
     }
 
@@ -1709,6 +1712,9 @@ Item {
                 var importResult = null
                 if (args.isFile) importResult = backendService.uploadFile(newDatasetId, args.path)
                 else importResult = backendService.importFolder(newDatasetId, args.path, true)
+                if (importResult && importResult.status === "started") {
+                    return
+                }
                 if (!importResult || importResult.status !== "success") {
                     root.showToast(importResult && importResult.message ? importResult.message : "导入失败")
                 }

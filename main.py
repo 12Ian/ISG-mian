@@ -203,13 +203,25 @@ class BackendService(QObject):
 
     @Slot(int, str, result=dict)
     def uploadFile(self, datasetId: int, filePath: str) -> dict:
-        result = self._bridge.import_files(datasetId, [filePath])
-        return self._handle_import_result(result)
+        return self._start_import_worker(lambda: self._bridge.import_files(datasetId, [filePath]))
 
     @Slot(int, str, bool, result=dict)
     def importFolder(self, datasetId: int, folderPath: str, includeSubfolders: bool) -> dict:
-        result = self._bridge.import_folder(datasetId, folderPath, includeSubfolders)
-        return self._handle_import_result(result)
+        return self._start_import_worker(lambda: self._bridge.import_folder(datasetId, folderPath, includeSubfolders))
+
+    def _start_import_worker(self, import_func) -> dict:
+        def run_import():
+            try:
+                result = import_func()
+            except Exception as exc:
+                result = {"ok": False, "message": str(exc)}
+            try:
+                self._handle_import_result(result)
+            except Exception as exc:
+                self.importStatusUpdated.emit(str(exc), False)
+
+        threading.Thread(target=run_import, daemon=True).start()
+        return {"status": "started", "message": "导入任务已开始"}
 
     def _handle_import_result(self, result: dict) -> dict:
         if result.get("ok"):
