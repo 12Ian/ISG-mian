@@ -2399,7 +2399,23 @@ Item {
                         }
                         ListView {
                             id: detailFileListView
-                            anchors.fill: parent; anchors.margins: 10; spacing: 8; model: previewModel; clip: true
+                            anchors.fill: parent
+                            anchors.leftMargin: 10
+                            anchors.topMargin: 10
+                            anchors.rightMargin: 18
+                            anchors.bottomMargin: 10
+                            spacing: 8
+                            model: previewModel
+                            clip: true
+                            ScrollBar.vertical: ScrollBar {
+                                parent: detailFileListView.parent
+                                anchors.top: detailFileListView.top
+                                anchors.bottom: detailFileListView.bottom
+                                anchors.right: parent.right
+                                anchors.rightMargin: 4
+                                policy: ScrollBar.AlwaysOn
+                                active: true
+                            }
                             delegate: Rectangle {
                                 width: detailFileListView.width; height: 64; radius: 4
                                 color: ma.containsMouse ? root.tableHoverBg : "transparent"
