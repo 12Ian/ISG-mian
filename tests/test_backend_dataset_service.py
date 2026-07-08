@@ -253,6 +253,23 @@ def test_dataset_service_import_dataset_bundle_allows_empty_test_set(tmp_path):
     assert imported["data"]["train_dataset"]["stage"] == "raw"
 
 
+def test_dataset_service_import_dataset_bundle_allows_duplicate_names(tmp_path):
+    service, _paths = build_dataset_service(tmp_path)
+    source_root = tmp_path / "duplicate-source"
+    (source_root / "class_a").mkdir(parents=True)
+    (source_root / "class_a" / "a.txt").write_text("sample", encoding="utf-8")
+
+    first = service.import_dataset_bundle({"dataset_name": "same-name", "source_path": str(source_root)})
+    second = service.import_dataset_bundle({"dataset_name": "same-name", "source_path": str(source_root)})
+
+    assert first["ok"] is True
+    assert second["ok"] is True
+    assert first["data"]["train_dataset"]["name"] == "same-name"
+    assert second["data"]["train_dataset"]["name"] == "same-name"
+    assert first["data"]["train_dataset"]["id"] != second["data"]["train_dataset"]["id"]
+    assert first["data"]["train_dataset"]["storage_path"] != second["data"]["train_dataset"]["storage_path"]
+
+
 def test_dataset_service_imports_sonar_oltr_project_with_labels_and_split_metadata(tmp_path):
     service, _paths = build_dataset_service(tmp_path)
     project_root = tmp_path / "Sonar-OLTR-main"
