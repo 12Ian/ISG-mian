@@ -38,6 +38,7 @@ Item {
     property int currentTargetDatasetId: 0
     property int lastFailureTaskId: 0
     property string generationErrorMessage: ""
+    property string generationMode: "independent"
 
     property var selectedStrategies: []
     property var generationAlgorithms: []
@@ -354,8 +355,35 @@ Item {
         return algo ? algo.name : "未知算法"
     }
 
+    function algorithmSupportsPipeline(algo) {
+        if (!algo) return false
+        if (algo.supports_pipeline !== undefined) return !!algo.supports_pipeline
+        var inputContract = algo.input_contract || {}
+        var outputContract = algo.output_contract || {}
+        if (inputContract.supports_pipeline === false || outputContract.supports_pipeline === false) return false
+        if (inputContract.supports_pipeline === true || outputContract.supports_pipeline === true) return true
+        if ((algo.modality || "") !== "image") return false
+        var key = String(algo.key || "").toLowerCase()
+        if (key.indexOf("gan") !== -1 || key.indexOf("diffusion") !== -1 || key.indexOf("wgan") !== -1 || key.indexOf("mae") !== -1 || key.indexOf("vit") !== -1) return false
+        var artifacts = outputContract.artifact_types || []
+        return artifacts.indexOf("image") !== -1
+    }
+
+    function selectableAlgorithm(algo) {
+        return root.generationMode !== "pipeline" || root.algorithmSupportsPipeline(algo)
+    }
+
+    function setGenerationMode(mode) {
+        root.generationMode = mode
+        root.selectedStrategies = root.selectedStrategies.filter(function(id) {
+            return root.selectableAlgorithm(root.algorithmById(id))
+        })
+        root.isCompleted = false
+        previewModel.clear()
+    }
+
     function selectedGenerationParameters() {
-        return { algorithm_ids: root.selectedStrategies.slice() }
+        return { algorithm_ids: root.selectedStrategies.slice(), generation_mode: root.generationMode }
     }
 
     property var paramsDataMap: ({})
@@ -811,7 +839,7 @@ Item {
             root.paramsDataMap = root.buildParamsDataMap(algorithms)
             root.generationAlgorithmGroups = root.groupGenerationAlgorithms(algorithms)
             root.selectedStrategies = root.selectedStrategies.filter(function(id) {
-                return root.algorithmById(id) !== null
+                return root.selectableAlgorithm(root.algorithmById(id))
             })
             root.refreshHistoryAlgorithmDescriptions()
         }
@@ -1796,21 +1824,21 @@ Item {
             // 顶部控制面板
             Rectangle {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 90
+                Layout.preferredHeight: 136
                 color: root.panelBg
                 radius: 8
                 border.color: root.borderColor
                 ColumnLayout {
                     anchors.fill: parent
                     anchors.margins: 15
-                    spacing: 12
+                    spacing: 10
                     RowLayout {
                         Layout.fillWidth: true
-                        spacing: 20
+                        spacing: 10
 
                         RowLayout {
                             spacing: 8
-                            Text { text: "📁 基准源数据:"; color: root.textMuted; font.pixelSize: 13 }
+                            Text { text: "基准源数据"; color: root.textMuted; font.pixelSize: 13; font.bold: true }
                             RowLayout {
                                 spacing: 4
                                 Repeater {
@@ -1874,12 +1902,54 @@ Item {
                                 }
                             }
                         }
+                        Item { Layout.fillWidth: true }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 12
 
                         RowLayout {
-                            spacing: 8
-                            Text { text: "🔢 扩增目标数:"; color: root.textMuted; font.pixelSize: 13 }
+                            spacing: 6
+                            Text { text: "生成方式"; color: root.textMuted; font.pixelSize: 13; font.bold: true }
+                            Repeater {
+                                model: [
+                                    { mode: "independent", label: "独立生成" },
+                                    { mode: "pipeline", label: "串行叠加" }
+                                ]
+                                delegate: Rectangle {
+                                    width: modeLabel.contentWidth + 18; height: 30; radius: 4
+                                    color: root.generationMode === modelData.mode ? root.primaryColor : root.bgDark
+                                    border.color: root.generationMode === modelData.mode ? root.primaryColor : root.borderColor
+                                    Text {
+                                        id: modeLabel
+                                        text: modelData.label
+                                        color: root.generationMode === modelData.mode ? "#FFFFFF" : root.textMuted
+                                        font.pixelSize: 12
+                                        font.bold: root.generationMode === modelData.mode
+                                        anchors.centerIn: parent
+                                    }
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: root.setGenerationMode(modelData.mode)
+                                    }
+                                }
+                            }
+                            Text {
+                                text: root.generationMode === "pipeline" ? "按勾选顺序叠加，保存最终产物" : "每个算法独立作用于源数据"
+                                color: root.textMuted
+                                font.pixelSize: 12
+                                elide: Text.ElideRight
+                                Layout.maximumWidth: 260
+                            }
+                        }
+
+                        RowLayout {
+                            spacing: 6
+                            Text { text: "目标数"; color: root.textMuted; font.pixelSize: 13; font.bold: true }
                             Rectangle {
-                                width: 80; height: 32; color: root.bgDark; radius: 4; border.color: root.primaryColor
+                                width: 86; height: 32; color: root.bgDark; radius: 4; border.color: root.primaryColor
                                 TextInput {
                                     text: root.totalCount.toString()
                                     color: root.primaryColor; font.bold: true; font.family: "Courier"; font.pixelSize: 13
@@ -1893,10 +1963,10 @@ Item {
                         Item { Layout.fillWidth: true }
 
                         Rectangle {
-                            width: 150; height: 36; radius: 4
+                            width: 138; height: 36; radius: 4
                             color: root.selectedStrategies.length === 0 ? Theme.border : (root.isGenerating ? Theme.muted : root.primaryColor)
                             opacity: root.selectedStrategies.length === 0 ? 0.5 : 1.0
-                            Text { text: root.isGenerating ? "⏹ 停止生成" : "▶ 开始生成任务"; color: "#FFFFFF"; font.bold: true; font.pixelSize: 13; anchors.centerIn: parent }
+                            Text { text: root.isGenerating ? "停止生成" : "开始生成"; color: "#FFFFFF"; font.bold: true; font.pixelSize: 13; anchors.centerIn: parent }
                             MouseArea {
                                 anchors.fill: parent
                                 cursorShape: root.selectedStrategies.length === 0 ? Qt.ArrowCursor : Qt.PointingHandCursor
@@ -1920,6 +1990,7 @@ Item {
                                                 }
                                             }
                                         }
+                                        params.generation_mode = root.generationMode
                                         var taskResult = backendService.createEnhancementTask(source.id, algoStr, params, root.totalCount)
                                         if (!taskResult || taskResult.status !== "success") {
                                             root.showToast("⚠️ " + (taskResult && taskResult.message ? taskResult.message : "生成任务创建失败"))
@@ -2008,8 +2079,10 @@ Item {
                                                 model: modelData.m
                                                 delegate: Rectangle {
                                                     property int algoId: Number(modelData.id)
+                                                    property bool canSelect: root.selectableAlgorithm(modelData)
                                                     width: parent.width; height: 34; radius: 4
                                                     color: root.selectedStrategies.indexOf(algoId) !== -1 ? root.tableHoverBg : "transparent"
+                                                    opacity: canSelect ? 1.0 : 0.45
                                                     RowLayout {
                                                         anchors.fill: parent; anchors.leftMargin: 25; spacing: 10
                                                         Rectangle {
@@ -2018,11 +2091,21 @@ Item {
                                                             color: root.selectedStrategies.indexOf(algoId) !== -1 ? root.primaryColor : "transparent"
                                                             Text { text: "✓"; font.pixelSize: 10; color: "white"; anchors.centerIn: parent; visible: root.selectedStrategies.indexOf(algoId) !== -1 }
                                                         }
-                                                        Text { text: modelData.name || modelData.key || "未命名算法"; color: root.selectedStrategies.indexOf(algoId) !== -1 ? root.textColor : root.textMuted; font.pixelSize: 12; Layout.fillWidth: true; elide: Text.ElideRight }
+                                                        Text {
+                                                            text: (modelData.name || modelData.key || "未命名算法") + (canSelect ? "" : " (仅独立)")
+                                                            color: root.selectedStrategies.indexOf(algoId) !== -1 ? root.textColor : root.textMuted
+                                                            font.pixelSize: 12
+                                                            Layout.fillWidth: true
+                                                            elide: Text.ElideRight
+                                                        }
                                                     }
                                                     MouseArea {
-                                                        anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                                                        anchors.fill: parent; cursorShape: canSelect ? Qt.PointingHandCursor : Qt.ArrowCursor
                                                         onClicked: {
+                                                            if (!canSelect) {
+                                                                root.showToast("⚠️ 该算法不支持串行叠加，请切换到独立生成")
+                                                                return
+                                                            }
                                                             var arr = root.selectedStrategies.slice()
                                                             var idx = arr.indexOf(algoId)
                                                             if (idx !== -1) arr.splice(idx, 1)

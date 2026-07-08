@@ -164,6 +164,8 @@ class AlgorithmService(ServiceBase):
             "script_path": algorithm.script_path or "",
             "input_contract": algorithm.input_contract_json,
             "output_contract": algorithm.output_contract_json,
+            "supports_pipeline": self._supports_pipeline(algorithm),
+            "pipeline_position": self._pipeline_position(algorithm),
             "validation_rules": algorithm.validation_rules_json,
             "parameters": [
                 {
@@ -189,6 +191,29 @@ class AlgorithmService(ServiceBase):
                     data["bound_evaluation_key"] = eval_algo.key
                     data["bound_evaluation_name"] = eval_algo.name
         return data
+
+    def _supports_pipeline(self, algorithm) -> bool:
+        input_contract = algorithm.input_contract_json or {}
+        output_contract = algorithm.output_contract_json or {}
+        if input_contract.get("supports_pipeline") is False or output_contract.get("supports_pipeline") is False:
+            return False
+        if input_contract.get("supports_pipeline") is True or output_contract.get("supports_pipeline") is True:
+            return True
+        if algorithm.category != "generation" or algorithm.modality not in {"image", "multimodal"}:
+            return False
+        artifact_types = set(output_contract.get("artifact_types") or [])
+        produces = set(output_contract.get("produces") or [])
+        standalone_tokens = ("gan", "diffusion", "wgan", "mae", "vit")
+        if any(token in (algorithm.key or "").lower() for token in standalone_tokens):
+            return False
+        return "image" in artifact_types or "generated_samples" in produces or "outputs" in produces
+
+    def _pipeline_position(self, algorithm) -> str:
+        input_contract = algorithm.input_contract_json or {}
+        output_contract = algorithm.output_contract_json or {}
+        return input_contract.get("pipeline_position") or output_contract.get("pipeline_position") or (
+            "any" if self._supports_pipeline(algorithm) else "standalone"
+        )
 
     def _merge_validation_rules(self, payload: dict, existing: dict | None = None) -> dict:
         rules = dict(existing or {})

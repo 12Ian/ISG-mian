@@ -267,6 +267,73 @@ def test_generation_service_preserves_source_labels_for_augmented_samples(tmp_pa
     assert samples["items"][0]["labels"][0]["class_name"] == "tire"
 
 
+def test_generation_service_pipeline_applies_algorithms_in_sequence(tmp_path):
+    facade, _paths = build_services(tmp_path)
+    source_dataset = create_image_dataset(facade, tmp_path, name="pipeline-source")
+    first_algorithm_id = create_custom_generation_algorithm(
+        facade.algorithm_service,
+        tmp_path,
+        "pipeline_first",
+        (
+            "from pathlib import Path\n"
+            "def run(payload, context):\n"
+            "    outputs = []\n"
+            "    out_dir = Path(payload['output']['output_dir'])\n"
+            "    out_dir.mkdir(parents=True, exist_ok=True)\n"
+            "    sample = payload['input']['samples'][0]\n"
+            "    for index in range(int(payload['target_count'])):\n"
+            "        out = out_dir / f'first-{index}.jpg'\n"
+            "        out.write_bytes(Path(sample['path']).read_bytes())\n"
+            "        outputs.append({'source_sample_id': sample['id'], 'output_path': str(out), 'relative_path': out.name, 'metadata': {'steps': ['first']}})\n"
+            "    return {'ok': True, 'outputs': outputs}\n"
+        ),
+    )
+    second_algorithm_id = create_custom_generation_algorithm(
+        facade.algorithm_service,
+        tmp_path,
+        "pipeline_second",
+        (
+            "from pathlib import Path\n"
+            "def run(payload, context):\n"
+            "    outputs = []\n"
+            "    out_dir = Path(payload['output']['output_dir'])\n"
+            "    out_dir.mkdir(parents=True, exist_ok=True)\n"
+            "    for index, sample in enumerate(payload['input']['samples']):\n"
+            "        out = out_dir / f'second-{index}.jpg'\n"
+            "        out.write_bytes(Path(sample['path']).read_bytes())\n"
+            "        outputs.append({'source_sample_id': sample['source_sample_id'], 'output_path': str(out), 'relative_path': out.name, 'metadata': {'steps': ['first', 'second']}})\n"
+            "    return {'ok': True, 'outputs': outputs}\n"
+        ),
+    )
+
+    created = facade.generation_service.create_task(
+        source_dataset["data"]["id"],
+        0,
+        [first_algorithm_id, second_algorithm_id],
+        {"generation_mode": "pipeline"},
+        2,
+    )
+    task_id = created["data"]["task_id"]
+    target_dataset_id = created["data"]["target_dataset_id"]
+
+    facade.task_manager.start(task_id)
+    result = facade.generation_service.run_task(task_id)
+    outputs = facade.generation_service.list_outputs(task_id, None, 1, 20)
+    samples = facade.dataset_service.list_samples(target_dataset_id, 1, 20, "generated")
+    generated_outputs = [item for item in outputs["items"] if item["status"] != "source"]
+
+    assert result["ok"] is True
+    assert result["data"]["generated_count"] == 2
+    assert len(generated_outputs) == 2
+    assert outputs["parameters"]["generation_mode"] == "pipeline"
+    for item in generated_outputs:
+        assert item["algorithm_id"] == second_algorithm_id
+        assert "second-" in Path(item["output_path"]).name
+        assert item["metadata"]["generation_mode"] == "pipeline"
+        assert item["metadata"]["pipeline_algorithms"] == ["pipeline_first", "pipeline_second"]
+    assert samples["total"] == 3
+
+
 def test_geometric_image_augmenter_plugin_outputs_augmented_path_and_metadata(tmp_path):
     from plugins.generation.geometric_image_augmenter import run
 

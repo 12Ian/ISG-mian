@@ -67,7 +67,20 @@ class GenerationService(ServiceBase):
 
             target_dataset = self._resolve_target_dataset(session, source_dataset, target_dataset_id)
             resolved_algorithm_ids = [algorithm.id for algorithm in algorithms]
-            resolved_parameters = {**(parameters or {}), "algorithm_ids": resolved_algorithm_ids, "target_count": target_count}
+            generation_mode = str((parameters or {}).get("generation_mode") or "independent")
+            if generation_mode not in {"independent", "pipeline"}:
+                raise ValidationError("generation_mode must be 'independent' or 'pipeline'.")
+            if generation_mode == "pipeline":
+                for algorithm in algorithms:
+                    if not self._supports_pipeline(algorithm, source_dataset.modality):
+                        raise ValidationError(f"Algorithm {algorithm.name} does not support pipeline generation.")
+
+            resolved_parameters = {
+                **(parameters or {}),
+                "algorithm_ids": resolved_algorithm_ids,
+                "target_count": target_count,
+                "generation_mode": generation_mode,
+            }
 
             task = self.task_repository.create_task(
                 session,
@@ -83,6 +96,7 @@ class GenerationService(ServiceBase):
                     "target_dataset_id": target_dataset.id,
                     "algorithm_ids": resolved_algorithm_ids,
                     "target_count": target_count,
+                    "generation_mode": generation_mode,
                 },
                 result_json={},
             )
@@ -126,6 +140,7 @@ class GenerationService(ServiceBase):
 
             algorithm_ids = list(task.payload_json.get("algorithm_ids", []))
             target_count = int(task.payload_json.get("target_count", 0))
+            generation_mode = str(task.payload_json.get("generation_mode") or task.parameters_json.get("generation_mode") or "independent")
             if target_count <= 0:
                 raise ValidationError("Generation task target_count must be greater than zero.")
 
@@ -140,6 +155,8 @@ class GenerationService(ServiceBase):
                     raise ValidationError("All algorithms must be enabled.")
                 if algorithm.modality not in {source_dataset.modality, "multimodal"}:
                     raise ValidationError("Algorithm modality must match the source dataset modality.")
+                if generation_mode == "pipeline" and not self._supports_pipeline(algorithm, source_dataset.modality):
+                    raise ValidationError(f"Algorithm {algorithm.name} does not support pipeline generation.")
                 algorithms.append(algorithm)
 
             source_samples = (
@@ -154,20 +171,39 @@ class GenerationService(ServiceBase):
                 raise ValidationError("Source dataset must contain at least one active sample.")
 
         plugin_context = context or self.task_manager.build_context(task_id)
+        if generation_mode == "pipeline":
+            return self._run_pipeline_task(
+                task_id=task_id,
+                source_dataset=source_dataset,
+                target_dataset=target_dataset,
+                source_samples=source_samples,
+                algorithms=algorithms,
+                target_count=target_count,
+                plugin_context=plugin_context,
+                task_parameters=task.parameters_json,
+            )
+
+        algorithm_count = len(algorithms)
+        base_count = target_count // algorithm_count
+        extra_count = target_count % algorithm_count
+        target_counts_by_algorithm = [
+            base_count + (1 if index < extra_count else 0)
+            for index in range(algorithm_count)
+        ]
+
         pending_outputs: list[tuple[int, list[dict]]] = []
         produced_count = 0
         try:
-            for algorithm in algorithms:
-                remaining_count = target_count - produced_count
-                if remaining_count <= 0:
-                    break
+            for algorithm, algorithm_target_count in zip(algorithms, target_counts_by_algorithm):
+                if algorithm_target_count <= 0:
+                    continue
                 payload = {
                     "task_id": task_id,
                     "algorithm_key": algorithm.key,
                     "category": "generation",
                     "modality": source_dataset.modality,
                     "parameters": task.parameters_json,
-                    "target_count": remaining_count,
+                    "target_count": algorithm_target_count,
                     "input": {
                         "dataset_id": source_dataset.id,
                         "dataset_path": source_dataset.storage_path,
@@ -190,7 +226,7 @@ class GenerationService(ServiceBase):
                     self.task_manager.fail(task_id, error_code=error_code, error_message=error_message)
                     return {"ok": False, "error_code": error_code, "message": error_message}
 
-                outputs = list(result.get("outputs", []))[:remaining_count]
+                outputs = list(result.get("outputs", []))[:algorithm_target_count]
                 pending_outputs.append((algorithm.id, outputs))
                 produced_count += len(outputs)
                 progress_pct = min(produced_count / target_count * 100.0, 99.0)
@@ -240,6 +276,164 @@ class GenerationService(ServiceBase):
         except Exception as exc:
             self.task_manager.fail(task_id, error_code="ALGORITHM_RUNTIME_ERROR", error_message=str(exc))
             raise
+
+    def _run_pipeline_task(
+        self,
+        *,
+        task_id: int,
+        source_dataset: Dataset,
+        target_dataset: Dataset,
+        source_samples: list[Sample],
+        algorithms: list[Algorithm],
+        target_count: int,
+        plugin_context,
+        task_parameters: dict,
+    ) -> dict:
+        current_samples = [self._serialize_sample(sample) for sample in source_samples]
+        final_algorithm_id = algorithms[-1].id
+        pipeline_keys = [algorithm.key for algorithm in algorithms]
+        produced_count = 0
+
+        try:
+            for index, algorithm in enumerate(algorithms):
+                if not current_samples:
+                    break
+                stage_dir = Path(self.task_manager.get_output_dir(task_id)) / f"pipeline_{index + 1:02d}_{algorithm.id}"
+                stage_target_count = target_count if index == 0 else len(current_samples)
+                payload = {
+                    "task_id": task_id,
+                    "algorithm_key": algorithm.key,
+                    "category": "generation",
+                    "modality": source_dataset.modality,
+                    "parameters": task_parameters,
+                    "target_count": stage_target_count,
+                    "input": {
+                        "dataset_id": source_dataset.id,
+                        "dataset_path": source_dataset.storage_path,
+                        "samples": current_samples,
+                    },
+                    "output": {
+                        "output_dir": str(stage_dir),
+                    },
+                }
+                result = self.plugin_runner.run(
+                    payload,
+                    plugin_context,
+                    module_path=algorithm.module_path or None,
+                    callable_name=algorithm.callable_name or None,
+                    script_path=algorithm.script_path or None,
+                )
+                if not result.get("ok", False):
+                    error_code = result.get("error_code", "ALGORITHM_RUNTIME_ERROR")
+                    error_message = result.get("message", "Generation plugin failed.")
+                    self.task_manager.fail(task_id, error_code=error_code, error_message=error_message)
+                    return {"ok": False, "error_code": error_code, "message": error_message}
+
+                outputs = list(result.get("outputs", []))[:stage_target_count]
+                current_samples = self._outputs_as_pipeline_samples(outputs, current_samples, algorithm)
+                produced_count = len(current_samples) if index == len(algorithms) - 1 else 0
+                progress_pct = min(((index + 1) / len(algorithms)) * 99.0, 99.0)
+                self.task_manager.set_progress(
+                    task_id,
+                    progress_pct,
+                    f"Pipeline step {index + 1}/{len(algorithms)} produced {len(current_samples)} samples",
+                )
+
+            final_outputs = current_samples[:target_count]
+            for output in final_outputs:
+                metadata = dict(output.get("metadata", {}) or {})
+                metadata["generation_mode"] = "pipeline"
+                metadata["pipeline_algorithms"] = pipeline_keys
+                metadata["final_algorithm_key"] = algorithms[-1].key
+                output["metadata"] = metadata
+
+            produced_count = len(final_outputs)
+            if produced_count < target_count:
+                import logging
+                logging.getLogger("isg").warning(
+                    f"Generation pipeline task {task_id}: produced {produced_count}/{target_count}, "
+                    f"{target_count - produced_count} samples skipped. Continuing with available outputs."
+                )
+
+            self._persist_generation_outputs(
+                task_id=task_id,
+                target_dataset_id=target_dataset.id,
+                algorithm_id=final_algorithm_id,
+                outputs=final_outputs,
+            )
+
+            source_copied_count = self._persist_source_outputs(
+                task_id=task_id,
+                target_dataset_id=target_dataset.id,
+                source_samples=source_samples,
+            )
+            total_count = produced_count + source_copied_count
+            self.task_manager.complete(
+                task_id,
+                result_json={
+                    "generated_count": produced_count,
+                    "source_copied_count": source_copied_count,
+                    "total_count": total_count,
+                    "target_dataset_id": target_dataset.id,
+                    "generation_mode": "pipeline",
+                    "pipeline_algorithms": pipeline_keys,
+                },
+            )
+            return {
+                "ok": True,
+                "data": {
+                    "task_id": task_id,
+                    "generated_count": produced_count,
+                    "source_copied_count": source_copied_count,
+                    "total_count": total_count,
+                    "target_dataset_id": target_dataset.id,
+                    "generation_mode": "pipeline",
+                },
+            }
+        except Exception as exc:
+            self.task_manager.fail(task_id, error_code="ALGORITHM_RUNTIME_ERROR", error_message=str(exc))
+            raise
+
+    def _outputs_as_pipeline_samples(self, outputs: list[dict], input_samples: list[dict], algorithm: Algorithm) -> list[dict]:
+        input_by_id = {item.get("id"): item for item in input_samples}
+        result = []
+        for index, output in enumerate(outputs):
+            output_path = output.get("output_path") or output.get("sample_path") or output.get("path")
+            if not output_path:
+                continue
+            source_sample_id = output.get("source_sample_id")
+            source_sample = input_by_id.get(source_sample_id)
+            if source_sample is None and index < len(input_samples):
+                source_sample = input_samples[index]
+            original_source_sample_id = (
+                output.get("original_source_sample_id")
+                or (source_sample or {}).get("original_source_sample_id")
+                or (source_sample or {}).get("source_sample_id")
+                or source_sample_id
+            )
+            metadata = dict(output.get("metadata", {}) or {})
+            previous_chain = list((source_sample or {}).get("pipeline_algorithms", []))
+            pipeline_algorithms = previous_chain + [algorithm.key]
+            metadata["pipeline_algorithms"] = pipeline_algorithms
+            result.append(
+                {
+                    "id": original_source_sample_id,
+                    "name": Path(output_path).name,
+                    "path": output_path,
+                    "sample_path": output_path,
+                    "modality": (source_sample or {}).get("modality"),
+                    "sample_type": (source_sample or {}).get("sample_type"),
+                    "relative_path": output.get("relative_path") or Path(output_path).name,
+                    "metadata": metadata,
+                    "labels": output.get("labels", (source_sample or {}).get("labels", [])),
+                    "source_sample_id": original_source_sample_id,
+                    "original_source_sample_id": original_source_sample_id,
+                    "pipeline_algorithms": pipeline_algorithms,
+                    "output_path": output_path,
+                    "status": output.get("status", "created"),
+                }
+            )
+        return result
 
     def list_outputs(self, task_id: int, status: str | None, page: int, page_size: int) -> dict:
         with self.session_factory() as session:
@@ -465,6 +659,22 @@ class GenerationService(ServiceBase):
             return True
         image_extensions = {".bmp", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp"}
         return path.suffix.lower() in image_extensions
+
+    def _supports_pipeline(self, algorithm: Algorithm, modality: str) -> bool:
+        input_contract = algorithm.input_contract_json or {}
+        output_contract = algorithm.output_contract_json or {}
+        if input_contract.get("supports_pipeline") is False or output_contract.get("supports_pipeline") is False:
+            return False
+        if input_contract.get("supports_pipeline") is True or output_contract.get("supports_pipeline") is True:
+            return True
+        if modality != "image" or algorithm.modality not in {"image", "multimodal"}:
+            return False
+        artifact_types = set(output_contract.get("artifact_types") or [])
+        produces = set(output_contract.get("produces") or [])
+        standalone_tokens = ("gan", "diffusion", "wgan", "mae", "vit")
+        if any(token in (algorithm.key or "").lower() for token in standalone_tokens):
+            return False
+        return "image" in artifact_types or "generated_samples" in produces or "outputs" in produces
 
     def _serialize_generation_output(self, session, row: GenerationOutput) -> dict:
         source_sample = session.query(Sample).filter(Sample.id == row.source_sample_id).first()
