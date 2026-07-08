@@ -67,6 +67,7 @@ class DatasetService(ServiceBase):
             raise ValidationError("Dataset modality is required.")
 
         with self.session_factory() as session:
+            self._ensure_dataset_name_available(session, clean_name)
             dataset = self.dataset_repository.create_dataset(
                 session,
                 name=clean_name,
@@ -667,6 +668,9 @@ class DatasetService(ServiceBase):
         extra_json: dict,
         records: list[dict],
     ) -> dict:
+        if parent_dataset_id is None and status in {"created", "imported", "raw"}:
+            self._ensure_dataset_name_available(session, name)
+
         dataset = self.dataset_repository.create_dataset(
             session,
             name=name,
@@ -1177,6 +1181,15 @@ class DatasetService(ServiceBase):
         for subdir in [root, root / "raw", root / "cleaned", root / "generated", root / "preview"]:
             subdir.mkdir(parents=True, exist_ok=True)
         return root
+
+    def _ensure_dataset_name_available(self, session, name: str) -> None:
+        duplicate = (
+            session.query(Dataset)
+            .filter(Dataset.name == name, Dataset.is_deleted.is_(False))
+            .first()
+        )
+        if duplicate:
+            raise ValidationError(f"数据集名称已存在: {name}")
 
     def _sanitize_name(self, name: str) -> str:
         invalid = '<>:"/\\|?*'

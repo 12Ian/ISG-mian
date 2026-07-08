@@ -26,6 +26,10 @@ class DataManager:
         if not name or not name.strip():
             raise ValueError("数据集名称不能为空")
 
+        exists = self.db.query(Dataset).filter(Dataset.name == name).first()
+        if exists:
+            raise ValueError("数据集名称已存在")
+
         base_dir = os.path.abspath(os.path.join(".", "data", "datasets"))
         os.makedirs(base_dir, exist_ok=True)
         safe_dir = self._sanitize_dataset_dirname(name)
