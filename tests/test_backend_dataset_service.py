@@ -70,6 +70,23 @@ def test_dataset_service_creates_dataset_and_imports_files(tmp_path):
     assert manifest["samples"]["sample_000001"]["split"] == "train"
 
 
+def test_dataset_service_exports_raw_dataset(tmp_path):
+    service, _paths = build_dataset_service(tmp_path)
+    source_file = tmp_path / "raw-sample.txt"
+    source_file.write_text("raw export", encoding="utf-8")
+    export_root = tmp_path / "Desktop"
+
+    created = service.create_dataset("raw-demo", "text", "")
+    dataset_id = created["data"]["id"]
+    service.import_files(dataset_id, [str(source_file)])
+    exported = service.export_dataset(dataset_id, str(export_root))
+
+    assert exported["ok"] is True
+    export_path = Path(exported["data"]["export_path"])
+    assert export_path.parent == export_root
+    assert (export_path / "raw" / "raw-sample.txt").read_text(encoding="utf-8") == "raw export"
+
+
 def test_dataset_service_delete_purges_files(tmp_path):
     service, _paths = build_dataset_service(tmp_path)
     source_file = tmp_path / "delete-me.txt"

@@ -23,7 +23,7 @@ Item {
         anchors.topMargin: -16
         anchors.rightMargin: -16
         title: "数据管理帮助"
-        body: "本页用于导入、浏览和维护数据集。\n\n1. 顶部筛选区可按数据阶段和数据类型过滤列表，也可以在搜索框输入名称关键字快速定位数据集。\n2. 点击“导入源数据集”后，填写数据集名称、选择模态类型，并选择导入文件或文件夹。文件夹导入会保留目录结构，适合图像、标签、音频等成套数据。\n3. 数据集卡片展示样本数量、数据阶段、类型和存储信息。点击卡片可进入文件明细，查看目录、文件列表和样本预览。\n4. 文件明细窗口支持进入子目录、点击返回上级目录、预览图片/文本/音频等样本内容。\n5. 数据集操作按钮可用于修改名称、查看明细或删除数据集。删除前会弹出确认框，避免误删。\n6. 导入或删除后页面会自动刷新；如果外部文件发生变化，可重新进入数据集明细确认实际文件状态。"
+        body: "本页用于导入、浏览和维护数据集。\n\n1. 顶部筛选区可按数据阶段和数据类型过滤列表，也可以在搜索框输入名称关键字快速定位数据集。\n2. 点击“导入源数据集”后，填写数据集名称、选择模态类型，并选择导入文件或文件夹。文件夹导入会保留目录结构，适合图像、标签、音频等成套数据。\n3. 数据集卡片展示样本数量、数据阶段、类型和存储信息。点击卡片可进入文件明细，查看目录、文件列表和样本预览。\n4. 文件明细窗口支持进入子目录、点击返回上级目录、预览图片/文本/音频等样本内容。\n5. 数据集操作按钮可用于查看明细、导出到指定目录、修改名称或删除数据集。删除前会弹出确认框，避免误删。\n6. 导入、导出或删除后页面会自动刷新；如果外部文件发生变化，可重新进入数据集明细确认实际文件状态。"
     }
 
     // ======== 状态与数据源 ========
@@ -169,11 +169,6 @@ Item {
         if (stage === "cleaned") return "清洗数据集"
         if (stage === "generated") return "生成数据集"
         return "原始数据集"
-    }
-
-    function canExportDataset(item) {
-        var stage = item && item._stage ? item._stage : datasetStage(item)
-        return stage === "cleaned" || stage === "generated"
     }
 
     // 防止后端误判非图片扩展名导致 QML 解码失败
@@ -645,12 +640,10 @@ Item {
                                             root.showToast("请选择要导出的数据集")
                                             return
                                         }
-                                        var result = backendService.exportDatasetToDesktop(modelData.id)
-                                        if (result && result.status === "success") {
-                                            root.showToast("导出成功: " + (result.export_path || "桌面"))
-                                        } else {
-                                            root.showToast("导出失败: " + ((result && result.message) ? result.message : "未知错误"))
-                                        }
+                                        root.pendingExportDatasetId = modelData.id
+                                        root.pendingExportDatasetName = modelData._cleanName || (modelData.name || "")
+                                        exportPathInput.text = ""
+                                        exportDialog.open()
                                     }
                                 }
 
