@@ -611,13 +611,15 @@ Item {
                                     Layout.preferredWidth: 60
                                     Layout.preferredHeight: 30
                                     background: Rectangle {
-                                        color: parent.hovered ? Theme.hover : Theme.control
+                                        color: parent.hovered ? Qt.rgba(29/255, 78/255, 216/255, 0.16) : Qt.rgba(29/255, 78/255, 216/255, 0.08)
                                         radius: 4
-                                        border.color: Theme.border
+                                        border.color: parent.hovered ? Theme.primary : Qt.rgba(29/255, 78/255, 216/255, 0.45)
+                                        border.width: 1
                                     }
                                     contentItem: Text {
                                         text: parent.text
-                                        color: "#D1D5DB"
+                                        color: Theme.primary
+                                        font.bold: true
                                         horizontalAlignment: Text.AlignHCenter
                                         verticalAlignment: Text.AlignVCenter
                                     }
