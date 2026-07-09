@@ -549,7 +549,31 @@ Item {
         var t = String(typeName || "string")
         if (t === "number") return "float"
         if (t === "integer") return "int"
+        if (t === "boolean") return "bool"
         return t
+    }
+
+    function validateParamValue(value, typeName) {
+        var t = root.normalizeParamType(typeName)
+        var text = String(value === undefined || value === null ? "" : value).trim()
+        if (t === "int") return /^-?\d+$/.test(text)
+        if (t === "float") return /^-?(\d+(\.\d*)?|\.\d+)$/.test(text)
+        if (t === "bool") {
+            var lower = text.toLowerCase()
+            return lower === "true" || lower === "false" || lower === "1" || lower === "0" || lower === "yes" || lower === "no"
+        }
+        return true
+    }
+
+    function normalizeParamDefault(value, typeName) {
+        var t = root.normalizeParamType(typeName)
+        if (t === "int") return parseInt(value)
+        if (t === "float") return parseFloat(value)
+        if (t === "bool") {
+            var lower = String(value).trim().toLowerCase()
+            return lower === "true" || lower === "1" || lower === "yes"
+        }
+        return value
     }
 
     function isScriptPath(value) {
@@ -612,13 +636,13 @@ Item {
         var params = []
         for (var i = 0; i < rawParams.length; i++) {
             var p = rawParams[i]
-            var ptype = p.type || "string"
+            var ptype = root.normalizeParamType(p.type)
             var paramDef = {
                 name: p.n,
                 label: p.label || p.n,
                 type: ptype,
                 required: false,
-                default_value: p.v,
+                default_value: root.normalizeParamDefault(p.v, ptype),
                 description: p.desc || ""
             }
             if (ptype === "int" || ptype === "float") {
@@ -1077,6 +1101,7 @@ Item {
                                     width: paramListView.width
                                     height: (root.normalizeParamType(model.type) === "int" || root.normalizeParamType(model.type) === "float" || root.normalizeParamType(model.type) === "select") ? 110 : 76
                                     color: index % 2 === 0 ? "transparent" : root.tableHoverBg
+                                    property string paramTypeValue: root.normalizeParamType(model.type)
 
                                     ColumnLayout {
                                         anchors.fill: parent
@@ -1111,15 +1136,14 @@ Item {
                                                 Layout.preferredWidth: 70; Layout.preferredHeight: 28
                                                 model: ["string", "int", "float", "bool", "select"]
                                                 currentIndex: {
-                                                    var t = model.type || "string"
-                                                    t = root.normalizeParamType(t)
+                                                    var t = paramTypeValue || "string"
                                                     if (t === "int") return 1
                                                     if (t === "float") return 2
                                                     if (t === "bool") return 3
                                                     if (t === "select") return 4
                                                     return 0
                                                 }
-                                                onCurrentTextChanged: editingParamsModel.setProperty(index, "type", currentText)
+                                                onActivated: editingParamsModel.setProperty(index, "type", currentText)
                                                 background: Rectangle { color: root.bgDark; border.color: root.borderColor; border.width: 1; radius: 3 }
                                                 contentItem: Text { text: paramTypeCombo.currentText; color: root.devAccentColor; font.pixelSize: 11; verticalAlignment: Text.AlignVCenter; leftPadding: 5 }
                                                 popup: Popup {
@@ -1315,8 +1339,13 @@ Item {
                         var pArray = []
                         for(var i=0; i<editingParamsModel.count; i++) {
                             var m = editingParamsModel.get(i)
+                            var ptype = root.normalizeParamType(m.type)
+                            if (!root.validateParamValue(m.v, ptype)) {
+                                root.showToast("Invalid default value for " + (m.n || "parameter") + ": expected " + ptype)
+                                return
+                            }
                             pArray.push({
-                                "n": m.n, "label": m.label, "v": m.v, "type": m.type,
+                                "n": m.n, "label": m.label, "v": m.v, "type": ptype,
                                 "min": m.min || "", "max": m.max || "",
                                 "options": m.options || "", "desc": m.desc || ""
                             })
