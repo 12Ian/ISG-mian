@@ -1,0 +1,5 @@
+# Linux 专用补充
+# 先安装 requirements.txt，再安装本文件
+
+tflite-runtime
+torch-npu
