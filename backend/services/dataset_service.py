@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import errno
 from dataclasses import field
 from math import gcd
 from .._compat import to_local_isoformat
@@ -161,7 +162,10 @@ class DatasetService(ServiceBase):
             raise ValidationError("Export target directory is required.")
         if target_root.exists() and not target_root.is_dir():
             raise ValidationError("Export target path must be a directory.")
-        target_root.mkdir(parents=True, exist_ok=True)
+        try:
+            target_root.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise ValidationError(self._export_os_error_message(exc, target_root)) from exc
 
         with self.session_factory() as session:
             dataset = self._require_dataset(session, dataset_id, include_deleted=False)
@@ -177,7 +181,25 @@ class DatasetService(ServiceBase):
                 export_dir = target_root / f"{source_dir.name}_{suffix}"
                 suffix += 1
 
-            shutil.copytree(source_dir, export_dir)
+            source_size = self._directory_size_bytes(source_dir)
+            try:
+                disk_usage = shutil.disk_usage(target_root)
+            except OSError as exc:
+                raise ValidationError(self._export_os_error_message(exc, target_root)) from exc
+            if disk_usage.free < source_size:
+                raise ValidationError(
+                    "导出失败：目标磁盘空间不足。"
+                    f"需要约 {self._format_bytes(source_size)}，"
+                    f"当前可用约 {self._format_bytes(disk_usage.free)}。"
+                    "请清理磁盘空间或选择其他导出目录。"
+                )
+
+            try:
+                shutil.copytree(source_dir, export_dir)
+            except OSError as exc:
+                raise ValidationError(self._export_os_error_message(exc, target_root)) from exc
+            except shutil.Error as exc:
+                raise ValidationError(f"导出失败：复制文件时出错。{exc}") from exc
             self.log_repository.add(
                 session,
                 level="info",
@@ -196,6 +218,31 @@ class DatasetService(ServiceBase):
                     "export_path": str(export_dir),
                 },
             }
+
+    def _directory_size_bytes(self, directory: Path) -> int:
+        total = 0
+        for path in directory.rglob("*"):
+            if path.is_file():
+                try:
+                    total += path.stat().st_size
+                except OSError:
+                    continue
+        return total
+
+    def _format_bytes(self, value: int) -> str:
+        size = float(max(value, 0))
+        for unit in ("B", "KB", "MB", "GB", "TB"):
+            if size < 1024 or unit == "TB":
+                return f"{size:.1f} {unit}" if unit != "B" else f"{int(size)} B"
+            size /= 1024
+        return f"{size:.1f} TB"
+
+    def _export_os_error_message(self, exc: OSError, target_root: Path) -> str:
+        if exc.errno == errno.ENOSPC:
+            return "导出失败：目标磁盘空间不足，请清理磁盘空间或选择其他导出目录。"
+        if exc.errno in {errno.EACCES, errno.EPERM}:
+            return f"导出失败：没有权限写入目标目录 {target_root}，请更换目录或检查权限。"
+        return f"导出失败：无法写入目标目录 {target_root}。{exc}"
 
     def purge_dataset_files(self, dataset_id: int) -> dict:
         with self.session_factory() as session:

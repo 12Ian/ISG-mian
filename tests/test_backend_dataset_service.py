@@ -87,6 +87,34 @@ def test_dataset_service_exports_raw_dataset(tmp_path):
     assert (export_path / "raw" / "raw-sample.txt").read_text(encoding="utf-8") == "raw export"
 
 
+def test_dataset_service_export_reports_insufficient_disk_space(tmp_path, monkeypatch):
+    from backend.errors import ValidationError
+    from collections import namedtuple
+
+    service, _paths = build_dataset_service(tmp_path)
+    source_file = tmp_path / "large-sample.txt"
+    source_file.write_text("raw export needs space", encoding="utf-8")
+    export_root = tmp_path / "Desktop"
+
+    created = service.create_dataset("space-demo", "text", "")
+    dataset_id = created["data"]["id"]
+    service.import_files(dataset_id, [str(source_file)])
+
+    DiskUsage = namedtuple("usage", "total used free")
+    monkeypatch.setattr(
+        "backend.services.dataset_service.shutil.disk_usage",
+        lambda _path: DiskUsage(total=100, used=99, free=1),
+    )
+
+    try:
+        service.export_dataset(dataset_id, str(export_root))
+        assert False, "export should fail before copying when target disk is full"
+    except ValidationError as exc:
+        message = str(exc)
+        assert "磁盘空间不足" in message
+        assert "当前可用" in message
+
+
 def test_dataset_service_delete_purges_files(tmp_path):
     service, _paths = build_dataset_service(tmp_path)
     source_file = tmp_path / "delete-me.txt"
