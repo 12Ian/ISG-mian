@@ -1,42 +1,48 @@
-fastapi
-uvicorn
-sqlalchemy
-pyside6
+# Windows 主环境
+# 目标：让桌面程序和绝大多数内置插件可直接安装并运行
+
+PySide6
+SQLAlchemy
+PyYAML
 numpy
-opencv-python
 pandas
+Pillow
+opencv-python>=4.5.4
 librosa
 soundfile
-psutil
-pillow
 mutagen
-python-multipart
 torch
 torchvision
 scipy
 scikit-learn
 matplotlib
 seaborn
+psutil
 requests
 tqdm
-pyyaml
 packaging
+ultralytics
 albumentations
 thop
-ultralytics
+
+# 仓库内引用、且通常可在 Windows 主环境中通过 pip 安装的补充包
+GitPython
+ipython
+tensorboard
+onnx
 onnxruntime
-openvino
-tensorrt
-coremltools
+openvino>=2023.0
 tensorflow
-tflite-runtime
-paddlepaddle
+paddlepaddle>=3.0.0
 clearml
 wandb
 comet_ml
-pycocotools
+pycocotools>=2.0.6
 mss
 pafy
-gitpython
-ipython
-torch-npu
+youtube_dl==2020.12.2
+
+# 已移出主环境的特殊依赖：
+# 1. coremltools -> requirements-macos.txt
+# 2. tflite-runtime / torch-npu -> requirements-linux.txt
+# 3. tensorrt / libmr / macls -> 见 docs/DEPENDENCY_INSTALL.md
