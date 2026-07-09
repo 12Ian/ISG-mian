@@ -1,4 +1,4 @@
-import QtQuick
+﻿import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Dialogs
@@ -10,7 +10,7 @@ Item {
     anchors.fill: parent
 
     // ==========================================
-    // 全局简洁主题规范
+    // 鍏ㄥ眬绠€娲佷富棰樿鑼?
     // ==========================================
     readonly property color bgDark: Theme.bg
     readonly property color panelBg: Theme.panel
@@ -32,15 +32,15 @@ Item {
         anchors.right: parent.right
         anchors.topMargin: -16
         anchors.rightMargin: -16
-        title: "算法配置帮助"
-        body: "本页用于查看、注册、修改和卸载算法插件，是生成、清洗、训练和评估算法的统一配置入口。\n\n1. 左侧按算法大类和数据模态分组展示插件，可通过顶部下拉框筛选全部、清洗、生成、评估或训练算法；点击分组可展开或折叠。\n2. 点击某个算法后，右侧会显示算法名称、所属类别、脚本或模块挂载路径、接口简述、使用说明和参数快照。\n3. “插件规范”按钮会弹出本项目的算法插件开发规范窗口，可下拉查看 run(payload, context) 入口、PARAMETERS 参数声明和输出格式。\n4. “注册新插件环境”用于接入新的 Python 插件。选择脚本后系统会自动反射 PARAMETERS，生成参数配置表；填写名称、类别、模态和说明后确认注册。\n5. “调参修改”用于修改已有算法的参数定义、名称、类别、模态、脚本路径或模块路径。内置模块算法会保留 module_path，脚本插件会复制并保存 script_path。\n6. 参数表支持新增、删除和编辑参数名、显示标签、类型、默认值、数值范围和下拉选项。保存后，数据生成/清洗/评估页面会按这些参数渲染动态配置控件。\n7. “卸载环境”会删除算法注册记录。删除前请确认没有正在运行的任务依赖该算法。\n8. 调整完成后建议回到对应业务页面刷新算法列表，确认新参数和新插件已经生效。"
+        title: "绠楁硶閰嶇疆甯姪"
+        body: "鏈〉鐢ㄤ簬鏌ョ湅銆佹敞鍐屻€佷慨鏀瑰拰鍗歌浇绠楁硶鎻掍欢锛屾槸鐢熸垚銆佹竻娲椼€佽缁冨拰璇勪及绠楁硶鐨勭粺涓€閰嶇疆鍏ュ彛銆俓n\n1. 宸︿晶鎸夌畻娉曞ぇ绫诲拰鏁版嵁妯℃€佸垎缁勫睍绀烘彃浠讹紝鍙€氳繃椤堕儴涓嬫媺妗嗙瓫閫夊叏閮ㄣ€佹竻娲椼€佺敓鎴愩€佽瘎浼版垨璁粌绠楁硶锛涚偣鍑诲垎缁勫彲灞曞紑鎴栨姌鍙犮€俓n2. 鐐瑰嚮鏌愪釜绠楁硶鍚庯紝鍙充晶浼氭樉绀虹畻娉曞悕绉般€佹墍灞炵被鍒€佽剼鏈垨妯″潡鎸傝浇璺緞銆佹帴鍙ｇ畝杩般€佷娇鐢ㄨ鏄庡拰鍙傛暟蹇収銆俓n3. 鈥滄彃浠惰鑼冣€濇寜閽細寮瑰嚭鏈」鐩殑绠楁硶鎻掍欢寮€鍙戣鑼冪獥鍙ｏ紝鍙笅鎷夋煡鐪?run(payload, context) 鍏ュ彛銆丳ARAMETERS 鍙傛暟澹版槑鍜岃緭鍑烘牸寮忋€俓n4. 鈥滄敞鍐屾柊鎻掍欢鐜鈥濈敤浜庢帴鍏ユ柊鐨?Python 鎻掍欢銆傞€夋嫨鑴氭湰鍚庣郴缁熶細鑷姩鍙嶅皠 PARAMETERS锛岀敓鎴愬弬鏁伴厤缃〃锛涘～鍐欏悕绉般€佺被鍒€佹ā鎬佸拰璇存槑鍚庣‘璁ゆ敞鍐屻€俓n5. 鈥滆皟鍙備慨鏀光€濈敤浜庝慨鏀瑰凡鏈夌畻娉曠殑鍙傛暟瀹氫箟銆佸悕绉般€佺被鍒€佹ā鎬併€佽剼鏈矾寰勬垨妯″潡璺緞銆傚唴缃ā鍧楃畻娉曚細淇濈暀 module_path锛岃剼鏈彃浠朵細澶嶅埗骞朵繚瀛?script_path銆俓n6. 鍙傛暟琛ㄦ敮鎸佹柊澧炪€佸垹闄ゅ拰缂栬緫鍙傛暟鍚嶃€佹樉绀烘爣绛俱€佺被鍨嬨€侀粯璁ゅ€笺€佹暟鍊艰寖鍥村拰涓嬫媺閫夐」銆備繚瀛樺悗锛屾暟鎹敓鎴?娓呮礂/璇勪及椤甸潰浼氭寜杩欎簺鍙傛暟娓叉煋鍔ㄦ€侀厤缃帶浠躲€俓n7. 鈥滃嵏杞界幆澧冣€濅細鍒犻櫎绠楁硶娉ㄥ唽璁板綍銆傚垹闄ゅ墠璇风‘璁ゆ病鏈夋鍦ㄨ繍琛岀殑浠诲姟渚濊禆璇ョ畻娉曘€俓n8. 璋冩暣瀹屾垚鍚庡缓璁洖鍒板搴斾笟鍔￠〉闈㈠埛鏂扮畻娉曞垪琛紝纭鏂板弬鏁板拰鏂版彃浠跺凡缁忕敓鏁堛€?
     }
 
-    // 状态控制
+    // 鐘舵€佹帶鍒?
     property int pendingEditIndex: -1
     property int pendingDeleteIndex: -1
 
-    // 分类折叠面板状态
+    // 鍒嗙被鎶樺彔闈㈡澘鐘舵€?
     property int selectedAlgoId: -1
     property bool cleaningExpanded: true
     property bool generationExpanded: true
@@ -51,70 +51,70 @@ Item {
     property int evaluationCount: 0
     property int trainingCount: 0
     property int totalAlgoCount: 0
-    property string algoCategoryFilter: "全部算法"
+    property string algoCategoryFilter: "鍏ㄩ儴绠楁硶"
     property string pluginSpecText: "<html><body style='font-family:Segoe UI,Microsoft YaHei,sans-serif;font-size:14px;color:" + root.textColor + ";background:transparent;padding:24px 30px;line-height:1.7'>" +
-        "<h1 style='font-size:22px;color:" + root.primaryColor + ";margin:0 0 4px 0;font-weight:700'>ISG 算法插件开发规范</h1>" +
-        "<p style='color:" + root.textMuted + ";margin:0 0 28px 0;font-size:13px'>Version 1.0 · Python 插件标准接口</p>" +
+        "<h1 style='font-size:22px;color:" + root.primaryColor + ";margin:0 0 4px 0;font-weight:700'>ISG 绠楁硶鎻掍欢寮€鍙戣鑼?/h1>" +
+        "<p style='color:" + root.textMuted + ";margin:0 0 28px 0;font-size:13px'>Version 1.0 路 Python 鎻掍欢鏍囧噯鎺ュ彛</p>" +
 
-        "<h2 style='font-size:15px;color:" + root.primaryColor + ";margin:24px 0 8px 0'>概述</h2>" +
-        "<p style='margin:0 0 12px 0'>ISG 算法插件是标准 Python <code style='background:" + root.tableHoverBg + ";padding:1px 6px;border-radius:3px'>.py</code> 文件，实现 <code style='background:" + root.tableHoverBg + ";padding:1px 6px;border-radius:3px'>run(payload, context)</code> 入口函数，声明模块级 <code style='background:" + root.tableHoverBg + ";padding:1px 6px;border-radius:3px'>PARAMETERS</code> 列表。</p>" +
+        "<h2 style='font-size:15px;color:" + root.primaryColor + ";margin:24px 0 8px 0'>姒傝堪</h2>" +
+        "<p style='margin:0 0 12px 0'>ISG 绠楁硶鎻掍欢鏄爣鍑?Python <code style='background:" + root.tableHoverBg + ";padding:1px 6px;border-radius:3px'>.py</code> 鏂囦欢锛屽疄鐜?<code style='background:" + root.tableHoverBg + ";padding:1px 6px;border-radius:3px'>run(payload, context)</code> 鍏ュ彛鍑芥暟锛屽０鏄庢ā鍧楃骇 <code style='background:" + root.tableHoverBg + ";padding:1px 6px;border-radius:3px'>PARAMETERS</code> 鍒楄〃銆?/p>" +
 
-        "<h2 style='font-size:15px;color:" + root.primaryColor + ";margin:24px 0 8px 0'>文件结构</h2>" +
-        "<pre style='background:" + root.panelBg + ";color:" + root.textColor + ";border:1px solid " + root.borderColor + ";border-radius:6px;padding:14px 16px;font-family:Consolas,Courier New,monospace;font-size:12.5px;line-height:1.55;margin:0'># -*- coding: utf-8 -*-\n\"\"\"插件简要说明。\"\"\"\nfrom pathlib import Path\n\nPARAMETERS: list[dict[str, Any]] = [\n    {\n        \"name\": \"threshold\",\n        \"type\": \"float\",\n        \"label\": \"阈值\",\n        \"default\": 0.5,\n        \"min\": 0.0, \"max\": 1.0,\n        \"options\": [],\n        \"description\": \"判定阈值\",\n        \"required\": False,\n    },\n]\n\ndef run(payload: dict[str, Any], context: Any) -> dict[str, Any]:\n    \"\"\"算法入口。payload: parameters/input/output\n    成功: {\"ok\": True, \"outputs\": [...]}\n    失败: {\"ok\": False, \"error_code\": \"...\", \"message\": \"...\"}\"\"\"\n    ...</pre>" +
+        "<h2 style='font-size:15px;color:" + root.primaryColor + ";margin:24px 0 8px 0'>鏂囦欢缁撴瀯</h2>" +
+        "<pre style='background:" + root.panelBg + ";color:" + root.textColor + ";border:1px solid " + root.borderColor + ";border-radius:6px;padding:14px 16px;font-family:Consolas,Courier New,monospace;font-size:12.5px;line-height:1.55;margin:0'># -*- coding: utf-8 -*-\n\"\"\"鎻掍欢绠€瑕佽鏄庛€俓"\"\"\nfrom pathlib import Path\n\nPARAMETERS: list[dict[str, Any]] = [\n    {\n        \"name\": \"threshold\",\n        \"type\": \"float\",\n        \"label\": \"闃堝€糪",\n        \"default\": 0.5,\n        \"min\": 0.0, \"max\": 1.0,\n        \"options\": [],\n        \"description\": \"鍒ゅ畾闃堝€糪",\n        \"required\": False,\n    },\n]\n\ndef run(payload: dict[str, Any], context: Any) -> dict[str, Any]:\n    \"\"\"绠楁硶鍏ュ彛銆俻ayload: parameters/input/output\n    鎴愬姛: {\"ok\": True, \"outputs\": [...]}\n    澶辫触: {\"ok\": False, \"error_code\": \"...\", \"message\": \"...\"}\"\"\"\n    ...</pre>" +
 
-        "<h2 style='font-size:15px;color:" + root.primaryColor + ";margin:24px 0 8px 0'>PARAMETERS 字段</h2>" +
+        "<h2 style='font-size:15px;color:" + root.primaryColor + ";margin:24px 0 8px 0'>PARAMETERS 瀛楁</h2>" +
         "<table style='border-collapse:collapse;width:100%;font-size:13px'>" +
-        "<tr style='border-bottom:2px solid " + root.primaryColor + "'><td style='padding:7px 10px;font-weight:700'>字段</td><td style='padding:7px 10px;font-weight:700'>类型</td><td style='padding:7px 10px;font-weight:700'>必填</td><td style='padding:7px 10px;font-weight:700'>说明</td></tr>" +
-        "<tr style='border-bottom:1px solid " + root.borderColor + "'><td style='padding:6px 10px'><code>name</code></td><td style='padding:6px 10px'>str</td><td style='padding:6px 10px'>是</td><td style='padding:6px 10px'>英文小写+下划线</td></tr>" +
-        "<tr style='border-bottom:1px solid " + root.borderColor + "'><td style='padding:6px 10px'><code>type</code></td><td style='padding:6px 10px'>str</td><td style='padding:6px 10px'>是</td><td style='padding:6px 10px'>string / int / float / bool / select</td></tr>" +
-        "<tr style='border-bottom:1px solid " + root.borderColor + "'><td style='padding:6px 10px'><code>label</code></td><td style='padding:6px 10px'>str</td><td style='padding:6px 10px'>是</td><td style='padding:6px 10px'>UI 中文名</td></tr>" +
-        "<tr style='border-bottom:1px solid " + root.borderColor + "'><td style='padding:6px 10px'><code>default</code></td><td style='padding:6px 10px'>*</td><td style='padding:6px 10px'>是</td><td style='padding:6px 10px'>默认值</td></tr>" +
-        "<tr style='border-bottom:1px solid " + root.borderColor + "'><td style='padding:6px 10px'><code>min / max</code></td><td style='padding:6px 10px'>float</td><td style='padding:6px 10px'>否</td><td style='padding:6px 10px'>数值范围</td></tr>" +
-        "<tr style='border-bottom:1px solid " + root.borderColor + "'><td style='padding:6px 10px'><code>options</code></td><td style='padding:6px 10px'>list</td><td style='padding:6px 10px'>否</td><td style='padding:6px 10px'>select 的候选项</td></tr>" +
-        "<tr style='border-bottom:1px solid " + root.borderColor + "'><td style='padding:6px 10px'><code>description</code></td><td style='padding:6px 10px'>str</td><td style='padding:6px 10px'>否</td><td style='padding:6px 10px'>说明文本</td></tr>" +
-        "<tr><td style='padding:6px 10px'><code>required</code></td><td style='padding:6px 10px'>bool</td><td style='padding:6px 10px'>否</td><td style='padding:6px 10px'>默认 false</td></tr>" +
+        "<tr style='border-bottom:2px solid " + root.primaryColor + "'><td style='padding:7px 10px;font-weight:700'>瀛楁</td><td style='padding:7px 10px;font-weight:700'>绫诲瀷</td><td style='padding:7px 10px;font-weight:700'>蹇呭～</td><td style='padding:7px 10px;font-weight:700'>璇存槑</td></tr>" +
+        "<tr style='border-bottom:1px solid " + root.borderColor + "'><td style='padding:6px 10px'><code>name</code></td><td style='padding:6px 10px'>str</td><td style='padding:6px 10px'>鏄?/td><td style='padding:6px 10px'>鑻辨枃灏忓啓+涓嬪垝绾?/td></tr>" +
+        "<tr style='border-bottom:1px solid " + root.borderColor + "'><td style='padding:6px 10px'><code>type</code></td><td style='padding:6px 10px'>str</td><td style='padding:6px 10px'>鏄?/td><td style='padding:6px 10px'>string / int / float / bool / select</td></tr>" +
+        "<tr style='border-bottom:1px solid " + root.borderColor + "'><td style='padding:6px 10px'><code>label</code></td><td style='padding:6px 10px'>str</td><td style='padding:6px 10px'>鏄?/td><td style='padding:6px 10px'>UI 涓枃鍚?/td></tr>" +
+        "<tr style='border-bottom:1px solid " + root.borderColor + "'><td style='padding:6px 10px'><code>default</code></td><td style='padding:6px 10px'>*</td><td style='padding:6px 10px'>鏄?/td><td style='padding:6px 10px'>榛樿鍊?/td></tr>" +
+        "<tr style='border-bottom:1px solid " + root.borderColor + "'><td style='padding:6px 10px'><code>min / max</code></td><td style='padding:6px 10px'>float</td><td style='padding:6px 10px'>鍚?/td><td style='padding:6px 10px'>鏁板€艰寖鍥?/td></tr>" +
+        "<tr style='border-bottom:1px solid " + root.borderColor + "'><td style='padding:6px 10px'><code>options</code></td><td style='padding:6px 10px'>list</td><td style='padding:6px 10px'>鍚?/td><td style='padding:6px 10px'>select 鐨勫€欓€夐」</td></tr>" +
+        "<tr style='border-bottom:1px solid " + root.borderColor + "'><td style='padding:6px 10px'><code>description</code></td><td style='padding:6px 10px'>str</td><td style='padding:6px 10px'>鍚?/td><td style='padding:6px 10px'>璇存槑鏂囨湰</td></tr>" +
+        "<tr><td style='padding:6px 10px'><code>required</code></td><td style='padding:6px 10px'>bool</td><td style='padding:6px 10px'>鍚?/td><td style='padding:6px 10px'>榛樿 false</td></tr>" +
         "</table>" +
 
-        "<h2 style='font-size:15px;color:" + root.primaryColor + ";margin:24px 0 8px 0'>类型约定</h2>" +
+        "<h2 style='font-size:15px;color:" + root.primaryColor + ";margin:24px 0 8px 0'>绫诲瀷绾﹀畾</h2>" +
         "<table style='border-collapse:collapse;width:100%;font-size:13px'>" +
-        "<tr style='border-bottom:2px solid " + root.primaryColor + "'><td style='padding:7px 10px;font-weight:700'>type</td><td style='padding:7px 10px;font-weight:700'>示例</td><td style='padding:7px 10px;font-weight:700'>说明</td></tr>" +
-        "<tr style='border-bottom:1px solid " + root.borderColor + "'><td style='padding:5px 10px'>string</td><td style='padding:5px 10px'><code>\"normal\"</code></td><td style='padding:5px 10px'>字符串</td></tr>" +
-        "<tr style='border-bottom:1px solid " + root.borderColor + "'><td style='padding:5px 10px'>int</td><td style='padding:5px 10px'><code>100</code></td><td style='padding:5px 10px'>整数</td></tr>" +
-        "<tr style='border-bottom:1px solid " + root.borderColor + "'><td style='padding:5px 10px'>float</td><td style='padding:5px 10px'><code>0.5</code></td><td style='padding:5px 10px'>浮点</td></tr>" +
-        "<tr style='border-bottom:1px solid " + root.borderColor + "'><td style='padding:5px 10px'>bool</td><td style='padding:5px 10px'><code>True / False</code></td><td style='padding:5px 10px'>布尔</td></tr>" +
-        "<tr><td style='padding:5px 10px'>select</td><td style='padding:5px 10px'><code>\"A\"</code></td><td style='padding:5px 10px'>枚举，options 必填</td></tr>" +
+        "<tr style='border-bottom:2px solid " + root.primaryColor + "'><td style='padding:7px 10px;font-weight:700'>type</td><td style='padding:7px 10px;font-weight:700'>绀轰緥</td><td style='padding:7px 10px;font-weight:700'>璇存槑</td></tr>" +
+        "<tr style='border-bottom:1px solid " + root.borderColor + "'><td style='padding:5px 10px'>string</td><td style='padding:5px 10px'><code>\"normal\"</code></td><td style='padding:5px 10px'>瀛楃涓?/td></tr>" +
+        "<tr style='border-bottom:1px solid " + root.borderColor + "'><td style='padding:5px 10px'>int</td><td style='padding:5px 10px'><code>100</code></td><td style='padding:5px 10px'>鏁存暟</td></tr>" +
+        "<tr style='border-bottom:1px solid " + root.borderColor + "'><td style='padding:5px 10px'>float</td><td style='padding:5px 10px'><code>0.5</code></td><td style='padding:5px 10px'>娴偣</td></tr>" +
+        "<tr style='border-bottom:1px solid " + root.borderColor + "'><td style='padding:5px 10px'>bool</td><td style='padding:5px 10px'><code>True / False</code></td><td style='padding:5px 10px'>甯冨皵</td></tr>" +
+        "<tr><td style='padding:5px 10px'>select</td><td style='padding:5px 10px'><code>\"A\"</code></td><td style='padding:5px 10px'>鏋氫妇锛宱ptions 蹇呭～</td></tr>" +
         "</table>" +
 
-        "<h2 style='font-size:15px;color:" + root.primaryColor + ";margin:24px 0 8px 0'>run() 函数</h2>" +
-        "<p style='margin:0'>签名: <code style='background:" + root.tableHoverBg + ";padding:1px 6px;border-radius:3px'>def run(payload: dict, context: Any) -> dict</code></p>" +
+        "<h2 style='font-size:15px;color:" + root.primaryColor + ";margin:24px 0 8px 0'>run() 鍑芥暟</h2>" +
+        "<p style='margin:0'>绛惧悕: <code style='background:" + root.tableHoverBg + ";padding:1px 6px;border-radius:3px'>def run(payload: dict, context: Any) -> dict</code></p>" +
 
-        "<p style='font-weight:600;margin:14px 0 4px 0'>payload 结构</p>" +
+        "<p style='font-weight:600;margin:14px 0 4px 0'>payload 缁撴瀯</p>" +
         "<pre style='background:" + root.panelBg + ";color:" + root.textColor + ";border:1px solid " + root.borderColor + ";border-radius:6px;padding:12px 16px;font-family:Consolas,Courier New,monospace;font-size:12.5px;line-height:1.55;margin:0'>{\n  \"algorithm_key\": \"generation.image.geometric_transform\",\n  \"parameters\": { \"rotation_degrees\": 10.0 },\n  \"input\": {\n    \"dataset_id\": 1,\n    \"dataset_path\": \"/data/datasets/abc\",\n    \"samples\": [{ \"id\": 1, \"path\": \"...\", \"labels\": [...] }]\n  },\n  \"output\": { \"output_dir\": \"/data/tasks/42/output\" },\n  \"target_count\": 100\n}</pre>" +
 
-        "<p style='font-weight:600;margin:14px 0 4px 0'>context 方法</p>" +
+        "<p style='font-weight:600;margin:14px 0 4px 0'>context 鏂规硶</p>" +
         "<table style='border-collapse:collapse;width:100%;font-size:13px'>" +
-        "<tr style='border-bottom:2px solid " + root.primaryColor + "'><td style='padding:7px 10px;font-weight:700'>方法</td><td style='padding:7px 10px;font-weight:700'>说明</td></tr>" +
-        "<tr style='border-bottom:1px solid " + root.borderColor + "'><td style='padding:5px 10px;font-family:Consolas,monospace'>set_progress(percent, msg)</td><td style='padding:5px 10px'>更新进度 0–100</td></tr>" +
-        "<tr style='border-bottom:1px solid " + root.borderColor + "'><td style='padding:5px 10px;font-family:Consolas,monospace'>log(level, msg, payload)</td><td style='padding:5px 10px'>记录日志 info/warn/error</td></tr>" +
-        "<tr><td style='padding:5px 10px;font-family:Consolas,monospace'>is_cancel_requested() -> bool</td><td style='padding:5px 10px'>检查取消，周期性调用</td></tr>" +
+        "<tr style='border-bottom:2px solid " + root.primaryColor + "'><td style='padding:7px 10px;font-weight:700'>鏂规硶</td><td style='padding:7px 10px;font-weight:700'>璇存槑</td></tr>" +
+        "<tr style='border-bottom:1px solid " + root.borderColor + "'><td style='padding:5px 10px;font-family:Consolas,monospace'>set_progress(percent, msg)</td><td style='padding:5px 10px'>鏇存柊杩涘害 0鈥?00</td></tr>" +
+        "<tr style='border-bottom:1px solid " + root.borderColor + "'><td style='padding:5px 10px;font-family:Consolas,monospace'>log(level, msg, payload)</td><td style='padding:5px 10px'>璁板綍鏃ュ織 info/warn/error</td></tr>" +
+        "<tr><td style='padding:5px 10px;font-family:Consolas,monospace'>is_cancel_requested() -> bool</td><td style='padding:5px 10px'>妫€鏌ュ彇娑堬紝鍛ㄦ湡鎬ц皟鐢?/td></tr>" +
         "</table>" +
 
-        "<p style='font-weight:600;margin:14px 0 4px 0'>返回值</p>" +
-        "<pre style='background:" + root.panelBg + ";color:" + root.textColor + ";border:1px solid " + root.borderColor + ";border-radius:6px;padding:12px 16px;font-family:Consolas,Courier New,monospace;font-size:12.5px;line-height:1.55;margin:0'>成功(生成): {\"ok\": True, \"outputs\": [{...}], \"logs\": []}\n成功(清洗): {\"ok\": True, \"suggestions\": [{...}], \"logs\": []}\n失败:      {\"ok\": False, \"error_code\": \"...\", \"message\": \"...\"}\n取消:      {\"ok\": False, \"error_code\": \"CANCELLED\", \"message\": \"...\"}</pre>" +
+        "<p style='font-weight:600;margin:14px 0 4px 0'>杩斿洖鍊?/p>" +
+        "<pre style='background:" + root.panelBg + ";color:" + root.textColor + ";border:1px solid " + root.borderColor + ";border-radius:6px;padding:12px 16px;font-family:Consolas,Courier New,monospace;font-size:12.5px;line-height:1.55;margin:0'>鎴愬姛(鐢熸垚): {\"ok\": True, \"outputs\": [{...}], \"logs\": []}\n鎴愬姛(娓呮礂): {\"ok\": True, \"suggestions\": [{...}], \"logs\": []}\n澶辫触:      {\"ok\": False, \"error_code\": \"...\", \"message\": \"...\"}\n鍙栨秷:      {\"ok\": False, \"error_code\": \"CANCELLED\", \"message\": \"...\"}</pre>" +
 
-        "<h2 style='font-size:15px;color:" + root.primaryColor + ";margin:24px 0 8px 0'>命名约定</h2>" +
-        "<p style='margin:0 0 2px 0'>· 参数 name: 英文小写+下划线 <code>blur_threshold</code></p>" +
-        "<p style='margin:0 0 2px 0'>· 参数 label: 简短中文「模糊阈值」</p>" +
-        "<p style='margin:0 0 2px 0'>· 算法 key: <code>.</code> 分隔 <code>generation.image.geo</code></p>" +
-        "<p style='margin:0'>· 算法 name: UI 中文名「几何变换」</p>" +
+        "<h2 style='font-size:15px;color:" + root.primaryColor + ";margin:24px 0 8px 0'>鍛藉悕绾﹀畾</h2>" +
+        "<p style='margin:0 0 2px 0'>路 鍙傛暟 name: 鑻辨枃灏忓啓+涓嬪垝绾?<code>blur_threshold</code></p>" +
+        "<p style='margin:0 0 2px 0'>路 鍙傛暟 label: 绠€鐭腑鏂囥€屾ā绯婇槇鍊笺€?/p>" +
+        "<p style='margin:0 0 2px 0'>路 绠楁硶 key: <code>.</code> 鍒嗛殧 <code>generation.image.geo</code></p>" +
+        "<p style='margin:0'>路 绠楁硶 name: UI 涓枃鍚嶃€屽嚑浣曞彉鎹€?/p>" +
 
-        "<h2 style='font-size:15px;color:" + root.primaryColor + ";margin:24px 0 8px 0'>注意事项</h2>" +
-        "<p style='margin:0 0 2px 0'>· PARAMETERS 必须模块级，无参数写 <code>PARAMETERS = []</code></p>" +
-        "<p style='margin:0 0 2px 0'>· 不修改 PARAMETERS，IO 用 <code>pathlib.Path</code></p>" +
-        "<p style='margin:0 0 2px 0'>· 耗时操作周期性检查 <code>context.is_cancel_requested()</code></p>" +
-        "<p style='margin:0'>· 插件放 <code>plugins/user/</code> 或用 <code>module_path</code></p>" +
+        "<h2 style='font-size:15px;color:" + root.primaryColor + ";margin:24px 0 8px 0'>娉ㄦ剰浜嬮」</h2>" +
+        "<p style='margin:0 0 2px 0'>路 PARAMETERS 蹇呴』妯″潡绾э紝鏃犲弬鏁板啓 <code>PARAMETERS = []</code></p>" +
+        "<p style='margin:0 0 2px 0'>路 涓嶄慨鏀?PARAMETERS锛孖O 鐢?<code>pathlib.Path</code></p>" +
+        "<p style='margin:0 0 2px 0'>路 鑰楁椂鎿嶄綔鍛ㄦ湡鎬ф鏌?<code>context.is_cancel_requested()</code></p>" +
+        "<p style='margin:0'>路 鎻掍欢鏀?<code>plugins/user/</code> 鎴栫敤 <code>module_path</code></p>" +
 
-        "<p style='color:" + root.textMuted + ";font-size:12px;margin-top:30px'>📄 完整示例见 plugins/user/_TEMPLATE.py</p>" +
+        "<p style='color:" + root.textMuted + ";font-size:12px;margin-top:30px'>馃搫 瀹屾暣绀轰緥瑙?plugins/user/_TEMPLATE.py</p>" +
         "</body></html>"
 
     property url pluginSpecPdfSource: ""
@@ -136,7 +136,7 @@ Item {
     }
 
     function showCategorySection(categoryLabel) {
-        return root.algoCategoryFilter === "全部算法" || root.algoCategoryFilter === categoryLabel
+        return root.algoCategoryFilter === "鍏ㄩ儴绠楁硶" || root.algoCategoryFilter === categoryLabel
     }
 
     function firstAlgoIdForCategory(categoryLabel) {
@@ -148,20 +148,20 @@ Item {
     }
 
     function applyAlgoCategoryFilter(categoryLabel) {
-        root.algoCategoryFilter = categoryLabel || "全部算法"
-        if (root.algoCategoryFilter === "全部算法") return
+        root.algoCategoryFilter = categoryLabel || "鍏ㄩ儴绠楁硶"
+        if (root.algoCategoryFilter === "鍏ㄩ儴绠楁硶") return
 
-        if (root.algoCategoryFilter === "清洗算法") root.cleaningExpanded = true
-        if (root.algoCategoryFilter === "生成算法") root.generationExpanded = true
-        if (root.algoCategoryFilter === "评估算法") root.evaluationExpanded = true
-        if (root.algoCategoryFilter === "训练算法") root.trainingExpanded = true
+        if (root.algoCategoryFilter === "娓呮礂绠楁硶") root.cleaningExpanded = true
+        if (root.algoCategoryFilter === "鐢熸垚绠楁硶") root.generationExpanded = true
+        if (root.algoCategoryFilter === "璇勪及绠楁硶") root.evaluationExpanded = true
+        if (root.algoCategoryFilter === "璁粌绠楁硶") root.trainingExpanded = true
 
         if (root.selectedAlgoIndex !== -1 && root.selectedAlgoField("category") === root.algoCategoryFilter) return
         var firstId = root.firstAlgoIdForCategory(root.algoCategoryFilter)
         if (firstId !== -1) root.selectedAlgoId = firstId
     }
 
-    // ================= 背景 =================
+    // ================= 鑳屾櫙 =================
     Rectangle {
         anchors.fill: parent
         color: root.bgDark
@@ -183,7 +183,7 @@ Item {
         }
     }
 
-    // ================= 数据模型 =================
+    // ================= 鏁版嵁妯″瀷 =================
     ListModel {
         id: algoListModel
     }
@@ -201,10 +201,10 @@ Item {
 
     function refreshBindingEvalCombo() {
         bindingEvalModel.clear()
-        bindingEvalModel.append({key: "", display: "-- 未绑定 --"})
+        bindingEvalModel.append({key: "", display: "-- 鏈粦瀹?--"})
         for (var i = 0; i < algoListModel.count; i++) {
             var a = algoListModel.get(i)
-            if (a.category === "评估算法") {
+            if (a.category === "璇勪及绠楁硶") {
                 bindingEvalModel.append({key: a.key, display: a.name})
             }
         }
@@ -218,7 +218,7 @@ Item {
         bindingEvalCombo.currentIndex = 0
     }
 
-    // 共享算法列表项委托
+    // 鍏变韩绠楁硶鍒楄〃椤瑰鎵?
     Component {
         id: algoItemDelegate
         Rectangle {
@@ -267,16 +267,16 @@ Item {
                     Text {
                         text: {
                             var c = model.category
-                            if (c === "清洗算法") return "清"
-                            if (c === "生成算法") return "生"
-                            if (c === "评估算法") return "评"
-                            if (c === "训练算法") return "训"
+                            if (c === "娓呮礂绠楁硶") return "娓?
+                            if (c === "鐢熸垚绠楁硶") return "鐢?
+                            if (c === "璇勪及绠楁硶") return "璇?
+                            if (c === "璁粌绠楁硶") return "璁?
                             return "?"
                         }
                         color: {
                             var c = model.category
-                            if (c === "清洗算法") return root.cleanTagColor
-                            if (c === "生成算法") return root.genTagColor
+                            if (c === "娓呮礂绠楁硶") return root.cleanTagColor
+                            if (c === "鐢熸垚绠楁硶") return root.genTagColor
                             return root.devAccentColor
                         }
                         font.pixelSize: 14; font.bold: true; anchors.centerIn: parent
@@ -302,8 +302,8 @@ Item {
         }
     }
 
-    // ================= 全局提示 Toast =================
-    property string toastMessage: "✅ 操作成功"
+    // ================= 鍏ㄥ眬鎻愮ず Toast =================
+    property string toastMessage: "鉁?鎿嶄綔鎴愬姛"
 
     Popup {
         id: toastMsg
@@ -362,7 +362,7 @@ Item {
         height: Math.min(root.height - 40, 760)
         padding: 0
         background: Item {
-            // 柔和阴影层
+            // 鏌斿拰闃村奖灞?
             Rectangle {
                 anchors.fill: parent; anchors.margins: 3; radius: 14
                 color: Qt.rgba(0, 0, 0, 0.15)
@@ -375,17 +375,17 @@ Item {
         contentItem: ColumnLayout {
             spacing: 0
 
-            // 标题栏 (右上角 扩大/关闭)
+            // 鏍囬鏍?(鍙充笂瑙?鎵╁ぇ/鍏抽棴)
             Rectangle {
                 Layout.fillWidth: true; height: 44
                 color: "transparent"
                 RowLayout {
                     anchors.fill: parent; anchors.leftMargin: 20; anchors.rightMargin: 8
-                    Text { text: "📋 插件规范"; color: root.textColor; font.pixelSize: 14; font.bold: true; Layout.fillWidth: true }
+                    Text { text: "馃搵 鎻掍欢瑙勮寖"; color: root.textColor; font.pixelSize: 14; font.bold: true; Layout.fillWidth: true }
                     Rectangle { id: expandIcon; width: 28; height: 28; radius: 6
                         color: expandMa.containsMouse ? root.tableHoverBg : "transparent"
                         property bool isMax: false
-                        Text { text: expandIcon.isMax ? "🗗" : "🗖"; color: root.textMuted; font.pixelSize: 14; anchors.centerIn: parent }
+                        Text { text: expandIcon.isMax ? "馃棗" : "馃棖"; color: root.textMuted; font.pixelSize: 14; anchors.centerIn: parent }
                         MouseArea { id: expandMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                             onClicked: {
                                 expandIcon.isMax = !expandIcon.isMax
@@ -396,14 +396,14 @@ Item {
                     }
                     Rectangle { id: closeIcon; width: 28; height: 28; radius: 6
                         color: closeMa.containsMouse ? Qt.rgba(245,63,63,0.1) : "transparent"
-                        Text { text: "✕"; color: closeMa.containsMouse ? root.dangerColor : root.textMuted; font.pixelSize: 14; anchors.centerIn: parent }
+                        Text { text: "鉁?; color: closeMa.containsMouse ? root.dangerColor : root.textMuted; font.pixelSize: 14; anchors.centerIn: parent }
                         MouseArea { id: closeMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                             onClicked: pluginSpecPopup.close()
                         }
                     }
                 }
             }
-            // 内容区
+            // 鍐呭鍖?
             Rectangle {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
@@ -432,7 +432,7 @@ Item {
                 }
             }
 
-            // 底部栏 (右下角 下载PDF)
+            // 搴曢儴鏍?(鍙充笅瑙?涓嬭浇PDF)
             Rectangle {
                 Layout.fillWidth: true; height: 40
                 color: "transparent"
@@ -440,7 +440,7 @@ Item {
                     Item { Layout.fillWidth: true }
                     Rectangle { id: downloadBtn; width: 90; height: 26; radius: 13
                         color: downloadMa.containsMouse ? root.primaryColor : root.tableHoverBg
-                        Text { text: "⬇ 下载PDF"; color: downloadMa.containsMouse ? "white" : root.textColor; font.pixelSize: 11; anchors.centerIn: parent }
+                        Text { text: "猬?涓嬭浇PDF"; color: downloadMa.containsMouse ? "white" : root.textColor; font.pixelSize: 11; anchors.centerIn: parent }
                         MouseArea { id: downloadMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                             onClicked: { pluginSpecSaveDialog.selectedFile = "ISG_plugin_spec_professional.pdf"; pluginSpecSaveDialog.open() }
                         }
@@ -451,76 +451,76 @@ Item {
     }
 
     function categoryLabel(category) {
-        if (category === "cleaning") return "清洗算法"
-        if (category === "generation") return "生成算法"
-        if (category === "evaluation") return "评估算法"
-        if (category === "training") return "训练算法"
-        return category || "未分类"
+        if (category === "cleaning") return "娓呮礂绠楁硶"
+        if (category === "generation") return "鐢熸垚绠楁硶"
+        if (category === "evaluation") return "璇勪及绠楁硶"
+        if (category === "training") return "璁粌绠楁硶"
+        return category || "鏈垎绫?
     }
 
     function categoryValue(label) {
-        if (label === "清洗算法") return "cleaning"
-        if (label === "生成算法") return "generation"
-        if (label === "评估算法") return "evaluation"
-        if (label === "训练算法") return "training"
+        if (label === "娓呮礂绠楁硶") return "cleaning"
+        if (label === "鐢熸垚绠楁硶") return "generation"
+        if (label === "璇勪及绠楁硶") return "evaluation"
+        if (label === "璁粌绠楁硶") return "training"
         return label || "generation"
     }
 
     function scenarioKeyFromName(name) {
-        if (name === "水下目标检测与识别") return "underwater_target_detection_recognition"
-        if (name === "舰船目标识别与跟踪") return "ship_target_recognition_tracking"
-        if (name === "系统健康状态预估与故障诊断") return "system_health_fault_diagnosis"
-        if (name === "智能决策与指挥控制") return "intelligent_decision_command_control"
-        if (name === "多模态数据融合") return "multimodal_data_fusion"
+        if (name === "姘翠笅鐩爣妫€娴嬩笌璇嗗埆") return "underwater_target_detection_recognition"
+        if (name === "鑸拌埞鐩爣璇嗗埆涓庤窡韪?) return "ship_target_recognition_tracking"
+        if (name === "绯荤粺鍋ュ悍鐘舵€侀浼颁笌鏁呴殰璇婃柇") return "system_health_fault_diagnosis"
+        if (name === "鏅鸿兘鍐崇瓥涓庢寚鎸ユ帶鍒?) return "intelligent_decision_command_control"
+        if (name === "澶氭ā鎬佹暟鎹瀺鍚?) return "multimodal_data_fusion"
         return ""
     }
 
     function scenarioNameFromKey(key) {
-        if (key === "underwater_target_detection_recognition") return "水下目标检测与识别"
-        if (key === "ship_target_recognition_tracking") return "舰船目标识别与跟踪"
-        if (key === "system_health_fault_diagnosis") return "系统健康状态预估与故障诊断"
-        if (key === "intelligent_decision_command_control") return "智能决策与指挥控制"
-        if (key === "multimodal_data_fusion") return "多模态数据融合"
-        return key || "未指定场景"
+        if (key === "underwater_target_detection_recognition") return "姘翠笅鐩爣妫€娴嬩笌璇嗗埆"
+        if (key === "ship_target_recognition_tracking") return "鑸拌埞鐩爣璇嗗埆涓庤窡韪?
+        if (key === "system_health_fault_diagnosis") return "绯荤粺鍋ュ悍鐘舵€侀浼颁笌鏁呴殰璇婃柇"
+        if (key === "intelligent_decision_command_control") return "鏅鸿兘鍐崇瓥涓庢寚鎸ユ帶鍒?
+        if (key === "multimodal_data_fusion") return "澶氭ā鎬佹暟鎹瀺鍚?
+        return key || "鏈寚瀹氬満鏅?
     }
 
     function modalityFromSubCategory(text) {
-        if (text.indexOf("文本") !== -1) return "text"
-        if (text.indexOf("音频") !== -1) return "audio"
-        if (text.indexOf("表格") !== -1 || text.indexOf("时序") !== -1) return "tabular"
-        if (text.indexOf("视频") !== -1) return "video"
-        if (text.indexOf("多模态") !== -1) return "multimodal"
+        if (text.indexOf("鏂囨湰") !== -1) return "text"
+        if (text.indexOf("闊抽") !== -1) return "audio"
+        if (text.indexOf("琛ㄦ牸") !== -1 || text.indexOf("鏃跺簭") !== -1) return "tabular"
+        if (text.indexOf("瑙嗛") !== -1) return "video"
+        if (text.indexOf("澶氭ā鎬?) !== -1) return "multimodal"
         return "image"
     }
 
     function subtypeLabel(category, modality) {
         if (category === "cleaning") {
-            if (modality === "text") return "文本清洗策略"
-            if (modality === "audio") return "音频清洗策略"
-            if (modality === "tabular") return "表格数据清洗"
-            return "图像清洗策略"
+            if (modality === "text") return "鏂囨湰娓呮礂绛栫暐"
+            if (modality === "audio") return "闊抽娓呮礂绛栫暐"
+            if (modality === "tabular") return "琛ㄦ牸鏁版嵁娓呮礂"
+            return "鍥惧儚娓呮礂绛栫暐"
         }
         if (category === "generation") {
-            if (modality === "text") return "文本增强方法"
-            if (modality === "audio") return "音频增强方法"
-            if (modality === "multimodal") return "多模态增强方法"
-            return "图像增强方法"
+            if (modality === "text") return "鏂囨湰澧炲己鏂规硶"
+            if (modality === "audio") return "闊抽澧炲己鏂规硶"
+            if (modality === "multimodal") return "澶氭ā鎬佸寮烘柟娉?
+            return "鍥惧儚澧炲己鏂规硶"
         }
         if (category === "training") {
-            if (modality === "text") return "文本训练模型"
-            if (modality === "audio") return "音频训练模型"
-            if (modality === "tabular") return "时序训练模型"
-            if (modality === "multimodal") return "多模态训练模型"
-            return "图像训练模型"
+            if (modality === "text") return "鏂囨湰璁粌妯″瀷"
+            if (modality === "audio") return "闊抽璁粌妯″瀷"
+            if (modality === "tabular") return "鏃跺簭璁粌妯″瀷"
+            if (modality === "multimodal") return "澶氭ā鎬佽缁冩ā鍨?
+            return "鍥惧儚璁粌妯″瀷"
         }
         if (category === "evaluation") {
-            if (modality === "text") return "文本评估方法"
-            if (modality === "audio") return "音频评估方法"
-            if (modality === "tabular") return "时序评估方法"
-            if (modality === "multimodal") return "多模态评估方法"
-            return "图像评估方法"
+            if (modality === "text") return "鏂囨湰璇勪及鏂规硶"
+            if (modality === "audio") return "闊抽璇勪及鏂规硶"
+            if (modality === "tabular") return "鏃跺簭璇勪及鏂规硶"
+            if (modality === "multimodal") return "澶氭ā鎬佽瘎浼版柟娉?
+            return "鍥惧儚璇勪及鏂规硶"
         }
-        return "未分类"
+        return "鏈垎绫?
     }
 
     function modalityOrder(modality) {
@@ -549,7 +549,37 @@ Item {
         var t = String(typeName || "string")
         if (t === "number") return "float"
         if (t === "integer") return "int"
+        if (t === "boolean") return "bool"
         return t
+    }
+
+    function normalizeParamDefault(value, typeName) {
+        var t = root.normalizeParamType(typeName)
+        if (t === "int") {
+            var intValue = parseInt(value)
+            return isNaN(intValue) ? 0 : intValue
+        }
+        if (t === "float") {
+            var floatValue = parseFloat(value)
+            return isNaN(floatValue) ? 0 : floatValue
+        }
+        if (t === "bool") {
+            if (typeof value === "boolean") return value
+            var text = String(value || "").toLowerCase()
+            return text === "true" || text === "1" || text === "yes"
+        }
+        return value
+    }
+
+    function validateParamValue(value, typeName) {
+        var t = root.normalizeParamType(typeName)
+        if (t === "int") return /^-?\d+$/.test(String(value || "").trim())
+        if (t === "float") return /^-?(\d+(\.\d*)?|\.\d+)$/.test(String(value || "").trim())
+        if (t === "bool") {
+            var text = String(value || "").toLowerCase()
+            return text === "true" || text === "false" || text === "1" || text === "0" || text === "yes" || text === "no"
+        }
+        return true
     }
 
     function isScriptPath(value) {
@@ -612,13 +642,13 @@ Item {
         var params = []
         for (var i = 0; i < rawParams.length; i++) {
             var p = rawParams[i]
-            var ptype = p.type || "string"
+            var ptype = root.normalizeParamType(p.type)
             var paramDef = {
                 name: p.n,
                 label: p.label || p.n,
                 type: ptype,
                 required: false,
-                default_value: p.v,
+                default_value: root.normalizeParamDefault(p.v, ptype),
                 description: p.desc || ""
             }
             if (ptype === "int" || ptype === "float") {
@@ -660,7 +690,7 @@ Item {
     Connections {
         target: backendService
         function onAlgorithmsUpdated(items) {
-            if (!root.visible) return  // 只在当前页面可见时处理
+            if (!root.visible) return  // 鍙湪褰撳墠椤甸潰鍙鏃跺鐞?
             algoListModel.clear()
             cleaningAlgoModel.clear()
             generationAlgoModel.clear()
@@ -693,7 +723,7 @@ Item {
                 if (item.category === "training") {
                     var vr = item.validation_rules || {}
                     var scKey = vr["scenario_key"] || ""
-                    if (scKey) subCat = "场景: " + root.scenarioNameFromKey(scKey)
+                    if (scKey) subCat = "鍦烘櫙: " + root.scenarioNameFromKey(scKey)
                 }
                 var entry = {
                     id: item.id,
@@ -741,19 +771,19 @@ Item {
 
     function algorithmUsageText(category) {
         if (root.selectedAlgoIndex === -1) {
-            return "选择算法后可查看使用说明。完整文档: docs/ALGORITHM_USAGE_GUIDE.md"
+            return "閫夋嫨绠楁硶鍚庡彲鏌ョ湅浣跨敤璇存槑銆傚畬鏁存枃妗? docs/ALGORITHM_USAGE_GUIDE.md"
         }
-        if (category === "清洗算法") {
-            return "清洗算法用于发现重复、低质、异常或需脱敏的样本。输入为数据集样本路径和参数字典，输出为清洗建议、置信度和可选处理结果。上线前需确认参数默认值、输出建议类型和失败日志。"
+        if (category === "娓呮礂绠楁硶") {
+            return "娓呮礂绠楁硶鐢ㄤ簬鍙戠幇閲嶅銆佷綆璐ㄣ€佸紓甯告垨闇€鑴辨晱鐨勬牱鏈€傝緭鍏ヤ负鏁版嵁闆嗘牱鏈矾寰勫拰鍙傛暟瀛楀吀锛岃緭鍑轰负娓呮礂寤鸿銆佺疆淇″害鍜屽彲閫夊鐞嗙粨鏋溿€備笂绾垮墠闇€纭鍙傛暟榛樿鍊笺€佽緭鍑哄缓璁被鍨嬪拰澶辫触鏃ュ織銆?
         }
-        return "生成算法用于对图像、音频或文本样本做扩增。输入为源样本路径、输出目录和参数字典，输出为新增样本文件及增强元数据。上线前需确认生成数量、输出格式、资源占用和可复现实验参数。"
+        return "鐢熸垚绠楁硶鐢ㄤ簬瀵瑰浘鍍忋€侀煶棰戞垨鏂囨湰鏍锋湰鍋氭墿澧炪€傝緭鍏ヤ负婧愭牱鏈矾寰勩€佽緭鍑虹洰褰曞拰鍙傛暟瀛楀吀锛岃緭鍑轰负鏂板鏍锋湰鏂囦欢鍙婂寮哄厓鏁版嵁銆備笂绾垮墠闇€纭鐢熸垚鏁伴噺銆佽緭鍑烘牸寮忋€佽祫婧愬崰鐢ㄥ拰鍙鐜板疄楠屽弬鏁般€?
     }
 
-    // ================= 弹窗：文件选择器 =================
+    // ================= 寮圭獥锛氭枃浠堕€夋嫨鍣?=================
     FileDialog {
         id: scriptFileDialog
-        title: "选择算法脚本/程序文件"
-        nameFilters: ["Python 脚本 (*.py)"]
+        title: "閫夋嫨绠楁硶鑴氭湰/绋嬪簭鏂囦欢"
+        nameFilters: ["Python 鑴氭湰 (*.py)"]
         onAccepted: {
             var path = selectedFile.toString()
             var cleanPath = decodeURIComponent(path.replace(/^(file:\/{2,3})/, ""))
@@ -775,29 +805,29 @@ Item {
                         "desc": p.description || ""
                     })
                 }
-                root.showToast("✅ 已自动加载 " + params.length + " 个参数")
+                root.showToast("鉁?宸茶嚜鍔ㄥ姞杞?" + params.length + " 涓弬鏁?)
             } else {
-                root.showToast("⚠️ 参数反射失败: " + ((result && (result.error || result.message)) ? (result.error || result.message) : "未知错误"))
+                root.showToast("鈿狅笍 鍙傛暟鍙嶅皠澶辫触: " + ((result && (result.error || result.message)) ? (result.error || result.message) : "鏈煡閿欒"))
             }
         }
     }
 
-    // ================= 弹窗：插件规范 PDF 保存 =================
+    // ================= 寮圭獥锛氭彃浠惰鑼?PDF 淇濆瓨 =================
     FileDialog {
         id: pluginSpecSaveDialog
-        title: "保存插件规范 PDF"
+        title: "淇濆瓨鎻掍欢瑙勮寖 PDF"
         fileMode: FileDialog.SaveFile
-        nameFilters: ["PDF 文档 (*.pdf)"]
+        nameFilters: ["PDF 鏂囨。 (*.pdf)"]
         onAccepted: {
             var path = selectedFile.toString()
             var cleanPath = decodeURIComponent(path.replace(/^(file:\/{2,3})/, ""))
             var result = backendService.downloadAlgorithmPluginSpec(cleanPath)
-            if (result && result.status === "success") root.showToast("✅ 插件规范已下载")
-            else root.showToast("⚠️ " + ((result && result.message) ? result.message : "插件规范下载失败"))
+            if (result && result.status === "success") root.showToast("鉁?鎻掍欢瑙勮寖宸蹭笅杞?)
+            else root.showToast("鈿狅笍 " + ((result && result.message) ? result.message : "鎻掍欢瑙勮寖涓嬭浇澶辫触"))
         }
     }
 
-    // ================= 弹窗：二次确认删除 =================
+    // ================= 寮圭獥锛氫簩娆＄‘璁ゅ垹闄?=================
     Popup {
         id: deleteConfirmPopup
         width: 320
@@ -821,12 +851,12 @@ Item {
 
             RowLayout {
                 spacing: 10
-                Text { text: "⚠️"; font.pixelSize: 20 }
-                Text { text: "确认卸载此算法吗？"; color: root.textColor; font.pixelSize: 15; font.bold: true }
+                Text { text: "鈿狅笍"; font.pixelSize: 20 }
+                Text { text: "纭鍗歌浇姝ょ畻娉曞悧锛?; color: root.textColor; font.pixelSize: 15; font.bold: true }
             }
 
             Text {
-                text: "卸载后，清洗或生成模块将无法再调用此自定义算法。"
+                text: "鍗歌浇鍚庯紝娓呮礂鎴栫敓鎴愭ā鍧楀皢鏃犳硶鍐嶈皟鐢ㄦ鑷畾涔夌畻娉曘€?
                 color: root.textMuted
                 font.pixelSize: 12
                 wrapMode: Text.WordWrap
@@ -840,7 +870,7 @@ Item {
                 spacing: 15
                 Item { Layout.fillWidth: true }
                 Button {
-                    text: "取消"
+                    text: "鍙栨秷"
                     Layout.preferredWidth: 80
                     Layout.preferredHeight: 30
                     background: Rectangle { color: "transparent"; border.color: root.borderColor; border.width: 1; radius: 4 }
@@ -848,7 +878,7 @@ Item {
                     onClicked: deleteConfirmPopup.close()
                 }
                 Button {
-                    text: "确认卸载"
+                    text: "纭鍗歌浇"
                     Layout.preferredWidth: 80
                     Layout.preferredHeight: 30
                     background: Rectangle { color: root.dangerColor; radius: 4 }
@@ -859,9 +889,9 @@ Item {
                             if (result && result.ok) {
                                 root.selectedAlgoId = -1
                                 root.loadAlgorithms()
-                                root.showToast("🗑️ 算法已成功卸载")
+                                root.showToast("馃棏锔?绠楁硶宸叉垚鍔熷嵏杞?)
                             } else {
-                                root.showToast("⚠️ 算法卸载失败")
+                                root.showToast("鈿狅笍 绠楁硶鍗歌浇澶辫触")
                             }
                         }
                         deleteConfirmPopup.close()
@@ -871,7 +901,7 @@ Item {
         }
     }
 
-    // ================= 核心弹窗：配置新算法/修改算法 =================
+    // ================= 鏍稿績寮圭獥锛氶厤缃柊绠楁硶/淇敼绠楁硶 =================
     Popup {
         id: algoConfigPopup
         width: 800
@@ -894,11 +924,11 @@ Item {
             anchors.margins: 25
             spacing: 20
 
-            // 标题栏
+            // 鏍囬鏍?
             RowLayout {
                 Layout.fillWidth: true
                 Text {
-                    text: root.pendingEditIndex === -1 ? "🧩 接入自定义新插件" : "⚙️ 修改插件底层配置"
+                    text: root.pendingEditIndex === -1 ? "馃З 鎺ュ叆鑷畾涔夋柊鎻掍欢" : "鈿欙笍 淇敼鎻掍欢搴曞眰閰嶇疆"
                     color: root.devAccentColor
                     font.pixelSize: 18
                     font.bold: true
@@ -906,7 +936,7 @@ Item {
                 Item { Layout.fillWidth: true }
                 Rectangle {
                     width: 30; height: 30; color: "transparent"; radius: 4
-                    Text { text: "✕"; color: root.textMuted; font.pixelSize: 18; anchors.centerIn: parent }
+                    Text { text: "鉁?; color: root.textMuted; font.pixelSize: 18; anchors.centerIn: parent }
                     MouseArea {
                         anchors.fill: parent; cursorShape: Qt.PointingHandCursor; hoverEnabled: true
                         onEntered: { parent.color = root.tableHoverBg }
@@ -918,23 +948,23 @@ Item {
 
             Rectangle { Layout.fillWidth: true; height: 1; color: root.borderColor }
 
-            // 左右分栏：左侧基础信息，右侧动态参数配置
+            // 宸﹀彸鍒嗘爮锛氬乏渚у熀纭€淇℃伅锛屽彸渚у姩鎬佸弬鏁伴厤缃?
             RowLayout {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 spacing: 30
 
-                // === 左栏：基础信息 ===
+                // === 宸︽爮锛氬熀纭€淇℃伅 ===
                 ColumnLayout {
                     Layout.preferredWidth: 320
                     Layout.fillHeight: true
                     spacing: 15
 
-                    Text { text: "📝 基础映射信息"; color: root.textColor; font.pixelSize: 14; font.bold: true }
+                    Text { text: "馃摑 鍩虹鏄犲皠淇℃伅"; color: root.textColor; font.pixelSize: 14; font.bold: true }
 
                     ColumnLayout {
                         spacing: 6; Layout.fillWidth: true
-                        Text { text: "插件名称:"; color: root.textMuted; font.pixelSize: 12 }
+                        Text { text: "鎻掍欢鍚嶇О:"; color: root.textMuted; font.pixelSize: 12 }
                         Rectangle {
                             Layout.fillWidth: true; height: 36; color: root.bgDark; radius: 4; border.color: root.borderColor; border.width: 1
                             TextInput { id: inputAlgoName; color: root.textColor; font.pixelSize: 13; anchors.fill: parent; leftPadding: 10; verticalAlignment: TextInput.AlignVCenter }
@@ -944,12 +974,12 @@ Item {
                     ColumnLayout {
                         spacing: 6; Layout.fillWidth: true
                         Text {
-                            text: inputCategory.currentIndex === 2 ? "所属应用场景:" : "细分策略类别 (可直接输入新增):"
+                            text: inputCategory.currentIndex === 2 ? "鎵€灞炲簲鐢ㄥ満鏅?" : "缁嗗垎绛栫暐绫诲埆 (鍙洿鎺ヨ緭鍏ユ柊澧?:"
                             color: root.textMuted; font.pixelSize: 12
                         }
                         ComboBox {
                             id: inputCategory
-                            model: ["清洗算法", "生成算法", "训练算法", "评估算法"]
+                            model: ["娓呮礂绠楁硶", "鐢熸垚绠楁硶", "璁粌绠楁硶", "璇勪及绠楁硶"]
                             Layout.fillWidth: true; Layout.preferredHeight: 36
                             background: Rectangle { color: root.bgDark; border.color: root.borderColor; border.width: 1; radius: 4 }
                             contentItem: Text { text: inputCategory.currentText; color: root.textColor; font.pixelSize: 13; verticalAlignment: Text.AlignVCenter; leftPadding: 10 }
@@ -975,10 +1005,10 @@ Item {
                             id: inputSubCategory
                             editable: inputCategory.currentIndex !== 2
                             model: {
-                                if (inputCategory.currentIndex === 0) return ["图像清洗策略", "文本清洗策略", "音频清洗策略", "表格数据清洗"]
-                                if (inputCategory.currentIndex === 1) return ["图像增强方法", "文本增强方法", "音频增强方法", "多模态增强方法", "深度学习生成"]
-                                if (inputCategory.currentIndex === 2) return ["水下目标检测与识别", "舰船目标识别与跟踪", "系统健康状态预估与故障诊断", "智能决策与指挥控制", "多模态数据融合"]
-                                if (inputCategory.currentIndex === 3) return ["多模态评估方法"]
+                                if (inputCategory.currentIndex === 0) return ["鍥惧儚娓呮礂绛栫暐", "鏂囨湰娓呮礂绛栫暐", "闊抽娓呮礂绛栫暐", "琛ㄦ牸鏁版嵁娓呮礂"]
+                                if (inputCategory.currentIndex === 1) return ["鍥惧儚澧炲己鏂规硶", "鏂囨湰澧炲己鏂规硶", "闊抽澧炲己鏂规硶", "澶氭ā鎬佸寮烘柟娉?, "娣卞害瀛︿範鐢熸垚"]
+                                if (inputCategory.currentIndex === 2) return ["姘翠笅鐩爣妫€娴嬩笌璇嗗埆", "鑸拌埞鐩爣璇嗗埆涓庤窡韪?, "绯荤粺鍋ュ悍鐘舵€侀浼颁笌鏁呴殰璇婃柇", "鏅鸿兘鍐崇瓥涓庢寚鎸ユ帶鍒?, "澶氭ā鎬佹暟鎹瀺鍚?]
+                                if (inputCategory.currentIndex === 3) return ["澶氭ā鎬佽瘎浼版柟娉?]
                                 return []
                             }
                             Layout.fillWidth: true; Layout.preferredHeight: 36
@@ -993,7 +1023,7 @@ Item {
 
                     ColumnLayout {
                         spacing: 6; Layout.fillWidth: true
-                        Text { text: "挂载脚本/程序物理路径:"; color: root.textMuted; font.pixelSize: 12 }
+                        Text { text: "鎸傝浇鑴氭湰/绋嬪簭鐗╃悊璺緞:"; color: root.textMuted; font.pixelSize: 12 }
                         RowLayout {
                             Layout.fillWidth: true; spacing: 8
                             Rectangle {
@@ -1001,7 +1031,7 @@ Item {
                                 TextInput { id: inputScriptPath; color: root.devAccentColor; font.pixelSize: 13; font.family: "Courier"; anchors.fill: parent; leftPadding: 10; verticalAlignment: TextInput.AlignVCenter; clip: true }
                             }
                             Button {
-                                text: "浏览..."; Layout.preferredHeight: 36; Layout.preferredWidth: 60
+                                text: "娴忚..."; Layout.preferredHeight: 36; Layout.preferredWidth: 60
                                 background: Rectangle { color: root.tableHoverBg; border.color: root.borderColor; border.width: 1; radius: 4 }
                                 contentItem: Text { text: parent.text; color: root.textColor; font.pixelSize: 12; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                                 onClicked: scriptFileDialog.open()
@@ -1011,7 +1041,7 @@ Item {
 
                     ColumnLayout {
                         spacing: 6; Layout.fillWidth: true
-                        Text { text: "底层功能简述:"; color: root.textMuted; font.pixelSize: 12 }
+                        Text { text: "搴曞眰鍔熻兘绠€杩?"; color: root.textMuted; font.pixelSize: 12 }
                         Rectangle {
                             Layout.fillWidth: true; Layout.preferredHeight: 60; color: root.bgDark; radius: 4; border.color: root.borderColor; border.width: 1
                             TextEdit { id: inputDesc; color: root.textColor; font.pixelSize: 13; anchors.fill: parent; padding: 10; wrapMode: TextEdit.Wrap }
@@ -1023,7 +1053,7 @@ Item {
 
                 Rectangle { Layout.fillHeight: true; width: 1; color: root.borderColor }
 
-                // === 右栏：动态参数配置引擎 ===
+                // === 鍙虫爮锛氬姩鎬佸弬鏁伴厤缃紩鎿?===
                 ColumnLayout {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
@@ -1031,12 +1061,12 @@ Item {
 
                     RowLayout {
                         Layout.fillWidth: true
-                        Text { text: "⚙️ 动态反射参数列表"; color: root.textColor; font.pixelSize: 14; font.bold: true }
+                        Text { text: "鈿欙笍 鍔ㄦ€佸弽灏勫弬鏁板垪琛?; color: root.textColor; font.pixelSize: 14; font.bold: true }
                         Item { Layout.fillWidth: true }
-                        Text { text: "这些参数将在功能面板中动态生成输入框"; color: root.textMuted; font.pixelSize: 11 }
+                        Text { text: "杩欎簺鍙傛暟灏嗗湪鍔熻兘闈㈡澘涓姩鎬佺敓鎴愯緭鍏ユ"; color: root.textMuted; font.pixelSize: 11 }
                     }
 
-                    // 参数列表视图
+                    // 鍙傛暟鍒楄〃瑙嗗浘
                     Rectangle {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
@@ -1055,10 +1085,10 @@ Item {
                                 Rectangle { width: parent.width; height: 1; color: root.borderColor; anchors.bottom: parent.bottom }
                                 RowLayout {
                                     anchors.fill: parent; anchors.leftMargin: 10; anchors.rightMargin: 10; spacing: 6
-                                    Text { text: "参数名"; color: root.textMuted; font.pixelSize: 11; font.bold: true; Layout.fillWidth: true }
-                                    Text { text: "标签"; color: root.textMuted; font.pixelSize: 11; font.bold: true; Layout.fillWidth: true }
-                                    Text { text: "类型"; color: root.textMuted; font.pixelSize: 11; font.bold: true; Layout.preferredWidth: 70 }
-                                    Text { text: "操作"; color: root.textMuted; font.pixelSize: 11; font.bold: true; Layout.preferredWidth: 32; horizontalAlignment: Text.AlignHCenter }
+                                    Text { text: "鍙傛暟鍚?; color: root.textMuted; font.pixelSize: 11; font.bold: true; Layout.fillWidth: true }
+                                    Text { text: "鏍囩"; color: root.textMuted; font.pixelSize: 11; font.bold: true; Layout.fillWidth: true }
+                                    Text { text: "绫诲瀷"; color: root.textMuted; font.pixelSize: 11; font.bold: true; Layout.preferredWidth: 70 }
+                                    Text { text: "鎿嶄綔"; color: root.textMuted; font.pixelSize: 11; font.bold: true; Layout.preferredWidth: 32; horizontalAlignment: Text.AlignHCenter }
                                 }
                             }
 
@@ -1069,7 +1099,7 @@ Item {
 
                                 Text {
                                     visible: editingParamsModel.count === 0
-                                    text: "此插件无动态参数配置"
+                                    text: "姝ゆ彃浠舵棤鍔ㄦ€佸弬鏁伴厤缃?
                                     color: root.textMuted; font.pixelSize: 12; anchors.centerIn: parent
                                 }
 
@@ -1084,12 +1114,12 @@ Item {
                                         anchors.rightMargin: 10
                                         spacing: 2
 
-                                        // 第一行：参数名 + 标签 + 类型 + 默认值 + 删除
+                                        // 绗竴琛岋細鍙傛暟鍚?+ 鏍囩 + 绫诲瀷 + 榛樿鍊?+ 鍒犻櫎
                                         RowLayout {
                                             Layout.fillWidth: true
                                             Layout.preferredHeight: 36
                                             spacing: 6
-                                            // 参数名
+                                            // 鍙傛暟鍚?
                                             Rectangle {
                                                 Layout.fillWidth: true; Layout.minimumWidth: 82; height: 28; color: "transparent"; border.color: root.borderColor; border.width: 1; radius: 3
                                                 TextInput {
@@ -1097,7 +1127,7 @@ Item {
                                                     onTextChanged: editingParamsModel.setProperty(index, "n", text)
                                                 }
                                             }
-                                            // 显示标签
+                                            // 鏄剧ず鏍囩
                                             Rectangle {
                                                 Layout.fillWidth: true; Layout.minimumWidth: 82; height: 28; color: "transparent"; border.color: root.borderColor; border.width: 1; radius: 3
                                                 TextInput {
@@ -1105,7 +1135,7 @@ Item {
                                                     onTextChanged: editingParamsModel.setProperty(index, "label", text)
                                                 }
                                             }
-                                            // 类型选择
+                                            // 绫诲瀷閫夋嫨
                                             ComboBox {
                                                 id: paramTypeCombo
                                                 Layout.preferredWidth: 70; Layout.preferredHeight: 28
@@ -1119,7 +1149,7 @@ Item {
                                                     if (t === "select") return 4
                                                     return 0
                                                 }
-                                                onCurrentTextChanged: editingParamsModel.setProperty(index, "type", currentText)
+                                                onActivated: editingParamsModel.setProperty(index, "type", currentText)
                                                 background: Rectangle { color: root.bgDark; border.color: root.borderColor; border.width: 1; radius: 3 }
                                                 contentItem: Text { text: paramTypeCombo.currentText; color: root.devAccentColor; font.pixelSize: 11; verticalAlignment: Text.AlignVCenter; leftPadding: 5 }
                                                 popup: Popup {
@@ -1133,7 +1163,7 @@ Item {
                                                     background: Rectangle { color: hovered ? root.tableHoverBg : "transparent"; radius: 3 }
                                                 }
                                             }
-                                            // 默认值
+                                            // 榛樿鍊?
                                             Rectangle {
                                                 visible: false
                                                 Layout.fillWidth: true; height: 28; color: "transparent"; border.color: root.borderColor; border.width: 1; radius: 3
@@ -1142,23 +1172,23 @@ Item {
                                                     onTextChanged: editingParamsModel.setProperty(index, "v", text)
                                                 }
                                             }
-                                            // 删除按钮
+                                            // 鍒犻櫎鎸夐挳
                                             Rectangle {
                                                 Layout.preferredWidth: 26; height: 26; radius: 3
                                                 color: delMa2.containsMouse ? root.dangerColor : "transparent"
                                                 border.color: delMa2.containsMouse ? "transparent" : root.borderColor; border.width: 1
-                                                Text { text: "✕"; font.pixelSize: 11; anchors.centerIn: parent; color: delMa2.containsMouse ? "white" : root.textMuted }
+                                                Text { text: "鉁?; font.pixelSize: 11; anchors.centerIn: parent; color: delMa2.containsMouse ? "white" : root.textMuted }
                                                 MouseArea { id: delMa2; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: editingParamsModel.remove(index) }
                                             }
                                         }
 
-                                        // 第二行：min/max (int/float) 或 options (select)
+                                        // 绗簩琛岋細min/max (int/float) 鎴?options (select)
                                         RowLayout {
                                             Layout.fillWidth: true
                                             Layout.preferredHeight: 28
                                             spacing: 6
                                             Text {
-                                                text: "默认值"; color: root.textMuted; font.pixelSize: 10
+                                                text: "榛樿鍊?; color: root.textMuted; font.pixelSize: 10
                                                 Layout.preferredWidth: 44
                                             }
                                             Rectangle {
@@ -1207,7 +1237,7 @@ Item {
                                             // select: options
                                             Text {
                                                 visible: root.normalizeParamType(model.type) === "select"
-                                                text: "选项"; color: root.textMuted; font.pixelSize: 10
+                                                text: "閫夐」"; color: root.textMuted; font.pixelSize: 10
                                                 Layout.preferredWidth: 28
                                             }
                                             Rectangle {
@@ -1223,7 +1253,7 @@ Item {
                                 }
                             }
 
-                            // 底部新增参数区
+                            // 搴曢儴鏂板鍙傛暟鍖?
                             Rectangle {
                                 Layout.fillWidth: true; height: 58; color: Theme.rowAlt
                                 Rectangle { width: parent.width; height: 1; color: root.borderColor; anchors.top: parent.top }
@@ -1232,13 +1262,13 @@ Item {
                                     TextField {
                                         id: newParamName; Layout.preferredWidth: 80; Layout.preferredHeight: 28
                                         color: root.textColor; font.pixelSize: 11; leftPadding: 5; rightPadding: 5; verticalAlignment: TextInput.AlignVCenter; clip: true
-                                        placeholderText: "参数名"; placeholderTextColor: root.textMuted
+                                        placeholderText: "鍙傛暟鍚?; placeholderTextColor: root.textMuted
                                         background: Rectangle { color: root.panelBg; border.color: root.borderColor; border.width: 1; radius: 3 }
                                     }
                                     TextField {
                                         id: newParamLabel; Layout.preferredWidth: 80; Layout.preferredHeight: 28
                                         color: root.textColor; font.pixelSize: 11; leftPadding: 5; rightPadding: 5; verticalAlignment: TextInput.AlignVCenter; clip: true
-                                        placeholderText: "标签"; placeholderTextColor: root.textMuted
+                                        placeholderText: "鏍囩"; placeholderTextColor: root.textMuted
                                         background: Rectangle { color: root.panelBg; border.color: root.borderColor; border.width: 1; radius: 3 }
                                     }
                                     ComboBox {
@@ -1261,11 +1291,11 @@ Item {
                                     TextField {
                                         id: newParamVal; Layout.fillWidth: true; Layout.preferredHeight: 28
                                         color: root.devAccentColor; font.pixelSize: 11; leftPadding: 5; rightPadding: 5; verticalAlignment: TextInput.AlignVCenter; clip: true
-                                        placeholderText: "默认值"; placeholderTextColor: root.textMuted
+                                        placeholderText: "榛樿鍊?; placeholderTextColor: root.textMuted
                                         background: Rectangle { color: root.panelBg; border.color: root.borderColor; border.width: 1; radius: 3 }
                                     }
                                     Button {
-                                        text: "添加"; Layout.preferredWidth: 45; Layout.preferredHeight: 28
+                                        text: "娣诲姞"; Layout.preferredWidth: 45; Layout.preferredHeight: 28
                                         background: Rectangle { color: root.devAccentMuted; radius: 3 }
                                         contentItem: Text { text: parent.text; color: "black"; font.pixelSize: 11; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                                         onClicked: {
@@ -1291,32 +1321,37 @@ Item {
                 }
             }
 
-            // 底部操作按钮
+            // 搴曢儴鎿嶄綔鎸夐挳
             RowLayout {
                 Layout.fillWidth: true; spacing: 15
                 Item { Layout.fillWidth: true }
                 Button {
-                    text: "取消"; Layout.preferredWidth: 90; Layout.preferredHeight: 36
+                    text: "鍙栨秷"; Layout.preferredWidth: 90; Layout.preferredHeight: 36
                     background: Rectangle { color: "transparent"; border.color: root.borderColor; border.width: 1; radius: 4 }
                     contentItem: Text { text: parent.text; color: root.textMuted; font.pixelSize: 14; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                     onClicked: algoConfigPopup.close()
                 }
                 Button {
-                    text: root.pendingEditIndex === -1 ? "确认注册" : "保存修改"
+                    text: root.pendingEditIndex === -1 ? "纭娉ㄥ唽" : "淇濆瓨淇敼"
                     Layout.preferredWidth: 140; Layout.preferredHeight: 36
                     background: Rectangle { color: root.devAccentColor; radius: 4 }
                     contentItem: Text { text: parent.text; color: root.bgDark; font.bold: true; font.pixelSize: 14; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                     onClicked: {
                         if (inputAlgoName.text.trim() === "" || inputScriptPath.text.trim() === "") {
-                            root.showToast("⚠️ 插件名称和路径不能为空")
+                            root.showToast("鈿狅笍 鎻掍欢鍚嶇О鍜岃矾寰勪笉鑳戒负绌?)
                             return
                         }
-                        // 收集参数（含完整元数据）
+                        // 鏀堕泦鍙傛暟锛堝惈瀹屾暣鍏冩暟鎹級
                         var pArray = []
                         for(var i=0; i<editingParamsModel.count; i++) {
                             var m = editingParamsModel.get(i)
+                            var ptype = root.normalizeParamType(m.type)
+                            if (!root.validateParamValue(m.v, ptype)) {
+                                root.showToast("参数 " + (m.label || m.n || "") + " 的默认值不符合 " + ptype + " 类型")
+                                return
+                            }
                             pArray.push({
-                                "n": m.n, "label": m.label, "v": m.v, "type": m.type,
+                                "n": m.n, "label": m.label, "v": m.v, "type": ptype,
                                 "min": m.min || "", "max": m.max || "",
                                 "options": m.options || "", "desc": m.desc || ""
                             })
@@ -1331,7 +1366,7 @@ Item {
                         if (isScriptPlugin) {
                             var importResult = backendService.importPluginFile(inputPath)
                             if (!importResult.ok) {
-                                root.showToast("⚠️ 文件复制失败: " + (importResult.message || "未知错误"))
+                                root.showToast("鈿狅笍 鏂囦欢澶嶅埗澶辫触: " + (importResult.message || "鏈煡閿欒"))
                                 return
                             }
                             payload.script_path = importResult.path
@@ -1345,11 +1380,11 @@ Item {
                             ? backendService.createAlgorithm(payload)
                             : backendService.updateAlgorithm(algoListModel.get(root.pendingEditIndex).id, payload)
                         if (root.pendingEditIndex === -1) {
-                            if (result && result.ok) root.showToast("✅ 新插件引擎已接入")
-                            else root.showToast("⚠️ 插件注册失败: " + ((result && result.message) ? result.message : "未知错误"))
+                            if (result && result.ok) root.showToast("鉁?鏂版彃浠跺紩鎿庡凡鎺ュ叆")
+                            else root.showToast("鈿狅笍 鎻掍欢娉ㄥ唽澶辫触: " + ((result && result.message) ? result.message : "鏈煡閿欒"))
                         } else {
-                            if (result && result.ok) root.showToast("✅ 底层配置已更新")
-                            else root.showToast("⚠️ 配置保存失败: " + ((result && result.message) ? result.message : "未知错误"))
+                            if (result && result.ok) root.showToast("鉁?搴曞眰閰嶇疆宸叉洿鏂?)
+                            else root.showToast("鈿狅笍 閰嶇疆淇濆瓨澶辫触: " + ((result && result.message) ? result.message : "鏈煡閿欒"))
                         }
                         if (result && result.ok) {
                             root.loadAlgorithms()
@@ -1363,14 +1398,14 @@ Item {
 
 
     // ========================================================================
-    // ======================== 全新界面主体：Master-Detail 控制台 ================
+    // ======================== 鍏ㄦ柊鐣岄潰涓讳綋锛歁aster-Detail 鎺у埗鍙?================
     // ========================================================================
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 20
         spacing: 20
 
-        // 顶栏栏：控制台 Header
+        // 椤舵爮鏍忥細鎺у埗鍙?Header
         RowLayout {
             Layout.fillWidth: true
             spacing: 15
@@ -1378,7 +1413,7 @@ Item {
             Rectangle { width: 4; height: 24; color: root.devAccentColor; radius: 2 }
 
             Label {
-                text: "算法引擎与二次插件控制台"
+                text: "绠楁硶寮曟搸涓庝簩娆℃彃浠舵帶鍒跺彴"
                 font.pixelSize: 22
                 font.bold: true
                 color: root.textColor
@@ -1387,7 +1422,7 @@ Item {
             Item { Layout.fillWidth: true }
 
             Button {
-                text: "插件规范"
+                text: "鎻掍欢瑙勮寖"
                 font.bold: true
                 font.pixelSize: 14
                 background: Rectangle {
@@ -1414,7 +1449,7 @@ Item {
             }
 
             Button {
-                text: "+ 注册新插件环境"
+                text: "+ 娉ㄥ唽鏂版彃浠剁幆澧?
                 font.bold: true
                 font.pixelSize: 14
                 background: Rectangle {
@@ -1442,13 +1477,13 @@ Item {
             }
         }
 
-        // ================= Master-Detail 左右分栏核心 =================
+        // ================= Master-Detail 宸﹀彸鍒嗘爮鏍稿績 =================
         RowLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
             spacing: 20
 
-            // ---------------- 左侧 (Master)：分类折叠算法列表 ----------------
+            // ---------------- 宸︿晶 (Master)锛氬垎绫绘姌鍙犵畻娉曞垪琛?----------------
             Rectangle {
                 Layout.preferredWidth: 280
                 Layout.fillHeight: true
@@ -1460,7 +1495,7 @@ Item {
 
                 Text {
                     anchors.centerIn: parent
-                    text: "暂无自定义算法注册"
+                    text: "鏆傛棤鑷畾涔夌畻娉曟敞鍐?
                     color: root.textMuted
                     font.pixelSize: 14
                     visible: algoListModel.count === 0
@@ -1484,7 +1519,7 @@ Item {
                         width: parent.width - 12
                         spacing: 0
 
-                        // ---- 统计概览 ----
+                        // ---- 缁熻姒傝 ----
                         Rectangle {
                             Layout.fillWidth: true
                             Layout.preferredHeight: 96
@@ -1499,7 +1534,7 @@ Item {
                                 anchors.rightMargin: 10
                                 anchors.topMargin: 10
                                 height: 32
-                                model: ["全部算法", "清洗算法", "生成算法", "评估算法", "训练算法"]
+                                model: ["鍏ㄩ儴绠楁硶", "娓呮礂绠楁硶", "鐢熸垚绠楁硶", "璇勪及绠楁硶", "璁粌绠楁硶"]
                                 currentIndex: Math.max(0, model.indexOf(root.algoCategoryFilter))
                                 background: Rectangle { color: root.bgDark; border.color: root.borderColor; border.width: 1; radius: 4 }
                                 contentItem: Text { text: algoCategoryFilterCombo.currentText; color: root.textColor; font.pixelSize: 12; verticalAlignment: Text.AlignVCenter; leftPadding: 10 }
@@ -1522,7 +1557,7 @@ Item {
                                 anchors.bottomMargin: 11
                                 spacing: 16
                                 Text {
-                                    text: "总计 " + root.totalAlgoCount
+                                    text: "鎬昏 " + root.totalAlgoCount
                                     color: root.textColor; font.pixelSize: 13; font.bold: true
                                 }
                                 Rectangle { width: 1; height: 14; color: root.borderColor }
@@ -1530,34 +1565,34 @@ Item {
                                     Layout.preferredWidth: Math.max(22, cleanStatText.implicitWidth + 10)
                                     Layout.preferredHeight: 18; radius: 9
                                     color: Qt.rgba(47/255, 133/255, 90/255, 0.15)
-                                    Text { id: cleanStatText; anchors.centerIn: parent; text: "清 " + root.cleaningCount; color: root.cleanTagColor; font.pixelSize: 10; font.bold: true }
+                                    Text { id: cleanStatText; anchors.centerIn: parent; text: "娓?" + root.cleaningCount; color: root.cleanTagColor; font.pixelSize: 10; font.bold: true }
                                 }
                                 Rectangle {
                                     Layout.preferredWidth: Math.max(22, genStatText.implicitWidth + 10)
                                     Layout.preferredHeight: 18; radius: 9
                                     color: Qt.rgba(194/255, 125/255, 14/255, 0.15)
-                                    Text { id: genStatText; anchors.centerIn: parent; text: "生 " + root.generationCount; color: root.genTagColor; font.pixelSize: 10; font.bold: true }
+                                    Text { id: genStatText; anchors.centerIn: parent; text: "鐢?" + root.generationCount; color: root.genTagColor; font.pixelSize: 10; font.bold: true }
                                 }
                                 Rectangle {
                                     Layout.preferredWidth: Math.max(22, evalStatText.implicitWidth + 10)
                                     Layout.preferredHeight: 18; radius: 9
                                     color: Qt.rgba(29/255, 78/255, 216/255, 0.15)
-                                    Text { id: evalStatText; anchors.centerIn: parent; text: "评 " + root.evaluationCount; color: root.devAccentColor; font.pixelSize: 10; font.bold: true }
+                                    Text { id: evalStatText; anchors.centerIn: parent; text: "璇?" + root.evaluationCount; color: root.devAccentColor; font.pixelSize: 10; font.bold: true }
                                 }
                                 Rectangle {
                                     Layout.preferredWidth: Math.max(22, trainStatText.implicitWidth + 10)
                                     Layout.preferredHeight: 18; radius: 9
                                     color: Qt.rgba(180/255, 83/255, 9/255, 0.15)
-                                    Text { id: trainStatText; anchors.centerIn: parent; text: "训 " + root.trainingCount; color: root.genTagColor; font.pixelSize: 10; font.bold: true }
+                                    Text { id: trainStatText; anchors.centerIn: parent; text: "璁?" + root.trainingCount; color: root.genTagColor; font.pixelSize: 10; font.bold: true }
                                 }
                             }
                         }
 
                             Rectangle { Layout.fillWidth: true; height: 1; color: root.borderColor }
 
-                        // ===== 清洗算法 =====
+                        // ===== 娓呮礂绠楁硶 =====
                         Rectangle {
-                            visible: root.showCategorySection("清洗算法")
+                            visible: root.showCategorySection("娓呮礂绠楁硶")
                             Layout.fillWidth: true; height: 38
                             color: root.cleaningExpanded ? Qt.rgba(47/255, 133/255, 90/255, 0.04) : "transparent"
                             MouseArea {
@@ -1567,11 +1602,11 @@ Item {
                             RowLayout {
                                 anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12; spacing: 8
                                 Text {
-                                    text: root.cleaningExpanded ? "▼" : "▶"
+                                    text: root.cleaningExpanded ? "鈻? : "鈻?
                                     color: root.cleanTagColor; font.pixelSize: 10; Layout.preferredWidth: 14
                                 }
                                 Text {
-                                    text: "清洗算法"; color: root.textColor; font.pixelSize: 13; font.bold: true
+                                    text: "娓呮礂绠楁硶"; color: root.textColor; font.pixelSize: 13; font.bold: true
                                 }
                                 Rectangle {
                                     Layout.preferredWidth: Math.max(22, s1cnt.implicitWidth + 10)
@@ -1582,18 +1617,18 @@ Item {
                             }
                         }
                         Column {
-                            visible: root.showCategorySection("清洗算法") && root.cleaningExpanded
+                            visible: root.showCategorySection("娓呮礂绠楁硶") && root.cleaningExpanded
                             Layout.fillWidth: true
                             Repeater {
                                 model: cleaningAlgoModel
                                 delegate: algoItemDelegate
                             }
                         }
-                        Rectangle { visible: root.showCategorySection("清洗算法"); Layout.fillWidth: true; height: 1; color: root.borderColor }
+                        Rectangle { visible: root.showCategorySection("娓呮礂绠楁硶"); Layout.fillWidth: true; height: 1; color: root.borderColor }
 
-                        // ===== 生成算法 =====
+                        // ===== 鐢熸垚绠楁硶 =====
                         Rectangle {
-                            visible: root.showCategorySection("生成算法")
+                            visible: root.showCategorySection("鐢熸垚绠楁硶")
                             Layout.fillWidth: true; height: 38
                             color: root.generationExpanded ? Qt.rgba(194/255, 125/255, 14/255, 0.04) : "transparent"
                             MouseArea {
@@ -1603,11 +1638,11 @@ Item {
                             RowLayout {
                                 anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12; spacing: 8
                                 Text {
-                                    text: root.generationExpanded ? "▼" : "▶"
+                                    text: root.generationExpanded ? "鈻? : "鈻?
                                     color: root.genTagColor; font.pixelSize: 10; Layout.preferredWidth: 14
                                 }
                                 Text {
-                                    text: "生成算法"; color: root.textColor; font.pixelSize: 13; font.bold: true
+                                    text: "鐢熸垚绠楁硶"; color: root.textColor; font.pixelSize: 13; font.bold: true
                                 }
                                 Rectangle {
                                     Layout.preferredWidth: Math.max(22, s2cnt.implicitWidth + 10)
@@ -1618,18 +1653,18 @@ Item {
                             }
                         }
                         Column {
-                            visible: root.showCategorySection("生成算法") && root.generationExpanded
+                            visible: root.showCategorySection("鐢熸垚绠楁硶") && root.generationExpanded
                             Layout.fillWidth: true
                             Repeater {
                                 model: generationAlgoModel
                                 delegate: algoItemDelegate
                             }
                         }
-                        Rectangle { visible: root.showCategorySection("生成算法"); Layout.fillWidth: true; height: 1; color: root.borderColor }
+                        Rectangle { visible: root.showCategorySection("鐢熸垚绠楁硶"); Layout.fillWidth: true; height: 1; color: root.borderColor }
 
-                        // ===== 评估算法 =====
+                        // ===== 璇勪及绠楁硶 =====
                         Rectangle {
-                            visible: root.showCategorySection("评估算法")
+                            visible: root.showCategorySection("璇勪及绠楁硶")
                             Layout.fillWidth: true; height: 38
                             color: root.evaluationExpanded ? Qt.rgba(29/255, 78/255, 216/255, 0.04) : "transparent"
                             MouseArea {
@@ -1639,11 +1674,11 @@ Item {
                             RowLayout {
                                 anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12; spacing: 8
                                 Text {
-                                    text: root.evaluationExpanded ? "▼" : "▶"
+                                    text: root.evaluationExpanded ? "鈻? : "鈻?
                                     color: root.devAccentColor; font.pixelSize: 10; Layout.preferredWidth: 14
                                 }
                                 Text {
-                                    text: "评估算法"; color: root.textColor; font.pixelSize: 13; font.bold: true
+                                    text: "璇勪及绠楁硶"; color: root.textColor; font.pixelSize: 13; font.bold: true
                                 }
                                 Rectangle {
                                     Layout.preferredWidth: Math.max(22, s3cnt.implicitWidth + 10)
@@ -1654,18 +1689,18 @@ Item {
                             }
                         }
                         Column {
-                            visible: root.showCategorySection("评估算法") && root.evaluationExpanded
+                            visible: root.showCategorySection("璇勪及绠楁硶") && root.evaluationExpanded
                             Layout.fillWidth: true
                             Repeater {
                                 model: evaluationAlgoModel
                                 delegate: algoItemDelegate
                             }
                         }
-                        Rectangle { visible: root.showCategorySection("评估算法"); Layout.fillWidth: true; height: 1; color: root.borderColor }
+                        Rectangle { visible: root.showCategorySection("璇勪及绠楁硶"); Layout.fillWidth: true; height: 1; color: root.borderColor }
 
-                        // ===== 训练算法 =====
+                        // ===== 璁粌绠楁硶 =====
                         Rectangle {
-                            visible: root.showCategorySection("训练算法")
+                            visible: root.showCategorySection("璁粌绠楁硶")
                             Layout.fillWidth: true; height: 38
                             color: root.trainingExpanded ? Qt.rgba(180/255, 83/255, 9/255, 0.04) : "transparent"
                             MouseArea {
@@ -1675,11 +1710,11 @@ Item {
                             RowLayout {
                                 anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12; spacing: 8
                                 Text {
-                                    text: root.trainingExpanded ? "▼" : "▶"
+                                    text: root.trainingExpanded ? "鈻? : "鈻?
                                     color: root.genTagColor; font.pixelSize: 10; Layout.preferredWidth: 14
                                 }
                                 Text {
-                                    text: "训练算法"; color: root.textColor; font.pixelSize: 13; font.bold: true
+                                    text: "璁粌绠楁硶"; color: root.textColor; font.pixelSize: 13; font.bold: true
                                 }
                                 Rectangle {
                                     Layout.preferredWidth: Math.max(22, s4cnt.implicitWidth + 10)
@@ -1690,7 +1725,7 @@ Item {
                             }
                         }
                         Column {
-                            visible: root.showCategorySection("训练算法") && root.trainingExpanded
+                            visible: root.showCategorySection("璁粌绠楁硶") && root.trainingExpanded
                             Layout.fillWidth: true
                             Repeater {
                                 model: trainingAlgoModel
@@ -1701,7 +1736,7 @@ Item {
                 }
             }
 
-            // ---------------- 右侧 (Detail)：插件详情配置台 ----------------
+            // ---------------- 鍙充晶 (Detail)锛氭彃浠惰鎯呴厤缃彴 ----------------
             Rectangle {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
@@ -1713,20 +1748,20 @@ Item {
 
                 Text {
                     anchors.centerIn: parent
-                    text: "请在左侧选择或注册新算法插件"
+                    text: "璇峰湪宸︿晶閫夋嫨鎴栨敞鍐屾柊绠楁硶鎻掍欢"
                     color: root.textMuted
                     font.pixelSize: 16
                     visible: root.selectedAlgoIndex === -1
                 }
 
-                // 详情面板主体
+                // 璇︽儏闈㈡澘涓讳綋
                 ColumnLayout {
                     anchors.fill: parent
                     anchors.margins: 25
                     spacing: 20
                     visible: root.selectedAlgoIndex !== -1
 
-                    // 1. 顶部 Header
+                    // 1. 椤堕儴 Header
                     RowLayout {
                         Layout.fillWidth: true
                         ColumnLayout {
@@ -1743,8 +1778,8 @@ Item {
                                 text: root.selectedAlgoIndex !== -1 ? (root.selectedAlgoField("category") + " > " + root.selectedAlgoField("subCategory")) : ""
                                 color: {
                                     var c = root.selectedAlgoField("category")
-                                    if (c === "清洗算法") return root.cleanTagColor
-                                    if (c === "生成算法") return root.genTagColor
+                                    if (c === "娓呮礂绠楁硶") return root.cleanTagColor
+                                    if (c === "鐢熸垚绠楁硶") return root.genTagColor
                                     return root.devAccentColor
                                 }
                                 font.pixelSize: 11
@@ -1765,11 +1800,11 @@ Item {
 
                         Item { Layout.fillWidth: true }
 
-                        // 操作按钮组 (已修复 color 属性重复设置导致的报错问题)
+                        // 鎿嶄綔鎸夐挳缁?(宸蹭慨澶?color 灞炴€ч噸澶嶈缃鑷寸殑鎶ラ敊闂)
                         RowLayout {
                             spacing: 10
                             Button {
-                                text: "✏️ 调参修改"
+                                text: "鉁忥笍 璋冨弬淇敼"
                                 Layout.preferredHeight: 32
                                 background: Rectangle { border.color: root.borderColor; border.width: 1; radius: 4; color: parent.hovered ? root.tableHoverBg : "transparent" }
                                 contentItem: Text { text: parent.text; color: root.textColor; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
@@ -1780,9 +1815,9 @@ Item {
 
                                     root.pendingEditIndex = idx;
                                     inputAlgoName.text = modelData.name;
-                                    if (modelData.category === "清洗算法") inputCategory.currentIndex = 0
-                                    else if (modelData.category === "生成算法") inputCategory.currentIndex = 1
-                                    else if (modelData.category === "训练算法") inputCategory.currentIndex = 2
+                                    if (modelData.category === "娓呮礂绠楁硶") inputCategory.currentIndex = 0
+                                    else if (modelData.category === "鐢熸垚绠楁硶") inputCategory.currentIndex = 1
+                                    else if (modelData.category === "璁粌绠楁硶") inputCategory.currentIndex = 2
                                     else inputCategory.currentIndex = 3
 
                                     var catIdx = inputSubCategory.find(modelData.subCategory);
@@ -1801,7 +1836,7 @@ Item {
                                 }
                             }
                             Button {
-                                text: "🗑️ 卸载环境"
+                                text: "馃棏锔?鍗歌浇鐜"
                                 Layout.preferredHeight: 32
                                 background: Rectangle { border.color: root.dangerColor; border.width: 1; radius: 4; color: parent.hovered ? "#33F53F3F" : "transparent" }
                                 contentItem: Text { text: parent.text; color: root.dangerColor; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
@@ -1817,11 +1852,11 @@ Item {
 
                     Rectangle { Layout.fillWidth: true; height: 1; color: root.borderColor }
 
-                    // 2. 脚本映射展示
+                    // 2. 鑴氭湰鏄犲皠灞曠ず
                     ColumnLayout {
                         Layout.fillWidth: true
                         spacing: 8
-                        Text { text: "脚本物理挂载路径 (Target Script)"; color: root.devAccentMuted; font.pixelSize: 12; font.family: "Courier"; font.bold: true }
+                        Text { text: "鑴氭湰鐗╃悊鎸傝浇璺緞 (Target Script)"; color: root.devAccentMuted; font.pixelSize: 12; font.family: "Courier"; font.bold: true }
                         Rectangle {
                             Layout.fillWidth: true; height: 46; color: Theme.control; border.color: root.borderColor; border.width: 1; radius: 6
                             Text {
@@ -1834,22 +1869,22 @@ Item {
                         }
                     }
 
-                    // 3. 描述
+                    // 3. 鎻忚堪
                     ColumnLayout {
                         Layout.fillWidth: true
                         spacing: 8
-                        Text { text: "接口简述"; color: root.textMuted; font.pixelSize: 12; font.bold: true }
+                        Text { text: "鎺ュ彛绠€杩?; color: root.textMuted; font.pixelSize: 12; font.bold: true }
                         Text {
                             text: root.selectedAlgoField("desc")
                             color: root.textColor; font.pixelSize: 14; wrapMode: Text.WordWrap; Layout.fillWidth: true; lineHeight: 1.4
                         }
                     }
 
-                    // 4. 算法使用说明
+                    // 4. 绠楁硶浣跨敤璇存槑
                     ColumnLayout {
                         Layout.fillWidth: true
                         spacing: 8
-                        Text { text: "算法使用说明"; color: root.primaryColor; font.pixelSize: 13; font.bold: true }
+                        Text { text: "绠楁硶浣跨敤璇存槑"; color: root.primaryColor; font.pixelSize: 13; font.bold: true }
                         Rectangle {
                             Layout.fillWidth: true
                             Layout.preferredHeight: 88
@@ -1868,17 +1903,17 @@ Item {
                             }
                         }
                         Text {
-                            text: "完整文档: docs/ALGORITHM_USAGE_GUIDE.md"
+                            text: "瀹屾暣鏂囨。: docs/ALGORITHM_USAGE_GUIDE.md"
                             color: root.textMuted
                             font.pixelSize: 12
                         }
                     }
 
-                    // 4.5 关联评估算法（仅训练算法可见）
+                    // 4.5 鍏宠仈璇勪及绠楁硶锛堜粎璁粌绠楁硶鍙锛?
                     ColumnLayout {
                         Layout.fillWidth: true; spacing: 8
-                        visible: root.selectedAlgoField("category") === "训练算法"
-                        Text { text: "关联评估算法"; color: root.devAccentColor; font.pixelSize: 13; font.bold: true }
+                        visible: root.selectedAlgoField("category") === "璁粌绠楁硶"
+                        Text { text: "鍏宠仈璇勪及绠楁硶"; color: root.devAccentColor; font.pixelSize: 13; font.bold: true }
                         RowLayout {
                             Layout.fillWidth: true; spacing: 10
                             ComboBox {
@@ -1899,25 +1934,25 @@ Item {
                                 }
                             }
                             Button {
-                                text: "保存绑定"; Layout.preferredHeight: 32
+                                text: "淇濆瓨缁戝畾"; Layout.preferredHeight: 32
                                 background: Rectangle { color: root.devAccentColor; radius: 4 }
                                 contentItem: Text { text: parent.text; color: "white"; font.pixelSize: 12; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                                 onClicked: {
                                     var result = backendService.saveAlgorithmBinding(root.selectedAlgoField("key"), bindingEvalCombo.currentValue || "")
                                     if (result && result.ok) {
-                                        root.showToast("✅ 绑定已保存")
+                                        root.showToast("鉁?缁戝畾宸蹭繚瀛?)
                                         var idx = root.selectedAlgoIndex
                                         if (idx >= 0) { algoListModel.setProperty(idx, "boundEvalKey", bindingEvalCombo.currentValue || ""); algoListModel.setProperty(idx, "boundEvalName", bindingEvalCombo.currentText || "") }
-                                    } else root.showToast("⚠️ 绑定失败")
+                                    } else root.showToast("鈿狅笍 缁戝畾澶辫触")
                                 }
                             }
                         }
                     }
 
-                    // 5. 解析并展示动态 JSON 参数
+                    // 5. 瑙ｆ瀽骞跺睍绀哄姩鎬?JSON 鍙傛暟
                     ColumnLayout {
                         Layout.fillWidth: true; Layout.fillHeight: true; spacing: 8
-                        Text { text: "动态反射参数快照 (Read-Only)"; color: root.devAccentColor; font.pixelSize: 12; font.family: "Courier"; font.bold: true }
+                        Text { text: "鍔ㄦ€佸弽灏勫弬鏁板揩鐓?(Read-Only)"; color: root.devAccentColor; font.pixelSize: 12; font.family: "Courier"; font.bold: true }
 
                         Rectangle {
                             Layout.fillWidth: true; Layout.fillHeight: true; color: root.bgDark; border.color: root.borderColor; border.width: 1; radius: 6; clip: true
@@ -1929,10 +1964,10 @@ Item {
                                     color: root.textColor; font.family: "Courier"; font.pixelSize: 14; lineHeight: 1.5
                                     text: {
                                         var rawParams = root.selectedAlgoField("paramsJson")
-                                        if(!rawParams) return "[]\n// 无环境参数传入";
+                                        if(!rawParams) return "[]\n// 鏃犵幆澧冨弬鏁颁紶鍏?;
                                         try {
                                             var arr = JSON.parse(rawParams);
-                                            if(arr.length === 0) return "[]\n// 无环境参数传入";
+                                            if(arr.length === 0) return "[]\n// 鏃犵幆澧冨弬鏁颁紶鍏?;
                                             var str = "[\n";
                                             for(var i=0; i<arr.length; i++) {
                                                 var p = arr[i];
