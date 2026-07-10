@@ -44,7 +44,10 @@ class AlgorithmRepository(RepositoryBase):
         if category:
             query = query.filter(Algorithm.category == category)
         if modality:
-            query = query.filter(Algorithm.modality.in_([modality, "multimodal"]))
+            modalities = [modality, "multimodal"]
+            if category == "cleaning":
+                modalities.append("tabular")
+            query = query.filter(Algorithm.modality.in_(modalities))
         return query.order_by(Algorithm.created_at.desc(), Algorithm.id.desc()).all()
 
     def list_parameters(self, session, algorithm_id: int) -> list[AlgorithmParameter]:

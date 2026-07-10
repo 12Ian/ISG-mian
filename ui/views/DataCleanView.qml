@@ -25,7 +25,7 @@ Item {
         anchors.topMargin: -16
         anchors.rightMargin: -16
         title: "数据清洗帮助"
-        body: "本页用于对数据集执行质量检测、清洗建议生成和清洗任务管理。\n\n1. 左侧历史区展示清洗任务记录，可查看任务状态、源数据集、使用算法、参数和建议数量。\n2. 点击“新建清洗任务”后，先选择源数据集。可通过数据阶段筛选只看原始、生成或清洗后的数据集。\n3. 系统会按数据模态加载清洗算法，例如图像清洗、文本清洗、音频清洗和表格清洗。可以同时勾选多个策略。\n4. 每个算法支持动态参数配置，例如阈值、处理强度、检测模式等。参数会随任务提交给后端。\n5. 启动任务后可查看进度和状态。若任务失败，错误弹窗会提示原因，通常需要检查源文件、参数范围或算法依赖。\n6. 任务完成后，详情区会展示清洗建议和样本明细。可预览样本内容，并根据建议类型判断是否需要删除、修复或保留。\n7. 支持保存清洗工程、重命名任务、删除历史记录和导出清洗结果。清洗后的数据可继续作为生成或评估的输入。"
+        body: "本页用于对数据集执行质量检测、清洗建议生成和清洗任务管理。\n\n1. 左侧历史区展示清洗任务记录，可查看任务状态、源数据集、使用算法、参数和建议数量。\n2. 点击“新建清洗任务”后，先选择源数据集。可通过数据阶段筛选只看原始、生成或清洗后的数据集。\n3. 系统会按数据模态加载清洗算法，例如图像清洗、文本清洗、音频清洗和通用清洗。可以同时勾选多个策略。\n4. 每个算法支持动态参数配置，例如阈值、处理强度、检测模式等。参数会随任务提交给后端。\n5. 启动任务后可查看进度和状态。若任务失败，错误弹窗会提示原因，通常需要检查源文件、参数范围或算法依赖。\n6. 任务完成后，详情区会展示清洗建议和样本明细。可预览样本内容，并根据建议类型判断是否需要删除、修复或保留。\n7. 支持保存清洗工程、重命名任务、删除历史记录和导出清洗结果。清洗后的数据可继续作为生成或评估的输入。"
     }
 
     property string viewMode: "history"
@@ -63,6 +63,7 @@ Item {
     property bool imageLoadError: false
 
     property int pendingPreviewId: -1
+    property string pendingPreviewPath: ""
     property int pendingEditIndex: -1
     property int pendingDeleteIndex: -1
     property int selectedExportCount: 0
@@ -149,7 +150,7 @@ Item {
         if (modality === "image") return "图像清洗算法"
         if (modality === "text") return "文本清洗算法"
         if (modality === "audio") return "音频清洗算法"
-        if (modality === "tabular") return "表格清洗算法"
+        if (modality === "tabular") return "通用清洗算法"
         if (modality === "video") return "视频清洗算法"
         if (modality === "multimodal") return "通用清洗算法"
         return "其他清洗算法"
@@ -208,20 +209,55 @@ Item {
             for (var p = 0; p < rawParams.length; p++) {
                 var param = rawParams[p]
                 var opts = param.options || param.options_json || []
+                var optionLabels = opts.slice()
+                if ((algorithm.key || "") === "cleaning.text_deduplicate" && (param.name || "") === "deduplicate_mode") {
+                    opts = ["char", "line"]
+                    optionLabels = ["按字去重", "按行/句去重"]
+                }
+                var defaultValue = param.default_value !== undefined && param.default_value !== null ? String(param.default_value) : ""
+                if ((algorithm.key || "") === "cleaning.text_stopwords" && (param.name || "") === "stop_words" && defaultValue === "") {
+                    defaultValue = root.defaultStopWordsText()
+                }
                 params.push({
                     n: param.name || "",
                     label: param.label || param.name || "",
-                    v: param.default_value !== undefined && param.default_value !== null ? String(param.default_value) : "",
-                    type: param.type || "string",
+                    v: defaultValue,
+                    type: opts.length > 0 ? "select" : (param.type || "string"),
                     minValue: param.min_value !== undefined ? param.min_value : param.min,
                     maxValue: param.max_value !== undefined ? param.max_value : param.max,
                     options: opts,
-                    rangeText: root.parameterRangeText(param)
+                    optionLabels: optionLabels,
+                    rangeText: root.parameterRangeText(param),
+                    description: param.description || "",
+                    algorithmKey: algorithm.key || ""
                 })
             }
             map[String(algorithm.id)] = params
         }
         return map
+    }
+
+    function isStopWordsParameter(param) {
+        return param && param.algorithmKey === "cleaning.text_stopwords" && param.n === "stop_words"
+    }
+
+    function defaultStopWordsText() {
+        return "a, an, and, are, as, at, be, by, for, from, has, he, in, is, it, its, of, on, that, the, to, was, were, will, with, this, these, those, or, not, but, we, you, they, i"
+    }
+
+    function parameterPlaceholder(param) {
+        if (root.isStopWordsParameter(param)) return "\u8f93\u5165\u505c\u7528\u8bcd\uff0c\u652f\u6301\u9017\u53f7\u3001\u7a7a\u683c\u6216\u6362\u884c\u5206\u9694"
+        return ""
+    }
+
+    function parameterDescription(param) {
+        if (root.isStopWordsParameter(param)) return "\u8fd9\u91cc\u662f\u5b8c\u6574\u505c\u7528\u8bcd\u5217\u8868\uff1b\u76f4\u63a5\u4fee\u6539\u540e\u53ef\u66ff\u6362\u9ed8\u8ba4\u5217\u8868\u3002"
+        return param && param.description ? param.description : ""
+    }
+
+    function parameterLabel(param) {
+        if (root.isStopWordsParameter(param)) return "\u505c\u7528\u8bcd\u5217\u8868"
+        return param ? (param.label || param.n) : ""
     }
 
     function parameterRangeText(param) {
@@ -286,6 +322,7 @@ Item {
         for (var i = 0; i < algorithms.length; i++) {
             var algorithm = algorithms[i]
             var modality = algorithm.modality || "other"
+            if (modality === "tabular") modality = "multimodal"
             if (!grouped[modality]) grouped[modality] = []
             grouped[modality].push(algorithm)
         }
@@ -328,6 +365,9 @@ Item {
                 var normalizedValue = root.normalizeParameterInput(params[p], params[p].v)
                 params[p].v = normalizedValue
                 result[params[p].n] = normalizedValue
+                if (root.isStopWordsParameter(params[p])) {
+                    result["replace_stop_words"] = true
+                }
             }
         }
         return result
@@ -340,6 +380,7 @@ Item {
         for (var i = 0; i < keys.length; i++) {
             var key = keys[i]
             if (key === "algorithm_ids") continue
+            if (key === "replace_stop_words") continue
             result[key] = params[key]
         }
         return result
@@ -354,6 +395,19 @@ Item {
             return true
         }
         root.showToast("\u26a0\ufe0f " + (result && result.message ? result.message : "\u53c2\u6570\u8bb0\u5f55\u4fdd\u5b58\u5931\u8d25"))
+        return false
+    }
+
+    function saveCurrentFormParameterPreset(name) {
+        var payload = root.selectedCleaningParameters()
+        var params = root.cleanPresetParameters(payload)
+        var result = backendService.saveCleaningParameterPreset(name, root.selectedStrategies || [], params)
+        if (result && result.status === "success") {
+            root.cleaningParameterPresets = result.items || []
+            root.showToast("\u2705 \u505c\u7528\u8bcd\u5217\u8868\u5df2\u4fdd\u5b58")
+            return true
+        }
+        root.showToast("\u26a0\ufe0f " + (result && result.message ? result.message : "\u505c\u7528\u8bcd\u4fdd\u5b58\u5931\u8d25"))
         return false
     }
 
@@ -383,7 +437,14 @@ Item {
                     n: item.n,
                     label: item.label,
                     v: params[item.n] !== undefined ? String(params[item.n]) : item.v,
-                    type: item.type
+                    type: item.type,
+                    minValue: item.minValue,
+                    maxValue: item.maxValue,
+                    options: item.options,
+                    optionLabels: item.optionLabels,
+                    rangeText: item.rangeText,
+                    description: item.description,
+                    algorithmKey: item.algorithmKey
                 })
             }
             newMap[mapKey] = targetList
@@ -400,6 +461,7 @@ Item {
         for (var i = 0; i < keys.length; i++) {
             var key = keys[i]
             if (key === "algorithm_ids") continue
+            if (key === "replace_stop_words") continue
             result.push({ label: key, value: String(params[key]) })
         }
         return result
@@ -426,6 +488,7 @@ Item {
             for (var i = 0; i < keys.length; i++) {
                 var k = keys[i]
                 if (k === "algorithm_ids") continue
+                if (k === "replace_stop_words") continue
                 parts.push(k + "=" + paramsJson[k])
             }
         }
@@ -483,6 +546,7 @@ Item {
         for (var i = 0; i < keys.length; i++) {
             var key = keys[i]
             if (key === "algorithm_ids") continue
+            if (key === "replace_stop_words") continue
             result.push({ k: key, v: params[key] })
         }
         return result
@@ -518,11 +582,20 @@ Item {
 
     function decisionBackgroundColor(actionName) {
         var key = root.decisionKey(actionName)
-        if (key === "delete") return "#4C1D1D"
-        if (key === "repair") return "#4A2E12"
-        if (key === "keep") return "#123B2A"
-        if (key === "review") return "#17365F"
+        if (key === "delete") return "transparent"
+        if (key === "repair") return "transparent"
+        if (key === "keep") return "transparent"
+        if (key === "review") return "transparent"
         return root.tableHoverBg
+    }
+
+    function decisionDisplayText(actionName) {
+        var key = root.decisionKey(actionName)
+        if (key === "delete") return "方式：删除"
+        if (key === "repair") return "方式：修复"
+        if (key === "keep") return "方式：保留"
+        if (key === "review") return "方式：复核"
+        return actionName || "-"
     }
 
     function computeHasDetailParams(obj) {
@@ -655,6 +728,7 @@ Item {
                     actionName: item.operation_label || item.suggested_action || "",
                     operation: operation,
                     samplePath: item.sample_path || "",
+                    previewPath: item.preview_path || item.sample_path || "",
                     issueType: item.issue_type || "",
                     confidence: item.confidence || 0,
                     status: item.status || "",
@@ -669,6 +743,7 @@ Item {
                     actionName: "\u672a\u53d1\u73b0\u9700\u5904\u7406\u7684\u6e05\u6d17\u5efa\u8bae",
                     operation: "",
                     samplePath: "",
+                    previewPath: "",
                     issueType: "",
                     confidence: 0,
                     status: "",
@@ -679,9 +754,17 @@ Item {
 
         function onSamplePreviewUpdated(data) {
             var payload = data && data.data ? data.data : data
-            if (!payload || !payload.sample_id) return
-            if (root.pendingPreviewId !== payload.sample_id) return
+            if (!payload) return
+            var payloadPath = String(payload.file_path || "")
+            if (payload.sample_id) {
+                if (root.pendingPreviewId !== payload.sample_id) return
+            } else if (root.pendingPreviewPath !== "") {
+                if (payloadPath !== root.pendingPreviewPath) return
+            } else {
+                return
+            }
             root.pendingPreviewId = -1
+            root.pendingPreviewPath = ""
             root.previewKind = payload.preview_kind || "file"
             root.previewText = payload.text_content || payload.error || ""
             root.previewTitle = payload.name || payload.relative_path || "样本预览"
@@ -1696,7 +1779,7 @@ Item {
                                                     RowLayout {
                                                         width: parent.width
                                                         spacing: 8
-                                                        Text { text: modelData.label || modelData.n; color: root.textMuted; font.pixelSize: 12; Layout.fillWidth: true; elide: Text.ElideRight }
+                                                        Text { text: root.parameterLabel(modelData); color: root.textMuted; font.pixelSize: 12; Layout.fillWidth: true; elide: Text.ElideRight }
                                                         Text {
                                                             visible: modelData.rangeText !== undefined && modelData.rangeText !== ""
                                                             text: modelData.rangeText
@@ -1707,11 +1790,41 @@ Item {
                                                             elide: Text.ElideRight
                                                         }
                                                     }
+                                                    Text {
+                                                        visible: root.parameterDescription(modelData) !== ""
+                                                        width: parent.width
+                                                        text: root.parameterDescription(modelData)
+                                                        color: root.textMuted
+                                                        font.pixelSize: 11
+                                                        wrapMode: Text.WordWrap
+                                                    }
                                                     Rectangle {
-                                                        width: parent.width; height: 36; color: root.bgDark; radius: 4; border.color: root.borderColor; border.width: 1
+                                                        width: parent.width; height: root.isStopWordsParameter(modelData) ? 132 : 36; color: root.bgDark; radius: 4; border.color: root.borderColor; border.width: 1
+                                                        StableComboBox {
+                                                            visible: modelData.options && modelData.options.length > 0
+                                                            anchors.fill: parent
+                                                            model: modelData.optionLabels || modelData.options || []
+                                                            currentIndex: {
+                                                                var opts = modelData.options || []
+                                                                var idx = opts.indexOf(modelData.v)
+                                                                return idx >= 0 ? idx : 0
+                                                            }
+                                                            background: Rectangle {
+                                                                color: "transparent"
+                                                                radius: 4
+                                                            }
+                                                            onActivated: function(index) {
+                                                                var opts = modelData.options || []
+                                                                var value = opts.length > index ? opts[index] : currentText
+                                                                root.setParamValue(selectedAlgorithmDelegate.selectedAlgorithmId, modelData.n, value)
+                                                            }
+                                                        }
                                                         TextInput {
+                                                            visible: !(modelData.options && modelData.options.length > 0) && !root.isStopWordsParameter(modelData)
                                                             text: modelData.v
                                                             color: root.textColor; font.pixelSize: 13; anchors.fill: parent; leftPadding: 10; verticalAlignment: TextInput.AlignVCenter
+                                                            clip: true
+                                                            opacity: text.length > 0 ? 1.0 : 0.75
                                                             inputMethodHints: (modelData.type === "int" || modelData.type === "integer" || modelData.type === "float" || modelData.type === "number") ? Qt.ImhFormattedNumbersOnly : Qt.ImhNone
                                                             onEditingFinished: {
                                                                 var normalizedValue = root.normalizeParameterInput(modelData, text)
@@ -1722,6 +1835,52 @@ Item {
                                                                 root.setParamValue(selectedAlgorithmDelegate.selectedAlgorithmId, modelData.n, text)
                                                             }
                                                         }
+                                                        TextArea {
+                                                            visible: root.isStopWordsParameter(modelData)
+                                                            text: modelData.v
+                                                            color: root.textColor
+                                                            font.pixelSize: 13
+                                                            anchors.fill: parent
+                                                            leftPadding: 10
+                                                            rightPadding: 10
+                                                            topPadding: 8
+                                                            bottomPadding: 8
+                                                            wrapMode: TextArea.Wrap
+                                                            placeholderText: root.parameterPlaceholder(modelData)
+                                                            placeholderTextColor: root.textMuted
+                                                            background: Rectangle { color: "transparent" }
+                                                            onTextChanged: root.setParamValue(selectedAlgorithmDelegate.selectedAlgorithmId, modelData.n, text)
+                                                        }
+                                                        Text {
+                                                            visible: !(modelData.options && modelData.options.length > 0) && !root.isStopWordsParameter(modelData) && modelData.v === "" && root.parameterPlaceholder(modelData) !== ""
+                                                            anchors.fill: parent
+                                                            anchors.leftMargin: 10
+                                                            anchors.rightMargin: 8
+                                                            verticalAlignment: Text.AlignVCenter
+                                                            text: root.parameterPlaceholder(modelData)
+                                                            color: root.textMuted
+                                                            font.pixelSize: 12
+                                                            elide: Text.ElideRight
+                                                        }
+                                                    }
+                                                    Button {
+                                                        visible: root.isStopWordsParameter(modelData)
+                                                        width: parent.width
+                                                        height: 30
+                                                        text: "\u4fdd\u5b58\u505c\u7528\u8bcd"
+                                                        background: Rectangle {
+                                                            color: parent.hovered ? "#0288D1" : root.primaryColor
+                                                            radius: 4
+                                                        }
+                                                        contentItem: Text {
+                                                            text: parent.text
+                                                            color: "black"
+                                                            horizontalAlignment: Text.AlignHCenter
+                                                            verticalAlignment: Text.AlignVCenter
+                                                            font.pixelSize: 12
+                                                            font.bold: true
+                                                        }
+                                                        onClicked: root.saveCurrentFormParameterPreset("\u505c\u7528\u8bcd\u6e05\u6d17")
                                                     }
                                                 }
                                             }
@@ -1809,7 +1968,16 @@ Item {
                             }
                             ListView {
                                 id: taskMonitorList
-                                anchors.fill: parent; anchors.margins: 10; spacing: 8; model: previewModel; clip: true
+                                anchors.fill: parent; anchors.margins: 10; anchors.rightMargin: 18; spacing: 8; model: previewModel; clip: true
+                                ScrollBar.vertical: ScrollBar {
+                                    parent: taskMonitorList.parent
+                                    anchors.top: taskMonitorList.top
+                                    anchors.bottom: taskMonitorList.bottom
+                                    anchors.right: parent.right
+                                    anchors.rightMargin: 4
+                                    policy: ScrollBar.AlwaysOn
+                                    active: true
+                                }
                                 delegate: Rectangle {
                                     width: taskMonitorList.width
                                     height: 56
@@ -1823,8 +1991,13 @@ Item {
                                         hoverEnabled: true
                                         cursorShape: sampleId > 0 ? Qt.PointingHandCursor : Qt.ArrowCursor
                                         onClicked: {
-                                            if (sampleId > 0) {
+                                            if (previewPath && String(previewPath) !== "" && String(previewPath) !== String(samplePath)) {
+                                                root.pendingPreviewId = -1
+                                                root.pendingPreviewPath = String(previewPath)
+                                                backendService.previewFileByPath(previewPath)
+                                            } else if (sampleId > 0) {
                                                 root.pendingPreviewId = sampleId
+                                                root.pendingPreviewPath = ""
                                                 backendService.getSamplePreview(sampleId)
                                             }
                                         }
@@ -2240,8 +2413,8 @@ Item {
                             Button {
                                 text: "查看详情"
                                 Layout.preferredWidth: 90; Layout.preferredHeight: 30
-                                background: Rectangle { color: parent.hovered ? Theme.hover : Theme.control; radius: 4; border.color: Theme.border }
-                                contentItem: Text { text: parent.text; color: "#D1D5DB"; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                background: Rectangle { color: parent.hovered ? "#F3F4F6" : "white"; radius: 4; border.color: parent.hovered ? "#9CA3AF" : Theme.border }
+                                contentItem: Text { text: parent.text; color: "black"; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                                 onClicked: {
                                     var detailIds = root.parseAlgorithmIds(model.algorithmIdsText || model.algorithmIds || "")
                                     var detailParams = root.parseJsonObject(model.parametersJsonText || model.parameters || {})
@@ -2280,8 +2453,8 @@ Item {
                             Button {
                                 text: "\u4fee\u6539\u540d\u79f0"
                                 Layout.preferredWidth: 90; Layout.preferredHeight: 30
-                                background: Rectangle { color: parent.hovered ? Theme.hover : Theme.control; radius: 4; border.color: Theme.border }
-                                contentItem: Text { text: parent.text; color: "#D1D5DB"; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                background: Rectangle { color: parent.hovered ? "#F3F4F6" : "white"; radius: 4; border.color: parent.hovered ? "#9CA3AF" : Theme.border }
+                                contentItem: Text { text: parent.text; color: "black"; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                                 onClicked: {
                                     root.pendingEditIndex = index
                                     editProjectNameInput.text = model.projectName
@@ -2515,8 +2688,13 @@ Item {
                                     hoverEnabled: true
                                     cursorShape: Qt.PointingHandCursor
                                     onClicked: {
-                                        if (sampleId > 0) {
+                                        if (previewPath && String(previewPath) !== "" && String(previewPath) !== String(samplePath)) {
+                                            root.pendingPreviewId = -1
+                                            root.pendingPreviewPath = String(previewPath)
+                                            backendService.previewFileByPath(previewPath)
+                                        } else if (sampleId > 0) {
                                             root.pendingPreviewId = sampleId
+                                            root.pendingPreviewPath = ""
                                             backendService.getSamplePreview(sampleId)
                                         }
                                     }
@@ -2588,17 +2766,17 @@ Item {
                                         spacing: 4
                                         Text { text: "清洗决策"; color: root.textMuted; font.pixelSize: 10 }
                                         Rectangle {
-                                            Layout.fillWidth: true
-                                            Layout.preferredHeight: 28
-                                            radius: 4
+                                            Layout.preferredWidth: 92
+                                            Layout.preferredHeight: 24
+                                            radius: 12
                                             color: root.decisionBackgroundColor(actionName)
                                             border.color: root.decisionAccentColor(actionName)
                                             border.width: 1
                                             Text {
                                                 anchors.centerIn: parent
-                                                text: actionName || "-"
+                                                text: root.decisionDisplayText(actionName)
                                                 color: root.decisionAccentColor(actionName)
-                                                font.pixelSize: 13
+                                                font.pixelSize: 12
                                                 font.bold: true
                                             }
                                         }

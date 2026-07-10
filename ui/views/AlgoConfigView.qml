@@ -489,6 +489,7 @@ Item {
         if (text.indexOf("音频") !== -1) return "audio"
         if (text.indexOf("表格") !== -1 || text.indexOf("时序") !== -1) return "tabular"
         if (text.indexOf("视频") !== -1) return "video"
+        if (text.indexOf("通用") !== -1) return "multimodal"
         if (text.indexOf("多模态") !== -1) return "multimodal"
         return "image"
     }
@@ -497,7 +498,8 @@ Item {
         if (category === "cleaning") {
             if (modality === "text") return "文本清洗策略"
             if (modality === "audio") return "音频清洗策略"
-            if (modality === "tabular") return "表格数据清洗"
+            if (modality === "tabular") return "通用清洗算法"
+            if (modality === "multimodal") return "通用清洗算法"
             return "图像清洗策略"
         }
         if (category === "generation") {
@@ -999,7 +1001,7 @@ Item {
                             id: inputSubCategory
                             editable: inputCategory.currentIndex !== 2
                             model: {
-                                if (inputCategory.currentIndex === 0) return ["图像清洗策略", "文本清洗策略", "音频清洗策略", "表格数据清洗"]
+                                if (inputCategory.currentIndex === 0) return ["图像清洗策略", "文本清洗策略", "音频清洗策略", "通用清洗算法"]
                                 if (inputCategory.currentIndex === 1) return ["图像增强方法", "文本增强方法", "音频增强方法", "多模态增强方法", "深度学习生成"]
                                 if (inputCategory.currentIndex === 2) return ["水下目标检测与识别", "舰船目标识别与跟踪", "系统健康状态预估与故障诊断", "智能决策与指挥控制", "多模态数据融合"]
                                 if (inputCategory.currentIndex === 3) return ["多模态评估方法"]

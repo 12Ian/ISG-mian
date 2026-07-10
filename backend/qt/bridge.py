@@ -503,10 +503,13 @@ class BackendBridge:
             if algo["key"] in existing_map:
                 continue
             self.facade.algorithm_service.create_algorithm(dict(algo))
+        self._repair_text_deduplicate_parameters()
+        self._repair_tabular_cleaning_parameters()
         self._repair_training_validation_rules(existing_map)
         self._repair_wgan_parameter_ranges()
         self._merge_legacy_algorithm_aliases()
         self._seed_default_bindings(DEFAULT_BINDINGS)
+
 
     def _repair_wgan_parameter_ranges(self) -> None:
         from ..models import Algorithm, AlgorithmParameter
@@ -555,6 +558,56 @@ class BackendBridge:
                 )
             session.commit()
 
+    def _repair_text_deduplicate_parameters(self) -> None:
+        from ..models import Algorithm
+        from ..seed_data import DEFAULT_ALGORITHMS
+
+        text_dedup = next(
+            (item for item in DEFAULT_ALGORITHMS if item.get("key") == "cleaning.text_deduplicate"),
+            None,
+        )
+        if not text_dedup:
+            return
+        with self.facade.session_factory() as session:
+            algorithm = session.query(Algorithm).filter(Algorithm.key == "cleaning.text_deduplicate").first()
+            if algorithm is None:
+                return
+            self.facade.algorithm_repository.replace_parameters(
+                session,
+                algorithm.id,
+                text_dedup.get("parameters", []),
+            )
+            session.commit()
+
+    def _repair_tabular_cleaning_parameters(self) -> None:
+        from ..models import Algorithm
+        from ..seed_data import DEFAULT_ALGORITHMS
+
+        parameter_keys = {
+            "cleaning.tabular_missing_values",
+            "cleaning.tabular_outliers",
+            "cleaning.tabular_normalize",
+        }
+        seed_parameters = {
+            item["key"]: item.get("parameters", [])
+            for item in DEFAULT_ALGORITHMS
+            if item.get("key") in parameter_keys
+        }
+        with self.facade.session_factory() as session:
+            algorithms = (
+                session.query(Algorithm)
+                .filter(Algorithm.key.in_(parameter_keys))
+                .all()
+            )
+            for algorithm in algorithms:
+                self.facade.algorithm_repository.replace_parameters(
+                    session,
+                    algorithm.id,
+                    seed_parameters[algorithm.key],
+
+                )
+            session.commit()
+
     def _repair_training_validation_rules(self, existing_map: dict) -> None:
         """补齐旧训练算法缺失的场景规则。"""
         from ..seed_data import DEFAULT_ALGORITHMS
@@ -588,26 +641,86 @@ class BackendBridge:
             GenerationOutput,
             Task,
         )
+        from ..seed_data import DEFAULT_ALGORITHMS
 
-        aliases = {"图片低分辨率清洗": "cleaning.image_resolution_filter"}
+        aliases = {
+            "图片低分辨率清洗": "cleaning.image_resolution_filter",
+            "图像近似重复样本检测": "cleaning.image_near_duplicate_detector",
+            "重复样本检测": "cleaning.duplicate_detector",
+        }
+        reference_models = (Task, CleaningSuggestion, GenerationOutput, EvaluationResult)
         with self.facade.session_factory() as session:
-            for legacy_key, target_key in aliases.items():
-                legacy = session.query(Algorithm).filter(Algorithm.key == legacy_key).first()
+            for legacy_label, target_key in aliases.items():
                 target = session.query(Algorithm).filter(Algorithm.key == target_key).first()
-                if legacy is None or target is None or legacy.id == target.id:
+                if target is None:
                     continue
-
-                for model in (Task, CleaningSuggestion, GenerationOutput, EvaluationResult):
-                    session.query(model).filter(model.algorithm_id == legacy.id).update(
-                        {model.algorithm_id: target.id},
-                        synchronize_session=False,
+                candidates_by_id = {}
+                for candidate in session.query(Algorithm).filter(Algorithm.key == legacy_label).all():
+                    candidates_by_id[candidate.id] = candidate
+                for candidate in session.query(Algorithm).filter(Algorithm.name == legacy_label).all():
+                    candidates_by_id[candidate.id] = candidate
+                for legacy in candidates_by_id.values():
+                    self._merge_algorithm_record(
+                        session,
+                        legacy,
+                        target,
+                        reference_models=reference_models,
+                        parameter_model=AlgorithmParameter,
                     )
-                self._replace_algorithm_id_in_task_payloads(session, legacy.id, target.id)
-                session.query(AlgorithmParameter).filter(AlgorithmParameter.algorithm_id == legacy.id).delete(
-                    synchronize_session=False
-                )
-                session.delete(legacy)
+
+            canonical_keys = {item.get("key") for item in DEFAULT_ALGORITHMS}
+            canonical_by_signature = {}
+            for algorithm in session.query(Algorithm).filter(Algorithm.key.in_(canonical_keys)).all():
+                signature = self._algorithm_entry_signature(algorithm)
+                if signature is not None:
+                    canonical_by_signature[signature] = algorithm
+
+            for legacy in session.query(Algorithm).filter(Algorithm.category == "cleaning").all():
+                if legacy.key in canonical_keys:
+                    continue
+                signature = self._algorithm_entry_signature(legacy)
+                target = canonical_by_signature.get(signature)
+                if target is not None:
+                    self._merge_algorithm_record(
+                        session,
+                        legacy,
+                        target,
+                        reference_models=reference_models,
+                        parameter_model=AlgorithmParameter,
+                    )
             session.commit()
+
+    def _algorithm_entry_signature(self, algorithm) -> tuple | None:
+        callable_name = algorithm.callable_name or ""
+        if algorithm.module_path:
+            return ("module", algorithm.category, algorithm.module_path, callable_name)
+        if algorithm.script_path:
+            return ("script", algorithm.category, algorithm.script_path.replace("\\", "/").lower(), callable_name)
+        if algorithm.executable_path:
+            return ("executable", algorithm.category, algorithm.executable_path.replace("\\", "/").lower())
+        return None
+
+    def _merge_algorithm_record(
+        self,
+        session,
+        legacy,
+        target,
+        *,
+        reference_models: tuple,
+        parameter_model,
+    ) -> None:
+        if legacy is None or target is None or legacy.id == target.id:
+            return
+        for model in reference_models:
+            session.query(model).filter(model.algorithm_id == legacy.id).update(
+                {model.algorithm_id: target.id},
+                synchronize_session=False,
+            )
+        self._replace_algorithm_id_in_task_payloads(session, legacy.id, target.id)
+        session.query(parameter_model).filter(parameter_model.algorithm_id == legacy.id).delete(
+            synchronize_session=False
+        )
+        session.delete(legacy)
 
     def _replace_algorithm_id_in_task_payloads(self, session, legacy_id: int, target_id: int) -> None:
         from ..models import Task
