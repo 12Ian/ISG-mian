@@ -91,10 +91,14 @@ def test_data_clean_detail_view_shows_algorithms_images_and_colored_decisions():
     assert "function decisionAccentColor" in qml
     assert "function decisionBackgroundColor" in qml
     assert "Image {" in detail_view
-    assert "source: root.localFileUrl(samplePath)" in detail_view
+    assert "root.localFileUrl(samplePath)" in detail_view
     assert 'text: "清洗决策"' in detail_view
     assert 'text: "配置参数"' in detail_view
     assert "detailParameterItems" in detail_view
+    assert 'optionLabels = ["按字去重", "按行/句去重"]' in qml
+    assert "StableComboBox {" in qml
+    assert "previewPath: item.preview_path || item.sample_path || \"\"" in qml
+    assert "backendService.previewFileByPath(previewPath)" in qml
     assert detail_view.count("Layout.alignment: Qt.AlignVCenter") >= 3
 
 

@@ -396,6 +396,72 @@ def test_cleaning_suggestions_include_source_and_output_sample_payloads(tmp_path
     assert applied["output_sample"]["status"] == "cleaned"
 
 
+def test_text_deduplicate_plugin_separates_char_and_line_modes(tmp_path):
+    from plugins.cleaning import text_deduplicate
+
+    source_file = tmp_path / "dups.txt"
+    source_file.write_text("我我我哦我我\n一句话，一句话，另一句\n同一行\n同一行", encoding="utf-8")
+    output_dir = tmp_path / "out"
+
+    class Context:
+        def is_cancel_requested(self):
+            return False
+
+        def set_progress(self, value, message):
+            self.progress = (value, message)
+
+    char_result = text_deduplicate.run(
+        {
+            "parameters": {"deduplicate_mode": "char"},
+            "input": {"samples": [{"id": 1, "sample_path": str(source_file)}]},
+            "output": {"output_dir": str(output_dir)},
+        },
+        Context(),
+    )
+
+    assert char_result["ok"] is True
+    char_suggestion = char_result["suggestions"][0]
+    assert char_suggestion["details"]["mode"] == "char"
+    assert Path(char_suggestion["details"]["output_file_path"]).read_text(encoding="utf-8").splitlines()[0] == "我哦我"
+
+    cleaned_lines, duplicate_lines = text_deduplicate._deduplicate(
+        "一句话，一句话，另一句\n同一行\n同一行",
+        "line",
+    )
+    assert cleaned_lines == "一句话，另一句\n同一行"
+    assert duplicate_lines == 2
+
+
+def test_seeded_text_deduplicate_algorithm_runs_char_mode_through_backend(tmp_path):
+    from backend.seed_data import DEFAULT_ALGORITHMS
+
+    facade, _paths = build_services(tmp_path)
+    dataset = facade.dataset_service.create_dataset("text-dedup-ds", "text", "")
+    source_file = tmp_path / "dups.txt"
+    source_file.write_text("我我我哦我我\n", encoding="utf-8")
+    facade.dataset_service.import_files(dataset["data"]["id"], [str(source_file)])
+
+    text_dedup_payload = next(item for item in DEFAULT_ALGORITHMS if item["key"] == "cleaning.text_deduplicate")
+    algorithm_id = facade.algorithm_service.create_algorithm(dict(text_dedup_payload))["data"]["id"]
+
+    task_id = facade.cleaning_service.create_task(
+        dataset["data"]["id"],
+        [algorithm_id],
+        {"deduplicate_mode": "char"},
+    )["data"]["task_id"]
+    facade.task_manager.start(task_id)
+    run_result = facade.cleaning_service.run_task(task_id)
+    suggestions = facade.cleaning_service.list_suggestions(task_id, None, 1, 20)
+
+    assert run_result["ok"] is True
+    assert suggestions["total"] == 1
+    suggestion = suggestions["items"][0]
+    output_path = Path(suggestion["details"]["output_file_path"])
+    assert suggestion["issue_type"] == "text_duplicate"
+    assert output_path.read_text(encoding="utf-8").strip() == "我哦我"
+    assert suggestions["monitor_items"][0]["preview_path"] == str(output_path)
+
+
 def test_builtin_duplicate_detector_finds_duplicates_from_imported_file_hashes(tmp_path):
     facade, _paths = build_services(tmp_path)
     dataset = facade.dataset_service.create_dataset("duplicate-ds", "text", "")

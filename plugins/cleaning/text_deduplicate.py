@@ -1,4 +1,4 @@
-"""Text deduplicate cleaning plugin. Removes duplicate lines or tokens."""
+"""Text deduplicate cleaning plugin."""
 
 import re
 from pathlib import Path
@@ -6,25 +6,25 @@ from pathlib import Path
 
 PARAMETERS = [
     {
-        "name": 'deduplicate_mode',
-        "type": 'select',
-        "label": '去重模式',
-        "default": 'line',
+        "name": "deduplicate_mode",
+        "type": "select",
+        "label": "去重模式",
+        "default": "char",
         "min": None,
         "max": None,
-        "options": ['line', 'token'],
-        "description": 'line: 按行去重; token: 按词去重',
+        "options": ["char", "line"],
+        "description": "char: 按字去重; line: 按行/句去重",
         "required": False,
     },
     {
-        "name": 'apply',
-        "type": 'bool',
-        "label": '写入清洗结果',
+        "name": "apply",
+        "type": "bool",
+        "label": "写入清洗结果",
         "default": True,
         "min": None,
         "max": None,
         "options": [],
-        "description": '是否将去重后的文本写入磁盘',
+        "description": "是否将去重后的文本写入磁盘",
         "required": False,
     },
 ]
@@ -34,7 +34,7 @@ def run(payload: dict, context) -> dict:
     parameters = payload.get("parameters", {}) or {}
     samples = payload.get("input", {}).get("samples", []) or []
     output_dir = Path(payload.get("output", {}).get("output_dir", "."))
-    mode = parameters.get("deduplicate_mode", "line")
+    mode = _normalize_mode(parameters.get("deduplicate_mode", "char"))
     apply_changes = bool(parameters.get("apply", True))
 
     if not samples:
@@ -58,20 +58,26 @@ def run(payload: dict, context) -> dict:
 
         cleaned, dup_count = _deduplicate(text, mode)
         if dup_count:
-            total_units = len(_tokenize(text)) if mode == "token" else len([l for l in text.splitlines() if l.strip()])
+            total_units = _unit_count(text, mode)
             confidence = _clamp(dup_count / max(total_units, 1))
             output_path = ""
             if apply_changes:
                 output_path = _write_cleaned(sample_path, output_dir, cleaned)
-            suggestions.append({
-                "sample_id": sample["id"],
-                "issue_type": "text_duplicate",
-                "suggested_action": "repair",
-                "confidence": confidence,
-                "message": f"Found {dup_count} duplicate {'tokens' if mode == 'token' else 'lines'}",
-                "details": {"duplicate_count": dup_count, "mode": mode,
-                            "output_file_path": output_path, "processing_result": "deduplicated"},
-            })
+            suggestions.append(
+                {
+                    "sample_id": sample["id"],
+                    "issue_type": "text_duplicate",
+                    "suggested_action": "repair",
+                    "confidence": confidence,
+                    "message": f"Found {dup_count} duplicate {'characters' if mode == 'char' else 'lines/sentences'}",
+                    "details": {
+                        "duplicate_count": dup_count,
+                        "mode": mode,
+                        "output_file_path": output_path,
+                        "processing_result": "deduplicated",
+                    },
+                }
+            )
 
     return {"ok": True, "suggestions": suggestions, "logs": []}
 
@@ -93,38 +99,82 @@ def _read_text(path: Path) -> str | None:
             return None
 
 
-def _tokenize(text: str) -> list[str]:
-    return re.findall(r"[一-鿿]|[A-Za-z0-9_]+", text)
-
-
 def _deduplicate(text: str, mode: str) -> tuple[str, int]:
-    if mode == "token":
-        seen = set()
-        result = []
-        dup_count = 0
-        for token in _tokenize(text):
-            key = token.lower()
-            if key in seen:
-                dup_count += 1
-                continue
-            seen.add(key)
-            result.append(token)
-        return " ".join(result), dup_count
+    if _normalize_mode(mode) == "line":
+        return _deduplicate_lines_and_sentences(text)
+    return _collapse_repeated_chars(text)
 
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
-    seen = set()
+
+def _collapse_repeated_chars(text: str) -> tuple[str, int]:
+    result = []
+    duplicate_count = 0
+    previous = ""
+    for char in text:
+        if char == previous and _is_cjk(char):
+            duplicate_count += 1
+            continue
+        result.append(char)
+        previous = char
+    return "".join(result), duplicate_count
+
+
+def _deduplicate_lines_and_sentences(text: str) -> tuple[str, int]:
+    seen_lines = set()
     result_lines = []
-    dup_count = 0
-    for line in lines:
-        key = line.lower()
+    duplicate_count = 0
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        line_key = stripped.casefold()
+        if line_key in seen_lines:
+            duplicate_count += 1
+            continue
+        seen_lines.add(line_key)
+        cleaned_line, sentence_duplicates = _deduplicate_sentence_units(line)
+        duplicate_count += sentence_duplicates
+        result_lines.append(cleaned_line)
+    return "\n".join(result_lines), duplicate_count
+
+
+def _deduplicate_sentence_units(line: str) -> tuple[str, int]:
+    parts = re.findall(r"([^，,。！？!?；;\n]+)([，,。！？!?；;]?)", line)
+    units = [(text, separator) for text, separator in parts if text.strip()]
+    if len(units) <= 1:
+        return line, 0
+
+    seen = set()
+    result = []
+    duplicate_count = 0
+    for text, separator in units:
+        key = text.strip().casefold()
         if key in seen:
-            dup_count += 1
+            duplicate_count += 1
             continue
         seen.add(key)
-        result_lines.append(line)
-    cleaned = "\n".join(result_lines) if lines else text
-    cleaned = re.sub(r"\s+", " ", cleaned).strip()
-    return cleaned, dup_count
+        result.append((text, separator))
+
+    if result:
+        last_text, last_separator = result[-1]
+        result[-1] = (last_text, "" if last_separator in {"，", ","} else last_separator)
+    return "".join(text + separator for text, separator in result), duplicate_count
+
+
+def _unit_count(text: str, mode: str) -> int:
+    if _normalize_mode(mode) == "char":
+        return len([char for char in text if _is_cjk(char)])
+    return len([line for line in text.splitlines() if line.strip()])
+
+
+def _normalize_mode(mode: str) -> str:
+    mode = str(mode or "char").strip().lower()
+    if mode in {"line", "sentence"}:
+        return "line"
+    return "char"
+
+
+def _is_cjk(char: str) -> bool:
+    return bool(re.match(r"[\u4e00-\u9fff]", char))
 
 
 def _write_cleaned(orig: Path, output_dir: Path, cleaned: str) -> str:

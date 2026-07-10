@@ -63,6 +63,7 @@ Item {
     property bool imageLoadError: false
 
     property int pendingPreviewId: -1
+    property string pendingPreviewPath: ""
     property int pendingEditIndex: -1
     property int pendingDeleteIndex: -1
     property int selectedExportCount: 0
@@ -208,14 +209,20 @@ Item {
             for (var p = 0; p < rawParams.length; p++) {
                 var param = rawParams[p]
                 var opts = param.options || param.options_json || []
+                var optionLabels = opts.slice()
+                if ((algorithm.key || "") === "cleaning.text_deduplicate" && (param.name || "") === "deduplicate_mode") {
+                    opts = ["char", "line"]
+                    optionLabels = ["按字去重", "按行/句去重"]
+                }
                 params.push({
                     n: param.name || "",
                     label: param.label || param.name || "",
                     v: param.default_value !== undefined && param.default_value !== null ? String(param.default_value) : "",
-                    type: param.type || "string",
+                    type: opts.length > 0 ? "select" : (param.type || "string"),
                     minValue: param.min_value !== undefined ? param.min_value : param.min,
                     maxValue: param.max_value !== undefined ? param.max_value : param.max,
                     options: opts,
+                    optionLabels: optionLabels,
                     rangeText: root.parameterRangeText(param)
                 })
             }
@@ -655,6 +662,7 @@ Item {
                     actionName: item.operation_label || item.suggested_action || "",
                     operation: operation,
                     samplePath: item.sample_path || "",
+                    previewPath: item.preview_path || item.sample_path || "",
                     issueType: item.issue_type || "",
                     confidence: item.confidence || 0,
                     status: item.status || "",
@@ -669,6 +677,7 @@ Item {
                     actionName: "\u672a\u53d1\u73b0\u9700\u5904\u7406\u7684\u6e05\u6d17\u5efa\u8bae",
                     operation: "",
                     samplePath: "",
+                    previewPath: "",
                     issueType: "",
                     confidence: 0,
                     status: "",
@@ -679,9 +688,17 @@ Item {
 
         function onSamplePreviewUpdated(data) {
             var payload = data && data.data ? data.data : data
-            if (!payload || !payload.sample_id) return
-            if (root.pendingPreviewId !== payload.sample_id) return
+            if (!payload) return
+            var payloadPath = String(payload.file_path || "")
+            if (payload.sample_id) {
+                if (root.pendingPreviewId !== payload.sample_id) return
+            } else if (root.pendingPreviewPath !== "") {
+                if (payloadPath !== root.pendingPreviewPath) return
+            } else {
+                return
+            }
             root.pendingPreviewId = -1
+            root.pendingPreviewPath = ""
             root.previewKind = payload.preview_kind || "file"
             root.previewText = payload.text_content || payload.error || ""
             root.previewTitle = payload.name || payload.relative_path || "样本预览"
@@ -1709,7 +1726,27 @@ Item {
                                                     }
                                                     Rectangle {
                                                         width: parent.width; height: 36; color: root.bgDark; radius: 4; border.color: root.borderColor; border.width: 1
+                                                        StableComboBox {
+                                                            visible: modelData.options && modelData.options.length > 0
+                                                            anchors.fill: parent
+                                                            model: modelData.optionLabels || modelData.options || []
+                                                            currentIndex: {
+                                                                var opts = modelData.options || []
+                                                                var idx = opts.indexOf(modelData.v)
+                                                                return idx >= 0 ? idx : 0
+                                                            }
+                                                            background: Rectangle {
+                                                                color: "transparent"
+                                                                radius: 4
+                                                            }
+                                                            onActivated: function(index) {
+                                                                var opts = modelData.options || []
+                                                                var value = opts.length > index ? opts[index] : currentText
+                                                                root.setParamValue(selectedAlgorithmDelegate.selectedAlgorithmId, modelData.n, value)
+                                                            }
+                                                        }
                                                         TextInput {
+                                                            visible: !(modelData.options && modelData.options.length > 0)
                                                             text: modelData.v
                                                             color: root.textColor; font.pixelSize: 13; anchors.fill: parent; leftPadding: 10; verticalAlignment: TextInput.AlignVCenter
                                                             inputMethodHints: (modelData.type === "int" || modelData.type === "integer" || modelData.type === "float" || modelData.type === "number") ? Qt.ImhFormattedNumbersOnly : Qt.ImhNone
@@ -1823,8 +1860,13 @@ Item {
                                         hoverEnabled: true
                                         cursorShape: sampleId > 0 ? Qt.PointingHandCursor : Qt.ArrowCursor
                                         onClicked: {
-                                            if (sampleId > 0) {
+                                            if (previewPath && String(previewPath) !== "" && String(previewPath) !== String(samplePath)) {
+                                                root.pendingPreviewId = -1
+                                                root.pendingPreviewPath = String(previewPath)
+                                                backendService.previewFileByPath(previewPath)
+                                            } else if (sampleId > 0) {
                                                 root.pendingPreviewId = sampleId
+                                                root.pendingPreviewPath = ""
                                                 backendService.getSamplePreview(sampleId)
                                             }
                                         }
@@ -2515,8 +2557,13 @@ Item {
                                     hoverEnabled: true
                                     cursorShape: Qt.PointingHandCursor
                                     onClicked: {
-                                        if (sampleId > 0) {
+                                        if (previewPath && String(previewPath) !== "" && String(previewPath) !== String(samplePath)) {
+                                            root.pendingPreviewId = -1
+                                            root.pendingPreviewPath = String(previewPath)
+                                            backendService.previewFileByPath(previewPath)
+                                        } else if (sampleId > 0) {
                                             root.pendingPreviewId = sampleId
+                                            root.pendingPreviewPath = ""
                                             backendService.getSamplePreview(sampleId)
                                         }
                                     }
