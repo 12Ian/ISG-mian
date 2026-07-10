@@ -63,6 +63,7 @@ Item {
     property bool imageLoadError: false
 
     property int pendingPreviewId: -1
+    property string pendingPreviewPath: ""
     property int pendingEditIndex: -1
     property int pendingDeleteIndex: -1
     property int selectedExportCount: 0
@@ -207,11 +208,19 @@ Item {
             var rawParams = algorithm.parameters || []
             for (var p = 0; p < rawParams.length; p++) {
                 var param = rawParams[p]
+                var options = param.options || param.options_json || []
+                var optionLabels = options.slice()
+                if ((algorithm.key || "") === "cleaning.text_deduplicate" && (param.name || "") === "deduplicate_mode") {
+                    options = ["char", "line"]
+                    optionLabels = ["按字去重", "按行/句去重"]
+                }
                 params.push({
                     n: param.name || "",
                     label: param.label || param.name || "",
                     v: param.default_value !== undefined && param.default_value !== null ? String(param.default_value) : "",
-                    type: param.type || "string"
+                    type: options.length > 0 ? "select" : (param.type || "string"),
+                    options: options,
+                    optionLabels: optionLabels
                 })
             }
             map[String(algorithm.id)] = params
@@ -320,7 +329,9 @@ Item {
                     n: item.n,
                     label: item.label,
                     v: params[item.n] !== undefined ? String(params[item.n]) : item.v,
-                    type: item.type
+                    type: item.type,
+                    options: item.options || [],
+                    optionLabels: item.optionLabels || []
                 })
             }
             newMap[mapKey] = targetList
@@ -587,11 +598,13 @@ Item {
                 var operation = item.operation || item.suggested_action || ""
                 previewModel.append({
                     sampleId: item.sample_id || 0,
+                    previewSampleId: item.preview_sample_id || item.sample_id || 0,
                     suggestionId: item.suggestion_id || 0,
                     sourceName: item.sample_name || "",
                     actionName: item.operation_label || item.suggested_action || "",
                     operation: operation,
                     samplePath: item.sample_path || "",
+                    previewPath: item.preview_path || item.sample_path || "",
                     issueType: item.issue_type || "",
                     confidence: item.confidence || 0,
                     status: item.status || "",
@@ -601,11 +614,13 @@ Item {
             if (monitorItems.length === 0) {
                 previewModel.append({
                     sampleId: 0,
+                    previewSampleId: 0,
                     suggestionId: 0,
                     sourceName: "\u6e05\u6d17\u4efb\u52a1\u5df2\u5b8c\u6210",
                     actionName: "\u672a\u53d1\u73b0\u9700\u5904\u7406\u7684\u6e05\u6d17\u5efa\u8bae",
                     operation: "",
                     samplePath: "",
+                    previewPath: "",
                     issueType: "",
                     confidence: 0,
                     status: "",
@@ -616,9 +631,17 @@ Item {
 
         function onSamplePreviewUpdated(data) {
             var payload = data && data.data ? data.data : data
-            if (!payload || !payload.sample_id) return
-            if (root.pendingPreviewId !== payload.sample_id) return
+            if (!payload) return
+            var payloadPath = String(payload.file_path || "")
+            if (payload.sample_id) {
+                if (root.pendingPreviewId !== payload.sample_id) return
+            } else if (root.pendingPreviewPath !== "") {
+                if (payloadPath !== root.pendingPreviewPath) return
+            } else {
+                return
+            }
             root.pendingPreviewId = -1
+            root.pendingPreviewPath = ""
             root.previewKind = payload.preview_kind || "file"
             root.previewText = payload.text_content || payload.error || ""
             root.previewTitle = payload.name || payload.relative_path || "样本预览"
@@ -1621,7 +1644,38 @@ Item {
                                                     Text { text: modelData.label || modelData.n; color: root.textMuted; font.pixelSize: 12 }
                                                     Rectangle {
                                                         width: parent.width; height: 36; color: root.bgDark; radius: 4; border.color: root.borderColor; border.width: 1
+                                                        ComboBox {
+                                                            visible: modelData.type === "select"
+                                                            anchors.fill: parent
+                                                            model: modelData.optionLabels || modelData.options || []
+                                                            currentIndex: {
+                                                                var options = modelData.options || []
+                                                                var idx = options.indexOf(modelData.v)
+                                                                return idx >= 0 ? idx : 0
+                                                            }
+                                                            background: Rectangle { color: "transparent"; radius: 4 }
+                                                            contentItem: Text {
+                                                                text: parent.displayText
+                                                                color: root.textColor
+                                                                font.pixelSize: 13
+                                                                verticalAlignment: Text.AlignVCenter
+                                                                leftPadding: 10
+                                                                elide: Text.ElideRight
+                                                            }
+                                                            onActivated: {
+                                                                var options = modelData.options || []
+                                                                var value = options.length > index ? options[index] : currentText
+                                                                var paramList = root.paramsDataMap[String(selectedAlgorithmDelegate.selectedAlgorithmId)]
+                                                                for (var i = 0; i < paramList.length; i++) {
+                                                                    if (paramList[i].n === modelData.n) {
+                                                                        paramList[i].v = value
+                                                                        break
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
                                                         TextInput {
+                                                            visible: modelData.type !== "select"
                                                             text: modelData.v
                                                             color: root.textColor; font.pixelSize: 13; anchors.fill: parent; leftPadding: 10; verticalAlignment: TextInput.AlignVCenter
                                                             onTextChanged: {
@@ -1735,8 +1789,17 @@ Item {
                                         hoverEnabled: true
                                         cursorShape: sampleId > 0 ? Qt.PointingHandCursor : Qt.ArrowCursor
                                         onClicked: {
-                                            if (sampleId > 0) {
+                                            if (previewPath && String(previewPath) !== "" && String(previewPath) !== String(samplePath)) {
+                                                root.pendingPreviewId = -1
+                                                root.pendingPreviewPath = String(previewPath)
+                                                backendService.previewFileByPath(previewPath)
+                                            } else if (previewSampleId > 0) {
+                                                root.pendingPreviewId = previewSampleId
+                                                root.pendingPreviewPath = ""
+                                                backendService.getSamplePreview(previewSampleId)
+                                            } else if (sampleId > 0) {
                                                 root.pendingPreviewId = sampleId
+                                                root.pendingPreviewPath = ""
                                                 backendService.getSamplePreview(sampleId)
                                             }
                                         }
@@ -2427,8 +2490,17 @@ Item {
                                     hoverEnabled: true
                                     cursorShape: Qt.PointingHandCursor
                                     onClicked: {
-                                        if (sampleId > 0) {
+                                        if (previewPath && String(previewPath) !== "" && String(previewPath) !== String(samplePath)) {
+                                            root.pendingPreviewId = -1
+                                            root.pendingPreviewPath = String(previewPath)
+                                            backendService.previewFileByPath(previewPath)
+                                        } else if (previewSampleId > 0) {
+                                            root.pendingPreviewId = previewSampleId
+                                            root.pendingPreviewPath = ""
+                                            backendService.getSamplePreview(previewSampleId)
+                                        } else if (sampleId > 0) {
                                             root.pendingPreviewId = sampleId
+                                            root.pendingPreviewPath = ""
                                             backendService.getSamplePreview(sampleId)
                                         }
                                     }

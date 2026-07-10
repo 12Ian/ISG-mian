@@ -541,6 +541,8 @@ class CleaningService(ServiceBase):
         for sample in samples:
             sample_suggestions = suggestions_by_sample.get(sample.id, [])
             selected = sample_suggestions[0] if sample_suggestions else None
+            preview_sample_id = sample.id
+            preview_path = sample.file_path
             if selected is None:
                 suggestion_id = -1
                 if task.status == "completed":
@@ -567,13 +569,26 @@ class CleaningService(ServiceBase):
                 message = selected.message
                 status = selected.status
                 operation, operation_label = self._operation_for_action(selected.suggested_action)
+                if operation == "repair":
+                    if selected.output_sample_id:
+                        output_sample = session.query(Sample).filter(Sample.id == selected.output_sample_id).first()
+                        if output_sample is not None:
+                            preview_sample_id = output_sample.id
+                            preview_path = output_sample.file_path
+                    else:
+                        details = selected.details_json or {}
+                        artifact_path = details.get("output_file_path") or details.get("cleaned_file_path")
+                        if artifact_path:
+                            preview_path = artifact_path
 
             monitor_items.append(
                 {
                     "sample_id": sample.id,
+                    "preview_sample_id": preview_sample_id,
                     "suggestion_id": suggestion_id,
                     "sample_name": sample.name,
                     "sample_path": sample.file_path,
+                    "preview_path": preview_path,
                     "sample_type": sample.modality,
                     "issue_type": issue_type,
                     "confidence": confidence,

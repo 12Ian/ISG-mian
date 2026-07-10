@@ -1,4 +1,5 @@
 from pathlib import Path
+import sys
 
 
 def test_backend_package_exports_infrastructure_entrypoints():
@@ -117,3 +118,33 @@ def test_plugin_runner_validates_and_executes_python_script(tmp_path):
     assert validated["callable_name"] == "run"
     assert result["ok"] is True
     assert context.logs[0][1] == "runner-demo"
+
+
+def test_plugin_runner_reloads_module_plugins_between_runs(tmp_path):
+    from backend.plugins import PluginRunner
+
+    module_dir = tmp_path / "module_plugins"
+    module_dir.mkdir()
+    module_file = module_dir / "reload_demo.py"
+    module_file.write_text(
+        "def run(payload, context):\n"
+        "    return {'ok': True, 'version': 1}\n",
+        encoding="utf-8",
+    )
+    sys.path.insert(0, str(module_dir))
+    sys.modules.pop("reload_demo", None)
+    try:
+        runner = PluginRunner()
+        first = runner.run({}, None, module_path="reload_demo", callable_name="run")
+        module_file.write_text(
+            "def run(payload, context):\n"
+            "    return {'ok': True, 'version': 2}\n",
+            encoding="utf-8",
+        )
+        second = runner.run({}, None, module_path="reload_demo", callable_name="run")
+    finally:
+        sys.modules.pop("reload_demo", None)
+        sys.path.remove(str(module_dir))
+
+    assert first["version"] == 1
+    assert second["version"] == 2
