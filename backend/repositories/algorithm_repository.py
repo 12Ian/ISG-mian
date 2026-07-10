@@ -24,7 +24,7 @@ class AlgorithmRepository(RepositoryBase):
                     default_value=parameter.get("default_value"),
                     min_value=parameter.get("min_value"),
                     max_value=parameter.get("max_value"),
-                    options_json=parameter.get("options", parameter.get("options_json", [])),
+                    options_json=parameter.get("options", []),
                     description=parameter.get("description", ""),
                     order_index=index,
                 )

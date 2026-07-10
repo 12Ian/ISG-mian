@@ -503,31 +503,9 @@ class BackendBridge:
             if algo["key"] in existing_map:
                 continue
             self.facade.algorithm_service.create_algorithm(dict(algo))
-        self._repair_text_deduplicate_parameters()
         self._repair_training_validation_rules(existing_map)
         self._merge_legacy_algorithm_aliases()
         self._seed_default_bindings(DEFAULT_BINDINGS)
-
-    def _repair_text_deduplicate_parameters(self) -> None:
-        from ..models import Algorithm
-        from ..seed_data import DEFAULT_ALGORITHMS
-
-        text_dedup = next(
-            (item for item in DEFAULT_ALGORITHMS if item.get("key") == "cleaning.text_deduplicate"),
-            None,
-        )
-        if not text_dedup:
-            return
-        with self.facade.session_factory() as session:
-            algorithm = session.query(Algorithm).filter(Algorithm.key == "cleaning.text_deduplicate").first()
-            if algorithm is None:
-                return
-            self.facade.algorithm_repository.replace_parameters(
-                session,
-                algorithm.id,
-                text_dedup.get("parameters", []),
-            )
-            session.commit()
 
     def _repair_training_validation_rules(self, existing_map: dict) -> None:
         """补齐旧训练算法缺失的场景规则。"""
