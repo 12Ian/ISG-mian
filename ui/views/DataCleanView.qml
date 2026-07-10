@@ -525,11 +525,20 @@ Item {
 
     function decisionBackgroundColor(actionName) {
         var key = root.decisionKey(actionName)
-        if (key === "delete") return "#4C1D1D"
-        if (key === "repair") return "#4A2E12"
-        if (key === "keep") return "#123B2A"
-        if (key === "review") return "#17365F"
+        if (key === "delete") return "transparent"
+        if (key === "repair") return "transparent"
+        if (key === "keep") return "transparent"
+        if (key === "review") return "transparent"
         return root.tableHoverBg
+    }
+
+    function decisionDisplayText(actionName) {
+        var key = root.decisionKey(actionName)
+        if (key === "delete") return "方式：删除"
+        if (key === "repair") return "方式：修复"
+        if (key === "keep") return "方式：保留"
+        if (key === "review") return "方式：复核"
+        return actionName || "-"
     }
 
     function computeHasDetailParams(obj) {
@@ -2635,17 +2644,17 @@ Item {
                                         spacing: 4
                                         Text { text: "清洗决策"; color: root.textMuted; font.pixelSize: 10 }
                                         Rectangle {
-                                            Layout.fillWidth: true
-                                            Layout.preferredHeight: 28
-                                            radius: 4
+                                            Layout.preferredWidth: 92
+                                            Layout.preferredHeight: 24
+                                            radius: 12
                                             color: root.decisionBackgroundColor(actionName)
                                             border.color: root.decisionAccentColor(actionName)
                                             border.width: 1
                                             Text {
                                                 anchors.centerIn: parent
-                                                text: actionName || "-"
+                                                text: root.decisionDisplayText(actionName)
                                                 color: root.decisionAccentColor(actionName)
-                                                font.pixelSize: 13
+                                                font.pixelSize: 12
                                                 font.bold: true
                                             }
                                         }
