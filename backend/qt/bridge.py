@@ -504,6 +504,7 @@ class BackendBridge:
                 continue
             self.facade.algorithm_service.create_algorithm(dict(algo))
         self._repair_text_deduplicate_parameters()
+        self._repair_tabular_cleaning_parameters()
         self._repair_training_validation_rules(existing_map)
         self._merge_legacy_algorithm_aliases()
         self._seed_default_bindings(DEFAULT_BINDINGS)
@@ -527,6 +528,34 @@ class BackendBridge:
                 algorithm.id,
                 text_dedup.get("parameters", []),
             )
+            session.commit()
+
+    def _repair_tabular_cleaning_parameters(self) -> None:
+        from ..models import Algorithm
+        from ..seed_data import DEFAULT_ALGORITHMS
+
+        parameter_keys = {
+            "cleaning.tabular_missing_values",
+            "cleaning.tabular_outliers",
+            "cleaning.tabular_normalize",
+        }
+        seed_parameters = {
+            item["key"]: item.get("parameters", [])
+            for item in DEFAULT_ALGORITHMS
+            if item.get("key") in parameter_keys
+        }
+        with self.facade.session_factory() as session:
+            algorithms = (
+                session.query(Algorithm)
+                .filter(Algorithm.key.in_(parameter_keys))
+                .all()
+            )
+            for algorithm in algorithms:
+                self.facade.algorithm_repository.replace_parameters(
+                    session,
+                    algorithm.id,
+                    seed_parameters[algorithm.key],
+                )
             session.commit()
 
     def _repair_training_validation_rules(self, existing_map: dict) -> None:

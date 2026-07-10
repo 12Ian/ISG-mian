@@ -356,7 +356,7 @@ DEFAULT_ALGORITHMS = (
             {
                 "name": "missing_strategy",
                 "label": "填充策略",
-                "type": "string",
+                "type": "select",
                 "required": False,
                 "default_value": "mean",
                 "options_json": ["mean", "median", "constant", "drop"],
@@ -379,7 +379,7 @@ DEFAULT_ALGORITHMS = (
             {
                 "name": "outlier_method",
                 "label": "检测方法",
-                "type": "string",
+                "type": "select",
                 "required": False,
                 "default_value": "iqr",
                 "options_json": ["iqr", "zscore"],
@@ -402,7 +402,7 @@ DEFAULT_ALGORITHMS = (
             {
                 "name": "normalization",
                 "label": "归一化方法",
-                "type": "string",
+                "type": "select",
                 "required": False,
                 "default_value": "minmax",
                 "options_json": ["minmax", "zscore"],

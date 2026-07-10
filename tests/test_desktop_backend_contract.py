@@ -356,6 +356,64 @@ def test_seed_default_algorithms_merges_duplicate_cleaning_entrypoint(tmp_path):
     assert near_duplicate_algorithms[0]["key"] == "cleaning.image_near_duplicate_detector"
 
 
+def test_seed_default_algorithms_restores_tabular_select_options(tmp_path):
+    from backend import (
+        BackendPaths,
+        BackendServiceFacade,
+        create_backend_engine,
+        create_session_factory,
+        initialize_backend_database,
+    )
+    from backend.qt.bridge import BackendBridge
+
+    paths = BackendPaths(root=tmp_path / "backend-root")
+    engine = create_backend_engine(paths.database_path)
+    initialize_backend_database(engine)
+    facade = BackendServiceFacade.build(paths=paths, session_factory=create_session_factory(engine))
+    bridge = BackendBridge(facade=facade)
+
+    facade.algorithm_service.create_algorithm(
+        {
+            "key": "cleaning.tabular_outliers",
+            "name": "异常值处理",
+            "category": "cleaning",
+            "modality": "tabular",
+            "entry_type": "python_function",
+            "module_path": "plugins.cleaning.tabular_outliers",
+            "callable_name": "run",
+            "input_contract": {"dataset_required": True, "sample_required": True},
+            "output_contract": {"produces": ["suggestions"]},
+            "parameters": [
+                {
+                    "name": "outlier_method",
+                    "label": "检测方法",
+                    "type": "string",
+                    "default_value": "iqr",
+                    "options": [],
+                }
+            ],
+        }
+    )
+
+    bridge.seed_default_algorithms()
+    algorithms = bridge.get_algorithms("cleaning", "tabular")
+    algorithms_by_key = {item["key"]: item for item in algorithms}
+    outlier_algorithm = algorithms_by_key["cleaning.tabular_outliers"]
+
+    assert outlier_algorithm["parameters"][0]["type"] == "select"
+    assert outlier_algorithm["parameters"][0]["options"] == ["iqr", "zscore"]
+    assert algorithms_by_key["cleaning.tabular_missing_values"]["parameters"][0]["options"] == [
+        "mean",
+        "median",
+        "constant",
+        "drop",
+    ]
+    assert algorithms_by_key["cleaning.tabular_normalize"]["parameters"][0]["options"] == [
+        "minmax",
+        "zscore",
+    ]
+
+
 def test_bridge_get_task_logs_serializes_repository_dict_rows(tmp_path):
     from backend import (
         BackendPaths,
