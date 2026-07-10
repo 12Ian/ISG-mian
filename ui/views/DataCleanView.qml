@@ -1968,7 +1968,16 @@ Item {
                             }
                             ListView {
                                 id: taskMonitorList
-                                anchors.fill: parent; anchors.margins: 10; spacing: 8; model: previewModel; clip: true
+                                anchors.fill: parent; anchors.margins: 10; anchors.rightMargin: 18; spacing: 8; model: previewModel; clip: true
+                                ScrollBar.vertical: ScrollBar {
+                                    parent: taskMonitorList.parent
+                                    anchors.top: taskMonitorList.top
+                                    anchors.bottom: taskMonitorList.bottom
+                                    anchors.right: parent.right
+                                    anchors.rightMargin: 4
+                                    policy: ScrollBar.AlwaysOn
+                                    active: true
+                                }
                                 delegate: Rectangle {
                                     width: taskMonitorList.width
                                     height: 56
