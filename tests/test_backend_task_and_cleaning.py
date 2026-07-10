@@ -560,6 +560,50 @@ def test_builtin_duplicate_detector_finds_duplicates_from_imported_file_hashes(t
     assert suggestions["items"][0]["details"]["sha256"]
 
 
+def test_seeded_common_cleaning_algorithms_run_on_tabular_dataset(tmp_path):
+    from backend.seed_data import DEFAULT_ALGORITHMS
+
+    facade, _paths = build_services(tmp_path)
+    for payload in DEFAULT_ALGORITHMS:
+        facade.algorithm_service.create_algorithm(dict(payload))
+
+    dataset = facade.dataset_service.create_dataset("common-tabular-ds", "tabular", "")
+    first = tmp_path / "common_a.csv"
+    second = tmp_path / "common_b.csv"
+    csv_text = "value,score\n1,10\n2,\n3,12\n1000,13\n"
+    first.write_text(csv_text, encoding="utf-8")
+    second.write_text(csv_text, encoding="utf-8")
+    facade.dataset_service.import_files(dataset["data"]["id"], [str(first), str(second)])
+
+    algorithms = {item["key"]: item for item in facade.algorithm_service.get_algorithms("cleaning", "")}
+    algorithm_ids = [
+        algorithms["cleaning.tabular_missing_values"]["id"],
+        algorithms["cleaning.tabular_outliers"]["id"],
+        algorithms["cleaning.tabular_normalize"]["id"],
+        algorithms["cleaning.duplicate_detector"]["id"],
+    ]
+
+    task_id = facade.cleaning_service.create_task(
+        dataset["data"]["id"],
+        algorithm_ids,
+        {
+            "missing_strategy": "mean",
+            "outlier_method": "iqr",
+            "normalization": "minmax",
+        },
+    )["data"]["task_id"]
+    facade.task_manager.start(task_id)
+    run_result = facade.cleaning_service.run_task(task_id)
+    suggestions = facade.cleaning_service.list_suggestions(task_id, None, 1, 50)
+
+    issue_types = {item["issue_type"] for item in suggestions["items"]}
+    assert run_result["ok"] is True
+    assert "missing_values" in issue_types
+    assert "outliers" in issue_types
+    assert "unnormalized_values" in issue_types
+    assert "duplicate" in issue_types
+
+
 def test_resolution_cleaner_filters_non_compliant_images_when_storing_dataset(tmp_path):
     facade, _paths = build_services(tmp_path)
     dataset = facade.dataset_service.create_dataset("image-filter-ds", "image", "")

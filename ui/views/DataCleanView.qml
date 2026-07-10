@@ -25,7 +25,7 @@ Item {
         anchors.topMargin: -16
         anchors.rightMargin: -16
         title: "数据清洗帮助"
-        body: "本页用于对数据集执行质量检测、清洗建议生成和清洗任务管理。\n\n1. 左侧历史区展示清洗任务记录，可查看任务状态、源数据集、使用算法、参数和建议数量。\n2. 点击“新建清洗任务”后，先选择源数据集。可通过数据阶段筛选只看原始、生成或清洗后的数据集。\n3. 系统会按数据模态加载清洗算法，例如图像清洗、文本清洗、音频清洗和表格清洗。可以同时勾选多个策略。\n4. 每个算法支持动态参数配置，例如阈值、处理强度、检测模式等。参数会随任务提交给后端。\n5. 启动任务后可查看进度和状态。若任务失败，错误弹窗会提示原因，通常需要检查源文件、参数范围或算法依赖。\n6. 任务完成后，详情区会展示清洗建议和样本明细。可预览样本内容，并根据建议类型判断是否需要删除、修复或保留。\n7. 支持保存清洗工程、重命名任务、删除历史记录和导出清洗结果。清洗后的数据可继续作为生成或评估的输入。"
+        body: "本页用于对数据集执行质量检测、清洗建议生成和清洗任务管理。\n\n1. 左侧历史区展示清洗任务记录，可查看任务状态、源数据集、使用算法、参数和建议数量。\n2. 点击“新建清洗任务”后，先选择源数据集。可通过数据阶段筛选只看原始、生成或清洗后的数据集。\n3. 系统会按数据模态加载清洗算法，例如图像清洗、文本清洗、音频清洗和通用清洗。可以同时勾选多个策略。\n4. 每个算法支持动态参数配置，例如阈值、处理强度、检测模式等。参数会随任务提交给后端。\n5. 启动任务后可查看进度和状态。若任务失败，错误弹窗会提示原因，通常需要检查源文件、参数范围或算法依赖。\n6. 任务完成后，详情区会展示清洗建议和样本明细。可预览样本内容，并根据建议类型判断是否需要删除、修复或保留。\n7. 支持保存清洗工程、重命名任务、删除历史记录和导出清洗结果。清洗后的数据可继续作为生成或评估的输入。"
     }
 
     property string viewMode: "history"
@@ -150,7 +150,7 @@ Item {
         if (modality === "image") return "图像清洗算法"
         if (modality === "text") return "文本清洗算法"
         if (modality === "audio") return "音频清洗算法"
-        if (modality === "tabular") return "表格清洗算法"
+        if (modality === "tabular") return "通用清洗算法"
         if (modality === "video") return "视频清洗算法"
         if (modality === "multimodal") return "通用清洗算法"
         return "其他清洗算法"
@@ -322,6 +322,7 @@ Item {
         for (var i = 0; i < algorithms.length; i++) {
             var algorithm = algorithms[i]
             var modality = algorithm.modality || "other"
+            if (modality === "tabular") modality = "multimodal"
             if (!grouped[modality]) grouped[modality] = []
             grouped[modality].push(algorithm)
         }

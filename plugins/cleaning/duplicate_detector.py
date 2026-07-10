@@ -1,4 +1,5 @@
 from pathlib import Path
+import hashlib
 
 
 PARAMETERS = []
@@ -17,6 +18,8 @@ def run(payload: dict, context) -> dict:
             return {"ok": False, "error_code": "CANCELLED", "message": "任务已取消", "details": {}}
         context.set_progress((idx + 1) * 100 / total, f"检测重复 {idx + 1}/{total}")
         sha = sample.get("sha256") or sample.get("metadata", {}).get("sha256", "")
+        if not sha:
+            sha = _file_sha256(sample)
         if sha and sha in seen:
             suggestions.append({
                 "sample_id": sample["id"],
@@ -31,3 +34,17 @@ def run(payload: dict, context) -> dict:
             seen[sha] = sample["id"]
 
     return {"ok": True, "suggestions": suggestions, "logs": []}
+
+
+def _file_sha256(sample: dict) -> str:
+    path = sample.get("sample_path") or sample.get("path") or sample.get("file_path")
+    if not path:
+        return ""
+    file_path = Path(path)
+    if not file_path.is_file():
+        return ""
+    digest = hashlib.sha256()
+    with file_path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()

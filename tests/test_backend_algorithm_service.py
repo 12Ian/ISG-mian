@@ -82,6 +82,26 @@ def test_algorithm_service_includes_multimodal_algorithms_for_modality_filter(tm
     assert {item["key"] for item in listed} == {"cleaning.image", "cleaning.multi"}
 
 
+def test_algorithm_service_treats_tabular_cleaners_as_common_cleaning_algorithms(tmp_path):
+    service = build_algorithm_service(tmp_path)
+    base_payload = {
+        "category": "cleaning",
+        "entry_type": "python_function",
+        "module_path": "plugins.cleaning.demo",
+        "callable_name": "run",
+        "input_contract": {"dataset_required": True},
+        "output_contract": {"produces": ["suggestions"]},
+        "parameters": [],
+    }
+    service.create_algorithm({**base_payload, "key": "cleaning.text", "name": "Text Cleaner", "modality": "text"})
+    service.create_algorithm({**base_payload, "key": "cleaning.common", "name": "Common Cleaner", "modality": "multimodal"})
+    service.create_algorithm({**base_payload, "key": "cleaning.missing", "name": "Missing Values", "modality": "tabular"})
+
+    listed = service.get_algorithms(category="cleaning", modality="text")
+
+    assert {item["key"] for item in listed} == {"cleaning.text", "cleaning.common", "cleaning.missing"}
+
+
 def test_algorithm_service_validates_python_script_entry(tmp_path):
     service = build_algorithm_service(tmp_path)
     plugin_file = tmp_path / "valid_plugin.py"

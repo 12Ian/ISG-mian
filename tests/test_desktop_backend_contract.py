@@ -313,6 +313,49 @@ def test_seed_default_algorithms_merges_legacy_resolution_cleaner(tmp_path):
     assert resolution_algorithms[0]["key"] == "cleaning.image_resolution_filter"
 
 
+def test_seed_default_algorithms_merges_duplicate_cleaning_entrypoint(tmp_path):
+    from backend import (
+        BackendPaths,
+        BackendServiceFacade,
+        create_backend_engine,
+        create_session_factory,
+        initialize_backend_database,
+    )
+    from backend.qt.bridge import BackendBridge
+
+    paths = BackendPaths(root=tmp_path / "backend-root")
+    engine = create_backend_engine(paths.database_path)
+    initialize_backend_database(engine)
+    facade = BackendServiceFacade.build(paths=paths, session_factory=create_session_factory(engine))
+    bridge = BackendBridge(facade=facade)
+
+    facade.algorithm_service.create_algorithm(
+        {
+            "key": "legacy.image_near_duplicate",
+            "name": "重复样本检测",
+            "category": "cleaning",
+            "modality": "image",
+            "entry_type": "python_function",
+            "module_path": "plugins.cleaning.image_near_duplicate_detector",
+            "callable_name": "run",
+            "input_contract": {"dataset_required": True, "sample_required": True},
+            "output_contract": {"produces": ["suggestions"]},
+            "parameters": [],
+        }
+    )
+
+    bridge.seed_default_algorithms()
+    algorithms = bridge.get_algorithms("cleaning", "image")
+
+    near_duplicate_algorithms = [
+        item
+        for item in algorithms
+        if item["module_path"] == "plugins.cleaning.image_near_duplicate_detector"
+    ]
+    assert len(near_duplicate_algorithms) == 1
+    assert near_duplicate_algorithms[0]["key"] == "cleaning.image_near_duplicate_detector"
+
+
 def test_bridge_get_task_logs_serializes_repository_dict_rows(tmp_path):
     from backend import (
         BackendPaths,
