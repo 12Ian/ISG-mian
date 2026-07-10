@@ -45,8 +45,11 @@ def run(payload: dict, context) -> dict:
     output_dir = Path(payload.get("output", {}).get("output_dir", "."))
     apply_changes = bool(parameters.get("apply", True))
 
-    extra_words = _parse_stop_words(parameters.get("stop_words"))
-    stop_words = DEFAULT_STOP_WORDS | {str(word).strip() for word in extra_words if str(word).strip()}
+    configured_words = _parse_stop_words(parameters.get("stop_words"))
+    if _as_bool(parameters.get("replace_stop_words")):
+        stop_words = {str(word).strip() for word in configured_words if str(word).strip()}
+    else:
+        stop_words = DEFAULT_STOP_WORDS | {str(word).strip() for word in configured_words if str(word).strip()}
 
     if not samples:
         return {"ok": True, "suggestions": [], "logs": []}
@@ -121,6 +124,12 @@ def _parse_stop_words(value) -> set[str]:
     except TypeError:
         word = str(value).strip()
         return {word} if word else set()
+
+
+def _as_bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _remove_stop_words(text: str, stop_words: set[str]) -> tuple[str, int]:

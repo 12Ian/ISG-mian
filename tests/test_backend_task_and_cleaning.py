@@ -493,6 +493,34 @@ def test_text_stopwords_preserves_punctuation_and_line_breaks(tmp_path):
     assert "\n" in cleaned
     assert cleaned == "苹果，香蕉。\ntest, only test!"
 
+def test_text_stopwords_replaces_default_list_when_requested(tmp_path):
+    from plugins.cleaning import text_stopwords
+
+    source_file = tmp_path / "custom_stopwords.txt"
+    source_file.write_text("This is and only a test", encoding="utf-8")
+    output_dir = tmp_path / "out"
+
+    class Context:
+        def is_cancel_requested(self):
+            return False
+
+        def set_progress(self, value, message):
+            self.progress = (value, message)
+
+    result = text_stopwords.run(
+        {
+            "parameters": {"stop_words": "and", "replace_stop_words": True},
+            "input": {"samples": [{"id": 1, "sample_path": str(source_file)}]},
+            "output": {"output_dir": str(output_dir)},
+        },
+        Context(),
+    )
+
+    assert result["ok"] is True
+    suggestion = result["suggestions"][0]
+    cleaned = Path(suggestion["details"]["output_file_path"]).read_text(encoding="utf-8")
+    assert cleaned == "This is only a test"
+
 
 def test_builtin_duplicate_detector_finds_duplicates_from_imported_file_hashes(tmp_path):
     facade, _paths = build_services(tmp_path)

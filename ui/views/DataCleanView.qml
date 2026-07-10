@@ -214,21 +214,50 @@ Item {
                     opts = ["char", "line"]
                     optionLabels = ["按字去重", "按行/句去重"]
                 }
+                var defaultValue = param.default_value !== undefined && param.default_value !== null ? String(param.default_value) : ""
+                if ((algorithm.key || "") === "cleaning.text_stopwords" && (param.name || "") === "stop_words" && defaultValue === "") {
+                    defaultValue = root.defaultStopWordsText()
+                }
                 params.push({
                     n: param.name || "",
                     label: param.label || param.name || "",
-                    v: param.default_value !== undefined && param.default_value !== null ? String(param.default_value) : "",
+                    v: defaultValue,
                     type: opts.length > 0 ? "select" : (param.type || "string"),
                     minValue: param.min_value !== undefined ? param.min_value : param.min,
                     maxValue: param.max_value !== undefined ? param.max_value : param.max,
                     options: opts,
                     optionLabels: optionLabels,
-                    rangeText: root.parameterRangeText(param)
+                    rangeText: root.parameterRangeText(param),
+                    description: param.description || "",
+                    algorithmKey: algorithm.key || ""
                 })
             }
             map[String(algorithm.id)] = params
         }
         return map
+    }
+
+    function isStopWordsParameter(param) {
+        return param && param.algorithmKey === "cleaning.text_stopwords" && param.n === "stop_words"
+    }
+
+    function defaultStopWordsText() {
+        return "a, an, and, are, as, at, be, by, for, from, has, he, in, is, it, its, of, on, that, the, to, was, were, will, with, this, these, those, or, not, but, we, you, they, i"
+    }
+
+    function parameterPlaceholder(param) {
+        if (root.isStopWordsParameter(param)) return "\u8f93\u5165\u505c\u7528\u8bcd\uff0c\u652f\u6301\u9017\u53f7\u3001\u7a7a\u683c\u6216\u6362\u884c\u5206\u9694"
+        return ""
+    }
+
+    function parameterDescription(param) {
+        if (root.isStopWordsParameter(param)) return "\u8fd9\u91cc\u662f\u5b8c\u6574\u505c\u7528\u8bcd\u5217\u8868\uff1b\u76f4\u63a5\u4fee\u6539\u540e\u53ef\u66ff\u6362\u9ed8\u8ba4\u5217\u8868\u3002"
+        return param && param.description ? param.description : ""
+    }
+
+    function parameterLabel(param) {
+        if (root.isStopWordsParameter(param)) return "\u505c\u7528\u8bcd\u5217\u8868"
+        return param ? (param.label || param.n) : ""
     }
 
     function parameterRangeText(param) {
@@ -335,6 +364,9 @@ Item {
                 var normalizedValue = root.normalizeParameterInput(params[p], params[p].v)
                 params[p].v = normalizedValue
                 result[params[p].n] = normalizedValue
+                if (root.isStopWordsParameter(params[p])) {
+                    result["replace_stop_words"] = true
+                }
             }
         }
         return result
@@ -347,6 +379,7 @@ Item {
         for (var i = 0; i < keys.length; i++) {
             var key = keys[i]
             if (key === "algorithm_ids") continue
+            if (key === "replace_stop_words") continue
             result[key] = params[key]
         }
         return result
@@ -361,6 +394,19 @@ Item {
             return true
         }
         root.showToast("\u26a0\ufe0f " + (result && result.message ? result.message : "\u53c2\u6570\u8bb0\u5f55\u4fdd\u5b58\u5931\u8d25"))
+        return false
+    }
+
+    function saveCurrentFormParameterPreset(name) {
+        var payload = root.selectedCleaningParameters()
+        var params = root.cleanPresetParameters(payload)
+        var result = backendService.saveCleaningParameterPreset(name, root.selectedStrategies || [], params)
+        if (result && result.status === "success") {
+            root.cleaningParameterPresets = result.items || []
+            root.showToast("\u2705 \u505c\u7528\u8bcd\u5217\u8868\u5df2\u4fdd\u5b58")
+            return true
+        }
+        root.showToast("\u26a0\ufe0f " + (result && result.message ? result.message : "\u505c\u7528\u8bcd\u4fdd\u5b58\u5931\u8d25"))
         return false
     }
 
@@ -390,7 +436,14 @@ Item {
                     n: item.n,
                     label: item.label,
                     v: params[item.n] !== undefined ? String(params[item.n]) : item.v,
-                    type: item.type
+                    type: item.type,
+                    minValue: item.minValue,
+                    maxValue: item.maxValue,
+                    options: item.options,
+                    optionLabels: item.optionLabels,
+                    rangeText: item.rangeText,
+                    description: item.description,
+                    algorithmKey: item.algorithmKey
                 })
             }
             newMap[mapKey] = targetList
@@ -407,6 +460,7 @@ Item {
         for (var i = 0; i < keys.length; i++) {
             var key = keys[i]
             if (key === "algorithm_ids") continue
+            if (key === "replace_stop_words") continue
             result.push({ label: key, value: String(params[key]) })
         }
         return result
@@ -433,6 +487,7 @@ Item {
             for (var i = 0; i < keys.length; i++) {
                 var k = keys[i]
                 if (k === "algorithm_ids") continue
+                if (k === "replace_stop_words") continue
                 parts.push(k + "=" + paramsJson[k])
             }
         }
@@ -490,6 +545,7 @@ Item {
         for (var i = 0; i < keys.length; i++) {
             var key = keys[i]
             if (key === "algorithm_ids") continue
+            if (key === "replace_stop_words") continue
             result.push({ k: key, v: params[key] })
         }
         return result
@@ -1722,7 +1778,7 @@ Item {
                                                     RowLayout {
                                                         width: parent.width
                                                         spacing: 8
-                                                        Text { text: modelData.label || modelData.n; color: root.textMuted; font.pixelSize: 12; Layout.fillWidth: true; elide: Text.ElideRight }
+                                                        Text { text: root.parameterLabel(modelData); color: root.textMuted; font.pixelSize: 12; Layout.fillWidth: true; elide: Text.ElideRight }
                                                         Text {
                                                             visible: modelData.rangeText !== undefined && modelData.rangeText !== ""
                                                             text: modelData.rangeText
@@ -1733,8 +1789,16 @@ Item {
                                                             elide: Text.ElideRight
                                                         }
                                                     }
+                                                    Text {
+                                                        visible: root.parameterDescription(modelData) !== ""
+                                                        width: parent.width
+                                                        text: root.parameterDescription(modelData)
+                                                        color: root.textMuted
+                                                        font.pixelSize: 11
+                                                        wrapMode: Text.WordWrap
+                                                    }
                                                     Rectangle {
-                                                        width: parent.width; height: 36; color: root.bgDark; radius: 4; border.color: root.borderColor; border.width: 1
+                                                        width: parent.width; height: root.isStopWordsParameter(modelData) ? 132 : 36; color: root.bgDark; radius: 4; border.color: root.borderColor; border.width: 1
                                                         StableComboBox {
                                                             visible: modelData.options && modelData.options.length > 0
                                                             anchors.fill: parent
@@ -1755,9 +1819,11 @@ Item {
                                                             }
                                                         }
                                                         TextInput {
-                                                            visible: !(modelData.options && modelData.options.length > 0)
+                                                            visible: !(modelData.options && modelData.options.length > 0) && !root.isStopWordsParameter(modelData)
                                                             text: modelData.v
                                                             color: root.textColor; font.pixelSize: 13; anchors.fill: parent; leftPadding: 10; verticalAlignment: TextInput.AlignVCenter
+                                                            clip: true
+                                                            opacity: text.length > 0 ? 1.0 : 0.75
                                                             inputMethodHints: (modelData.type === "int" || modelData.type === "integer" || modelData.type === "float" || modelData.type === "number") ? Qt.ImhFormattedNumbersOnly : Qt.ImhNone
                                                             onEditingFinished: {
                                                                 var normalizedValue = root.normalizeParameterInput(modelData, text)
@@ -1768,6 +1834,52 @@ Item {
                                                                 root.setParamValue(selectedAlgorithmDelegate.selectedAlgorithmId, modelData.n, text)
                                                             }
                                                         }
+                                                        TextArea {
+                                                            visible: root.isStopWordsParameter(modelData)
+                                                            text: modelData.v
+                                                            color: root.textColor
+                                                            font.pixelSize: 13
+                                                            anchors.fill: parent
+                                                            leftPadding: 10
+                                                            rightPadding: 10
+                                                            topPadding: 8
+                                                            bottomPadding: 8
+                                                            wrapMode: TextArea.Wrap
+                                                            placeholderText: root.parameterPlaceholder(modelData)
+                                                            placeholderTextColor: root.textMuted
+                                                            background: Rectangle { color: "transparent" }
+                                                            onTextChanged: root.setParamValue(selectedAlgorithmDelegate.selectedAlgorithmId, modelData.n, text)
+                                                        }
+                                                        Text {
+                                                            visible: !(modelData.options && modelData.options.length > 0) && !root.isStopWordsParameter(modelData) && modelData.v === "" && root.parameterPlaceholder(modelData) !== ""
+                                                            anchors.fill: parent
+                                                            anchors.leftMargin: 10
+                                                            anchors.rightMargin: 8
+                                                            verticalAlignment: Text.AlignVCenter
+                                                            text: root.parameterPlaceholder(modelData)
+                                                            color: root.textMuted
+                                                            font.pixelSize: 12
+                                                            elide: Text.ElideRight
+                                                        }
+                                                    }
+                                                    Button {
+                                                        visible: root.isStopWordsParameter(modelData)
+                                                        width: parent.width
+                                                        height: 30
+                                                        text: "\u4fdd\u5b58\u505c\u7528\u8bcd"
+                                                        background: Rectangle {
+                                                            color: parent.hovered ? "#0288D1" : root.primaryColor
+                                                            radius: 4
+                                                        }
+                                                        contentItem: Text {
+                                                            text: parent.text
+                                                            color: "black"
+                                                            horizontalAlignment: Text.AlignHCenter
+                                                            verticalAlignment: Text.AlignVCenter
+                                                            font.pixelSize: 12
+                                                            font.bold: true
+                                                        }
+                                                        onClicked: root.saveCurrentFormParameterPreset("\u505c\u7528\u8bcd\u6e05\u6d17")
                                                     }
                                                 }
                                             }
