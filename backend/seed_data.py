@@ -246,7 +246,7 @@ DEFAULT_ALGORITHMS = (
         "entry_type": "python_function",
         "module_path": "plugins.cleaning.text_stemming",
         "callable_name": "run",
-        "description": "对英文文本应用轻量级规则词干提取，移除常见后缀(ing/ed/s等)",
+        "description": "对英文文本应用轻量级规则词干提取；中文、标点和换行保持原样",
         "input_contract": {"dataset_required": True, "sample_required": True},
         "output_contract": {"produces": ["suggestions"], "artifact_types": ["text"]},
         "parameters": [],

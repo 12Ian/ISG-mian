@@ -1,4 +1,8 @@
-"""Text stemming cleaning plugin. Applies lightweight rule-based English stemming."""
+"""Text stemming cleaning plugin.
+
+Applies lightweight rule-based English stemming while preserving Chinese text,
+punctuation, and line breaks unchanged.
+"""
 
 import re
 from pathlib import Path
@@ -44,13 +48,9 @@ def run(payload: dict, context) -> dict:
         if text is None:
             continue
 
-        tokens = re.findall(r"[一-鿿]|[A-Za-z0-9_]+", text)
-        stemmed = [_stem_token(t) for t in tokens]
-        changed = sum(1 for a, b in zip(tokens, stemmed) if a != b)
+        cleaned, changed, token_count = _stem_english_words(text)
         if changed:
-            confidence = _clamp(changed / max(len(tokens), 1))
-            cleaned = " ".join(stemmed)
-            cleaned = re.sub(r"\s+", " ", cleaned).strip()
+            confidence = _clamp(changed / max(token_count, 1))
             output_path = ""
             if apply_changes:
                 output_dir.mkdir(parents=True, exist_ok=True)
@@ -62,8 +62,8 @@ def run(payload: dict, context) -> dict:
                 "issue_type": "text_unstemmed",
                 "suggested_action": "repair",
                 "confidence": confidence,
-                "message": f"Stemmed {changed} tokens ({len(tokens)} total)",
-                "details": {"changed_count": changed, "total_tokens": len(tokens),
+                "message": f"Stemmed {changed} English tokens ({token_count} total); Chinese text preserved",
+                "details": {"changed_count": changed, "total_tokens": token_count,
                             "output_file_path": output_path, "processing_result": "stemmed"},
             })
 
@@ -82,11 +82,24 @@ _SUFFIX_RULES: list[tuple[str, int, str]] = [
 ]
 
 
+def _stem_english_words(text: str) -> tuple[str, int, int]:
+    changed = 0
+    token_count = 0
+
+    def replace(match: re.Match) -> str:
+        nonlocal changed, token_count
+        token = match.group(0)
+        stemmed = _stem_token(token)
+        token_count += 1
+        if stemmed != token:
+            changed += 1
+        return stemmed
+
+    return re.sub(r"[A-Za-z]+", replace, text), changed, token_count
+
+
 def _stem_token(token: str) -> str:
     lower = token.lower()
-    # Don't stem CJK characters
-    if re.fullmatch(r"[一-鿿]", token):
-        return token
     for suffix, min_len, replacement in _SUFFIX_RULES:
         if lower.endswith(suffix) and len(lower) >= min_len:
             stem = lower[:-len(suffix)] + replacement

@@ -522,6 +522,60 @@ def test_text_stopwords_replaces_default_list_when_requested(tmp_path):
     assert cleaned == "This is only a test"
 
 
+def test_text_stemming_preserves_chinese_punctuation_and_line_breaks(tmp_path):
+    from plugins.cleaning import text_stemming
+
+    source_file = tmp_path / "mixed.txt"
+    source_file.write_text("我喜欢Running，测试 runners。\n看看中文。", encoding="utf-8")
+    output_dir = tmp_path / "out"
+
+    class Context:
+        def is_cancel_requested(self):
+            return False
+
+        def set_progress(self, value, message):
+            self.progress = (value, message)
+
+    result = text_stemming.run(
+        {
+            "parameters": {"apply": True},
+            "input": {"samples": [{"id": 1, "sample_path": str(source_file)}]},
+            "output": {"output_dir": str(output_dir)},
+        },
+        Context(),
+    )
+
+    assert result["ok"] is True
+    suggestion = result["suggestions"][0]
+    cleaned = Path(suggestion["details"]["output_file_path"]).read_text(encoding="utf-8")
+    assert cleaned == "我喜欢runn，测试 runner。\n看看中文。"
+
+
+def test_text_stemming_skips_pure_chinese_text(tmp_path):
+    from plugins.cleaning import text_stemming
+
+    source_file = tmp_path / "chinese.txt"
+    source_file.write_text("这是完整的中文文本，标点和换行都不应被改变。\n第二行。", encoding="utf-8")
+
+    class Context:
+        def is_cancel_requested(self):
+            return False
+
+        def set_progress(self, value, message):
+            self.progress = (value, message)
+
+    result = text_stemming.run(
+        {
+            "parameters": {"apply": True},
+            "input": {"samples": [{"id": 1, "sample_path": str(source_file)}]},
+            "output": {"output_dir": str(tmp_path / "out")},
+        },
+        Context(),
+    )
+
+    assert result == {"ok": True, "suggestions": [], "logs": []}
+
+
 def test_builtin_duplicate_detector_finds_duplicates_from_imported_file_hashes(tmp_path):
     facade, _paths = build_services(tmp_path)
     dataset = facade.dataset_service.create_dataset("duplicate-ds", "text", "")
