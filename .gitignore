@@ -39,3 +39,8 @@ tmp_backend_review*/
 
 # user data (datasets/images)
 data/
+
+# local test scripts and test records
+tests/
+/tests/
+/tests/
