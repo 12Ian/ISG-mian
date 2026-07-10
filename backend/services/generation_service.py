@@ -6,6 +6,7 @@ from pathlib import Path
 
 from ..errors import NotFoundError, ValidationError
 from ..models import Algorithm, Dataset, GenerationOutput, Sample
+from ..parameter_ranges import normalize_parameter_value
 from ..plugins import PluginRunner
 from ..storage import FileIndexer
 from .base import ServiceBase
@@ -75,12 +76,10 @@ class GenerationService(ServiceBase):
                     if not self._supports_pipeline(algorithm, source_dataset.modality):
                         raise ValidationError(f"Algorithm {algorithm.name} does not support pipeline generation.")
 
-            resolved_parameters = {
-                **(parameters or {}),
-                "algorithm_ids": resolved_algorithm_ids,
-                "target_count": target_count,
-                "generation_mode": generation_mode,
-            }
+            resolved_parameters = self._normalize_task_parameters(session, algorithms, parameters)
+            resolved_parameters["algorithm_ids"] = resolved_algorithm_ids
+            resolved_parameters["target_count"] = target_count
+            resolved_parameters["generation_mode"] = generation_mode
 
             task = self.task_repository.create_task(
                 session,
@@ -122,6 +121,21 @@ class GenerationService(ServiceBase):
         target_count: int,
     ) -> dict:
         return self.create_task(source_dataset_id, target_dataset_id, algorithm_ids, parameters, target_count)
+
+    def _normalize_task_parameters(self, session, algorithms: list[Algorithm], parameters: dict | None) -> dict:
+        normalized = dict(parameters or {})
+        for algorithm in algorithms:
+            for item in self.algorithm_repository.list_parameters(session, algorithm.id):
+                parameter = {
+                    "name": item.name,
+                    "type": item.type,
+                    "default_value": item.default_value,
+                    "min_value": item.min_value,
+                    "max_value": item.max_value,
+                    "options": item.options_json,
+                }
+                normalized[item.name] = normalize_parameter_value(parameter, normalized.get(item.name, item.default_value))
+        return normalized
 
     def run_task(self, task_id: int, context=None) -> dict:
         with self.session_factory() as session:

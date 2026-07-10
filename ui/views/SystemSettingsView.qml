@@ -268,22 +268,19 @@ Item {
                     RowLayout {
                         spacing: 16
                         Text { text: "任务并发数"; color: root.textMuted; Layout.preferredWidth: 110 }
-                        SpinBox {
+                        StableSpinBox {
                             id: workerSpinBox
                             from: 1; to: 16; value: root.taskMaxWorkers
-                            background: Rectangle { color: root.bgDark; border.color: root.borderColor; border.width: 1; radius: 4 }
                         }
                         Text { text: "预览上限"; color: root.textMuted; Layout.preferredWidth: 80 }
-                        SpinBox {
+                        StableSpinBox {
                             id: previewSpinBox
                             from: 10; to: 1000; stepSize: 10; value: root.previewMaxSamples
-                            background: Rectangle { color: root.bgDark; border.color: root.borderColor; border.width: 1; radius: 4 }
                         }
                         Text { text: "日志保留"; color: root.textMuted; Layout.preferredWidth: 80 }
-                        SpinBox {
+                        StableSpinBox {
                             id: retentionSpinBox
                             from: 1; to: 365; value: root.logRetentionDays
-                            background: Rectangle { color: root.bgDark; border.color: root.borderColor; border.width: 1; radius: 4 }
                         }
                     }
                 }
