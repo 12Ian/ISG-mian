@@ -462,6 +462,38 @@ def test_seeded_text_deduplicate_algorithm_runs_char_mode_through_backend(tmp_pa
     assert suggestions["monitor_items"][0]["preview_path"] == str(output_path)
 
 
+def test_text_stopwords_preserves_punctuation_and_line_breaks(tmp_path):
+    from plugins.cleaning import text_stopwords
+
+    source_file = tmp_path / "stopwords.txt"
+    source_file.write_text("我喜欢苹果，和香蕉。\nThis is a test, and only a test!", encoding="utf-8")
+    output_dir = tmp_path / "out"
+
+    class Context:
+        def is_cancel_requested(self):
+            return False
+
+        def set_progress(self, value, message):
+            self.progress = (value, message)
+
+    result = text_stopwords.run(
+        {
+            "parameters": {"stop_words": "喜欢,and"},
+            "input": {"samples": [{"id": 1, "sample_path": str(source_file)}]},
+            "output": {"output_dir": str(output_dir)},
+        },
+        Context(),
+    )
+
+    assert result["ok"] is True
+    suggestion = result["suggestions"][0]
+    cleaned = Path(suggestion["details"]["output_file_path"]).read_text(encoding="utf-8")
+    assert "，" in cleaned
+    assert "。" in cleaned
+    assert "\n" in cleaned
+    assert cleaned == "苹果，香蕉。\ntest, only test!"
+
+
 def test_builtin_duplicate_detector_finds_duplicates_from_imported_file_hashes(tmp_path):
     facade, _paths = build_services(tmp_path)
     dataset = facade.dataset_service.create_dataset("duplicate-ds", "text", "")
