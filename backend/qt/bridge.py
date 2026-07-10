@@ -504,8 +504,56 @@ class BackendBridge:
                 continue
             self.facade.algorithm_service.create_algorithm(dict(algo))
         self._repair_training_validation_rules(existing_map)
+        self._repair_wgan_parameter_ranges()
         self._merge_legacy_algorithm_aliases()
         self._seed_default_bindings(DEFAULT_BINDINGS)
+
+    def _repair_wgan_parameter_ranges(self) -> None:
+        from ..models import Algorithm, AlgorithmParameter
+
+        expected_ranges = {
+            "gradient_penalty": (0.1, 50.0),
+            "discriminator_iterations": (1.0, 20.0),
+            "learning_rate": (0.000001, 0.1),
+            "enhance_strength": (0.3, 2.0),
+            "training_steps": (20.0, 500.0),
+        }
+        expected_defaults = {
+            "enhance_strength": 1.8,
+            "training_steps": 120,
+        }
+        with self.facade.session_factory() as session:
+            algorithm = session.query(Algorithm).filter(Algorithm.key == "generation.image.wgan_gp").first()
+            if algorithm is None:
+                return
+            existing_parameters = session.query(AlgorithmParameter).filter(AlgorithmParameter.algorithm_id == algorithm.id).all()
+            existing_by_name = {parameter.name: parameter for parameter in existing_parameters}
+            for parameter in existing_parameters:
+                if parameter.name not in expected_ranges:
+                    continue
+                min_value, max_value = expected_ranges[parameter.name]
+                parameter.min_value = min_value
+                parameter.max_value = max_value
+                if parameter.name in expected_defaults:
+                    parameter.default_value = expected_defaults[parameter.name]
+            if "training_steps" not in existing_by_name:
+                max_order = max((parameter.order_index for parameter in existing_parameters), default=-1)
+                session.add(
+                    AlgorithmParameter(
+                        algorithm_id=algorithm.id,
+                        name="training_steps",
+                        label="训练步数",
+                        type="int",
+                        required=False,
+                        default_value=120,
+                        min_value=20.0,
+                        max_value=500.0,
+                        options_json=[],
+                        description="WGAN-GP任务内训练步数，越高效果越明显但耗时更长",
+                        order_index=max_order + 1,
+                    )
+                )
+            session.commit()
 
     def _repair_training_validation_rules(self, existing_map: dict) -> None:
         """补齐旧训练算法缺失的场景规则。"""

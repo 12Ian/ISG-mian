@@ -43,11 +43,15 @@ def infer_parameter_bounds(parameter: dict[str, Any]) -> tuple[float | None, flo
 
     if any(token in key for token in ("learning_rate", "learn_rate", " lr")):
         return 0.000001, 1.0
+    if any(token in key for token in ("discriminator_iterations", "n_critic", "critic_iters")):
+        return 1.0, 20.0
     if any(token in key for token in ("ratio", "prob", "confidence", "alpha", "mix_ratio")):
         return 0.0, 1.0
     if any(token in key for token in ("strength", "intensity", "amount", "opacity", "blend", "weight")):
         return 0.0, 1.0
     if "epoch" in key:
+        return 1.0, 1000.0
+    if any(token in key for token in ("iterations", "iteration", "iters", "steps", "step", "n_critic", "critic_iters")):
         return 1.0, 1000.0
     if "batch" in key:
         return 1.0, 4096.0

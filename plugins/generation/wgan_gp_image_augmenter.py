@@ -46,11 +46,22 @@ PARAMETERS = [
         "name": 'enhance_strength',
         "type": 'float',
         "label": '增强强度',
-        "default": 1.0,
+        "default": 1.8,
         "min": 0.3,
         "max": 2.0,
         "options": [],
         "description": '控制GAN风格、纹理和形变叠加强度',
+        "required": False,
+    },
+    {
+        "name": "training_steps",
+        "type": "int",
+        "label": "训练步数",
+        "default": 120,
+        "min": 20,
+        "max": 500,
+        "options": [],
+        "description": "WGAN-GP任务内训练步数，越高效果越明显但耗时更长",
         "required": False,
     },
 ]
@@ -78,9 +89,10 @@ def run(payload: dict, context) -> dict:
     gp_lambda = float(parameters.get("gp_lambda", parameters.get("gradient_penalty", 10.0)) or 10.0)
     n_critic = int(parameters.get("n_critic", parameters.get("critic_iters", parameters.get("discriminator_iterations", 5))) or 5)
     lr = float(parameters.get("lr", parameters.get("learning_rate", 0.0001)) or 0.0001)
-    enhance_strength = float(parameters.get("enhance_strength", 1.0) or 1.0)
+    enhance_strength = float(parameters.get("enhance_strength", 1.8) or 1.8)
     enhance_strength = max(0.3, min(enhance_strength, 2.0))
-    image_size = 32
+    image_size = int(parameters.get("image_size", 64) or 64)
+    image_size = 64 if image_size >= 64 else 32
     max_images = int(parameters.get("max_images", 32))
     max_images = max(2, min(max_images, 64))
 
@@ -93,8 +105,9 @@ def run(payload: dict, context) -> dict:
     latent_dim = 100
     base_ch = 64
 
-    g, d, g_opt, d_opt = _build_wgan_models(device, latent_dim, base_ch, lr)
-    steps = max(5, min(60, n * 2))
+    g, d, g_opt, d_opt = _build_wgan_models(device, latent_dim, base_ch, lr, image_size)
+    requested_steps = int(parameters.get("training_steps", 120) or 120)
+    steps = max(20, min(500, requested_steps))
 
     for step in range(steps):
         if context.is_cancel_requested():
@@ -164,6 +177,8 @@ def run(payload: dict, context) -> dict:
 
 
 def _run_texture_augmentation(payload, context, output_dir, samples, target_count, method):
+    parameters = payload.get("parameters", {}) or {}
+    enhance_strength = max(0.3, min(float(parameters.get("enhance_strength", 1.8) or 1.8), 2.0))
     outputs = []
     for index in range(target_count):
         if context.is_cancel_requested():
@@ -173,8 +188,11 @@ def _run_texture_augmentation(payload, context, output_dir, samples, target_coun
         img = read_image(source_path)
         if img is None:
             continue
-        img = cv2.flip(img, 1)
-        img = cv2.GaussianBlur(img, (5, 5), 0)
+        flipped = cv2.flip(img, 1)
+        blurred = cv2.GaussianBlur(flipped, (5, 5), 0)
+        detail = cv2.addWeighted(flipped, 1.4, blurred, -0.4, 0)
+        color_boost = cv2.convertScaleAbs(detail, alpha=1.0 + 0.18 * enhance_strength, beta=10 * enhance_strength)
+        img = cv2.addWeighted(img, max(0.0, 1.0 - 0.55 * enhance_strength), color_boost, min(1.0, 0.55 * enhance_strength), 0)
         output_path = output_dir / f"{method}_{index:04d}.jpg"
         if not write_image(output_path, img):
             return {"ok": False, "error_code": "IMAGE_WRITE_ERROR", "message": f"Cannot write image: {output_path}"}
@@ -228,15 +246,15 @@ def _blend_gan_texture(source_img, gan_img, enhance_strength):
     gan_texture = gan_float - cv2.GaussianBlur(gan_float, (0, 0), 2)
     source_detail = source_float - cv2.GaussianBlur(source_float, (0, 0), 1.2)
 
-    color_shift = (gan_low - source_low) * (0.25 * strength)
-    texture_shift = gan_texture * (0.35 * strength)
-    styled = source_float + color_shift + texture_shift + source_detail * (0.25 * strength)
-    gan_weight = min(0.45, 0.28 * strength)
+    color_shift = (gan_low - source_low) * (0.45 * strength)
+    texture_shift = gan_texture * (0.65 * strength)
+    styled = source_float + color_shift + texture_shift + source_detail * (0.45 * strength)
+    gan_weight = min(0.7, 0.42 * strength)
     styled = cv2.addWeighted(source_float, 1.0 - gan_weight, styled, gan_weight, 0)
 
     gray_gan = cv2.cvtColor(np.clip(gan_resized, 0, 255).astype(np.uint8), cv2.COLOR_BGR2GRAY).astype(np.float32)
-    flow_x = cv2.GaussianBlur(gray_gan - 127.5, (0, 0), 9) / 127.5 * (2.5 * strength)
-    flow_y = cv2.GaussianBlur(np.roll(gray_gan, gray_gan.shape[1] // 5, axis=1) - 127.5, (0, 0), 9) / 127.5 * (2.5 * strength)
+    flow_x = cv2.GaussianBlur(gray_gan - 127.5, (0, 0), 9) / 127.5 * (4.0 * strength)
+    flow_y = cv2.GaussianBlur(np.roll(gray_gan, gray_gan.shape[1] // 5, axis=1) - 127.5, (0, 0), 9) / 127.5 * (4.0 * strength)
     h, w = gray_gan.shape
     grid_x, grid_y = np.meshgrid(np.arange(w, dtype=np.float32), np.arange(h, dtype=np.float32))
     warped = cv2.remap(
@@ -249,7 +267,7 @@ def _blend_gan_texture(source_img, gan_img, enhance_strength):
 
     source_edges = cv2.Canny(source_img, 80, 160).astype(np.float32) / 255.0
     edge_mask = cv2.GaussianBlur(source_edges, (0, 0), 1.2)[:, :, None]
-    mixed = warped * (1.0 - edge_mask * 0.45) + source_float * (edge_mask * 0.45)
+    mixed = warped * (1.0 - edge_mask * 0.25) + source_float * (edge_mask * 0.25)
     return np.clip(mixed, 0, 255).astype(np.uint8)
 
 
@@ -263,7 +281,7 @@ def _tensor_to_bgr_image(x):
     return x
 
 
-def _build_wgan_models(device, latent_dim, base_ch, lr):
+def _build_wgan_models(device, latent_dim, base_ch, lr, image_size):
     import torch
     import torch.nn as nn
     import torch.optim as optim
@@ -272,15 +290,25 @@ def _build_wgan_models(device, latent_dim, base_ch, lr):
         def __init__(self):
             super().__init__()
             self.fc = nn.Linear(latent_dim, base_ch * 4 * 4)
-            self.net = nn.Sequential(
+            layers = [
                 nn.ReLU(inplace=True),
                 nn.ConvTranspose2d(base_ch, base_ch // 2, 4, 2, 1),
                 nn.ReLU(inplace=True),
                 nn.ConvTranspose2d(base_ch // 2, base_ch // 4, 4, 2, 1),
                 nn.ReLU(inplace=True),
-                nn.ConvTranspose2d(base_ch // 4, 3, 4, 2, 1),
+            ]
+            if image_size >= 64:
+                layers.extend([
+                    nn.ConvTranspose2d(base_ch // 4, base_ch // 8, 4, 2, 1),
+                    nn.ReLU(inplace=True),
+                    nn.ConvTranspose2d(base_ch // 8, 3, 4, 2, 1),
+                ])
+            else:
+                layers.append(nn.ConvTranspose2d(base_ch // 4, 3, 4, 2, 1))
+            layers.append(
                 nn.Tanh(),
             )
+            self.net = nn.Sequential(*layers)
         def forward(self, z):
             x = self.fc(z).view(-1, base_ch, 4, 4)
             return self.net(x)
@@ -288,14 +316,20 @@ def _build_wgan_models(device, latent_dim, base_ch, lr):
     class Discriminator(nn.Module):
         def __init__(self):
             super().__init__()
-            self.net = nn.Sequential(
+            layers = [
                 nn.Conv2d(3, base_ch // 4, 4, 2, 1),
                 nn.LeakyReLU(0.2, inplace=True),
                 nn.Conv2d(base_ch // 4, base_ch // 2, 4, 2, 1),
                 nn.LeakyReLU(0.2, inplace=True),
                 nn.Conv2d(base_ch // 2, base_ch, 4, 2, 1),
                 nn.LeakyReLU(0.2, inplace=True),
-            )
+            ]
+            if image_size >= 64:
+                layers.extend([
+                    nn.Conv2d(base_ch, base_ch, 4, 2, 1),
+                    nn.LeakyReLU(0.2, inplace=True),
+                ])
+            self.net = nn.Sequential(*layers)
             self.fc = nn.Linear(base_ch * 4 * 4, 1)
         def forward(self, x):
             h = self.net(x).view(x.size(0), -1)

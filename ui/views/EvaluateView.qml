@@ -1654,9 +1654,9 @@ Item {
             RowLayout { anchors.fill: parent; anchors.margins: 15; spacing: 20
                 ColumnLayout { spacing: 5
                     Text { text: "1. 任务场景"; color: root.textMuted; font.pixelSize: 12; font.bold: true }
-                    StableComboBox { id: scenarioCombo; model: scenarioModel; textRole: "name"; Layout.preferredWidth: 160
+                    StableComboBox { id: scenarioCombo; model: scenarioModel; textRole: "name"; Layout.preferredWidth: 260
                         background: Rectangle { color: root.bgDark; border.color: root.borderColor; radius: 4 }
-                        contentItem: Text { text: parent.currentText; color: root.textColor; verticalAlignment: Text.AlignVCenter; padding: 10 }
+                        contentItem: Text { text: parent.currentText; color: root.textColor; verticalAlignment: Text.AlignVCenter; leftPadding: 12; rightPadding: 34; elide: Text.ElideRight }
                         onCurrentIndexChanged: root.filterAlgorithmsByScenario()
                     }
                 }
