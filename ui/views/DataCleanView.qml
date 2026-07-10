@@ -207,16 +207,77 @@ Item {
             var rawParams = algorithm.parameters || []
             for (var p = 0; p < rawParams.length; p++) {
                 var param = rawParams[p]
+                var opts = param.options || param.options_json || []
                 params.push({
                     n: param.name || "",
                     label: param.label || param.name || "",
                     v: param.default_value !== undefined && param.default_value !== null ? String(param.default_value) : "",
-                    type: param.type || "string"
+                    type: param.type || "string",
+                    minValue: param.min_value !== undefined ? param.min_value : param.min,
+                    maxValue: param.max_value !== undefined ? param.max_value : param.max,
+                    options: opts,
+                    rangeText: root.parameterRangeText(param)
                 })
             }
             map[String(algorithm.id)] = params
         }
         return map
+    }
+
+    function parameterRangeText(param) {
+        if (!param) return ""
+        var opts = param.options || param.options_json || []
+        if (opts && opts.length > 0) return "可选: " + opts.join(", ")
+        var minValue = param.min_value !== undefined && param.min_value !== null && param.min_value !== "" ? param.min_value : param.min
+        var maxValue = param.max_value !== undefined && param.max_value !== null && param.max_value !== "" ? param.max_value : param.max
+        var hasMin = minValue !== undefined && minValue !== null && minValue !== ""
+        var hasMax = maxValue !== undefined && maxValue !== null && maxValue !== ""
+        if (hasMin && hasMax) return "范围: " + minValue + " - " + maxValue
+        if (hasMin) return "范围: >= " + minValue
+        if (hasMax) return "范围: <= " + maxValue
+        var ptype = String(param.type || "").toLowerCase()
+        if (ptype === "bool" || ptype === "boolean") return "可选: true, false"
+        if (ptype === "int" || ptype === "integer" || ptype === "float" || ptype === "number") return "数值"
+        if (ptype === "string") return "文本"
+        return ""
+    }
+
+    function normalizeParameterInput(param, value) {
+        var ptype = String(param.type || "").toLowerCase()
+        var opts = param.options || []
+        if (opts && opts.length > 0) {
+            var valueText = String(value)
+            for (var oi = 0; oi < opts.length; oi++) {
+                if (String(opts[oi]) === valueText) return String(opts[oi])
+            }
+            return String(opts[0])
+        }
+        if (ptype === "bool" || ptype === "boolean") {
+            var boolText = String(value).trim().toLowerCase()
+            if (boolText === "true" || boolText === "1" || boolText === "yes" || boolText === "on") return "true"
+            if (boolText === "false" || boolText === "0" || boolText === "no" || boolText === "off") return "false"
+            return String(param.v === true || String(param.v).toLowerCase() === "true")
+        }
+        if (ptype === "int" || ptype === "integer" || ptype === "float" || ptype === "number") {
+            var numberValue = Number(value)
+            if (isNaN(numberValue)) numberValue = Number(param.v)
+            if (isNaN(numberValue)) numberValue = param.minValue !== undefined && param.minValue !== null ? Number(param.minValue) : 0
+            if (param.minValue !== undefined && param.minValue !== null && param.minValue !== "" && numberValue < Number(param.minValue)) numberValue = Number(param.minValue)
+            if (param.maxValue !== undefined && param.maxValue !== null && param.maxValue !== "" && numberValue > Number(param.maxValue)) numberValue = Number(param.maxValue)
+            if (ptype === "int" || ptype === "integer") numberValue = Math.round(numberValue)
+            return String(numberValue)
+        }
+        return String(value)
+    }
+
+    function setParamValue(algorithmId, paramName, value) {
+        var paramList = root.paramsDataMap[String(algorithmId)] || []
+        for (var i = 0; i < paramList.length; i++) {
+            if (paramList[i].n === paramName) {
+                paramList[i].v = value
+                break
+            }
+        }
     }
 
     function groupCleaningAlgorithms(algorithms) {
@@ -264,7 +325,9 @@ Item {
             var id = String(root.selectedStrategies[i])
             var params = root.paramsDataMap[id] || []
             for (var p = 0; p < params.length; p++) {
-                result[params[p].n] = params[p].v
+                var normalizedValue = root.normalizeParameterInput(params[p], params[p].v)
+                params[p].v = normalizedValue
+                result[params[p].n] = normalizedValue
             }
         }
         return result
@@ -1602,9 +1665,21 @@ Item {
                         Text { text: "⚙️ 综合参数配置"; color: root.textColor; font.bold: true; font.pixelSize: 14; Layout.fillWidth: true }
                         Text { visible: root.selectedStrategies.length === 0; text: "👈 请在左侧勾选清洗算法\n可以同时选择多个"; color: root.textMuted; font.pixelSize: 12; horizontalAlignment: Text.AlignHCenter; Layout.alignment: Qt.AlignCenter; Layout.fillHeight: true }
                         ScrollView {
-                            Layout.fillWidth: true; Layout.fillHeight: true; clip: true; contentWidth: availableWidth; visible: root.selectedStrategies.length > 0
+                            id: cleaningParameterScrollView
+                            property int scrollbarGutter: 18
+                            Layout.fillWidth: true; Layout.fillHeight: true; clip: true; contentWidth: Math.max(0, availableWidth - scrollbarGutter); visible: root.selectedStrategies.length > 0
+                            ScrollBar.vertical: ScrollBar {
+                                parent: cleaningParameterScrollView
+                                anchors.top: cleaningParameterScrollView.top
+                                anchors.bottom: cleaningParameterScrollView.bottom
+                                anchors.right: cleaningParameterScrollView.right
+                                anchors.rightMargin: 2
+                                width: 10
+                                policy: ScrollBar.AlwaysOn
+                                interactive: true
+                            }
                             Column {
-                                width: parent.width; spacing: 20
+                                width: cleaningParameterScrollView.contentWidth; spacing: 20
                                 Repeater {
                                     model: root.selectedStrategies
                                     delegate: Column {
@@ -1618,20 +1693,33 @@ Item {
                                                 model: root.paramsDataMap[String(selectedAlgorithmId)] || []
                                                 delegate: Column {
                                                     width: parent.width; spacing: 6
-                                                    Text { text: modelData.label || modelData.n; color: root.textMuted; font.pixelSize: 12 }
+                                                    RowLayout {
+                                                        width: parent.width
+                                                        spacing: 8
+                                                        Text { text: modelData.label || modelData.n; color: root.textMuted; font.pixelSize: 12; Layout.fillWidth: true; elide: Text.ElideRight }
+                                                        Text {
+                                                            visible: modelData.rangeText !== undefined && modelData.rangeText !== ""
+                                                            text: modelData.rangeText
+                                                            color: root.primaryColor
+                                                            font.pixelSize: 11
+                                                            horizontalAlignment: Text.AlignRight
+                                                            Layout.preferredWidth: 96
+                                                            elide: Text.ElideRight
+                                                        }
+                                                    }
                                                     Rectangle {
                                                         width: parent.width; height: 36; color: root.bgDark; radius: 4; border.color: root.borderColor; border.width: 1
                                                         TextInput {
                                                             text: modelData.v
                                                             color: root.textColor; font.pixelSize: 13; anchors.fill: parent; leftPadding: 10; verticalAlignment: TextInput.AlignVCenter
+                                                            inputMethodHints: (modelData.type === "int" || modelData.type === "integer" || modelData.type === "float" || modelData.type === "number") ? Qt.ImhFormattedNumbersOnly : Qt.ImhNone
+                                                            onEditingFinished: {
+                                                                var normalizedValue = root.normalizeParameterInput(modelData, text)
+                                                                text = normalizedValue
+                                                                root.setParamValue(selectedAlgorithmDelegate.selectedAlgorithmId, modelData.n, normalizedValue)
+                                                            }
                                                             onTextChanged: {
-                                                                var paramList = root.paramsDataMap[String(selectedAlgorithmDelegate.selectedAlgorithmId)]
-                                                                for (var i = 0; i < paramList.length; i++) {
-                                                                    if (paramList[i].n === modelData.n) {
-                                                                        paramList[i].v = text
-                                                                        break
-                                                                    }
-                                                                }
+                                                                root.setParamValue(selectedAlgorithmDelegate.selectedAlgorithmId, modelData.n, text)
                                                             }
                                                         }
                                                     }

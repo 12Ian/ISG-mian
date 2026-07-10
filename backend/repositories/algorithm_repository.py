@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from ..models import Algorithm, AlgorithmBinding, AlgorithmParameter
+from ..parameter_ranges import normalize_parameter_type, normalized_parameter_range
 from .base import RepositoryBase
 
 
@@ -14,17 +15,18 @@ class AlgorithmRepository(RepositoryBase):
     def replace_parameters(self, session, algorithm_id: int, parameters: list[dict]) -> None:
         session.query(AlgorithmParameter).filter(AlgorithmParameter.algorithm_id == algorithm_id).delete()
         for index, parameter in enumerate(parameters):
+            range_info = normalized_parameter_range(parameter)
             session.add(
                 AlgorithmParameter(
                     algorithm_id=algorithm_id,
                     name=parameter["name"],
                     label=parameter.get("label", parameter["name"]),
-                    type=parameter["type"],
+                    type=normalize_parameter_type(parameter["type"]),
                     required=parameter.get("required", False),
-                    default_value=parameter.get("default_value"),
-                    min_value=parameter.get("min_value"),
-                    max_value=parameter.get("max_value"),
-                    options_json=parameter.get("options", []),
+                    default_value=parameter.get("default_value", parameter.get("default")),
+                    min_value=range_info["min_value"],
+                    max_value=range_info["max_value"],
+                    options_json=range_info["options"],
                     description=parameter.get("description", ""),
                     order_index=index,
                 )

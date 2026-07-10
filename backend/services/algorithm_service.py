@@ -4,6 +4,7 @@ from dataclasses import field
 from .._compat import slots_dataclass
 
 from ..errors import NotFoundError, ValidationError
+from ..parameter_ranges import normalized_parameter_range
 from ..plugins import PluginRunner
 from .base import ServiceBase
 
@@ -168,17 +169,7 @@ class AlgorithmService(ServiceBase):
             "pipeline_position": self._pipeline_position(algorithm),
             "validation_rules": algorithm.validation_rules_json,
             "parameters": [
-                {
-                    "name": item.name,
-                    "label": item.label,
-                    "type": item.type,
-                    "required": item.required,
-                    "default_value": item.default_value,
-                    "min_value": item.min_value,
-                    "max_value": item.max_value,
-                    "options": item.options_json,
-                    "description": item.description,
-                }
+                self._serialize_parameter(item)
                 for item in self.algorithm_repository.list_parameters(session, algorithm.id)
             ],
         }
@@ -191,6 +182,24 @@ class AlgorithmService(ServiceBase):
                     data["bound_evaluation_key"] = eval_algo.key
                     data["bound_evaluation_name"] = eval_algo.name
         return data
+
+    def _serialize_parameter(self, item) -> dict:
+        base = {
+            "name": item.name,
+            "label": item.label,
+            "type": item.type,
+            "required": item.required,
+            "default_value": item.default_value,
+            "min_value": item.min_value,
+            "max_value": item.max_value,
+            "options": item.options_json,
+            "description": item.description,
+        }
+        range_info = normalized_parameter_range(base)
+        base["min_value"] = range_info["min_value"]
+        base["max_value"] = range_info["max_value"]
+        base["options"] = range_info["options"]
+        return base
 
     def _supports_pipeline(self, algorithm) -> bool:
         input_contract = algorithm.input_contract_json or {}

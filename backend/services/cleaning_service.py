@@ -5,6 +5,7 @@ from .._compat import slots_dataclass
 from pathlib import Path
 
 from ..models import Algorithm, CleaningSuggestion, Dataset, Sample
+from ..parameter_ranges import normalize_parameter_value
 from ..plugins import PluginRunner
 from ..errors import NotFoundError, ValidationError
 from ..storage import FileIndexer
@@ -52,7 +53,8 @@ class CleaningService(ServiceBase):
                 algorithms.append(algorithm)
             primary_algorithm = algorithms[0]
             resolved_algorithm_ids = [algorithm.id for algorithm in algorithms]
-            resolved_parameters = {**(parameters or {}), "algorithm_ids": resolved_algorithm_ids}
+            resolved_parameters = self._normalize_task_parameters(session, algorithms, parameters)
+            resolved_parameters["algorithm_ids"] = resolved_algorithm_ids
 
             task = self.task_repository.create_task(
                 session,
@@ -73,6 +75,21 @@ class CleaningService(ServiceBase):
 
     def create_cleaning_task(self, dataset_id: int, algorithm_ids: list[int], parameters: dict) -> dict:
         return self.create_task(dataset_id, algorithm_ids, parameters)
+
+    def _normalize_task_parameters(self, session, algorithms: list[Algorithm], parameters: dict | None) -> dict:
+        normalized = dict(parameters or {})
+        for algorithm in algorithms:
+            for item in self.algorithm_repository.list_parameters(session, algorithm.id):
+                parameter = {
+                    "name": item.name,
+                    "type": item.type,
+                    "default_value": item.default_value,
+                    "min_value": item.min_value,
+                    "max_value": item.max_value,
+                    "options": item.options_json,
+                }
+                normalized[item.name] = normalize_parameter_value(parameter, normalized.get(item.name, item.default_value))
+        return normalized
 
     def run_task(self, task_id: int, context=None) -> dict:
         with self.session_factory() as session:
