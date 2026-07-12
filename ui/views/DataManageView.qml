@@ -16,6 +16,13 @@ Item {
     readonly property color textMuted: Theme.muted
     readonly property color borderColor: Theme.border
     readonly property color tableHoverBg: Theme.hover
+    readonly property bool compactDatasetTable: width < 1500
+    readonly property bool showDatasetStorage: width >= 1250
+    readonly property bool showDatasetCount: width >= 1050
+    readonly property int datasetNameColumnWidth: compactDatasetTable ? 220 : 360
+    readonly property int datasetTypeColumnWidth: compactDatasetTable ? 120 : 140
+    readonly property int datasetActionButtonWidth: compactDatasetTable ? 50 : 60
+    readonly property int datasetActionColumnWidth: datasetActionButtonWidth * 4 + 24
 
     HelpIcon {
         anchors.top: parent.top
@@ -544,12 +551,12 @@ Item {
                         anchors.rightMargin: 15
                         spacing: 10
 
-                        Label { text: "数据集名称"; font.bold: true; color: Theme.muted; Layout.preferredWidth: 360 }
+                        Label { text: "数据集名称"; font.bold: true; color: Theme.muted; Layout.preferredWidth: root.datasetNameColumnWidth }
                         Item { Layout.fillWidth: true } // 弹簧
-                        Label { text: "类型/阶段"; font.bold: true; color: Theme.muted; Layout.preferredWidth: 140 }
-                        Label { text: "文件总数"; font.bold: true; color: Theme.muted; Layout.preferredWidth: 100 }
-                        Label { text: "存储占用"; font.bold: true; color: Theme.muted; Layout.preferredWidth: 100 }
-                        Label { text: "操作管理"; font.bold: true; color: Theme.muted; Layout.preferredWidth: 264; horizontalAlignment: Text.AlignHCenter }
+                        Label { text: "类型/阶段"; font.bold: true; color: Theme.muted; Layout.preferredWidth: root.datasetTypeColumnWidth }
+                        Label { visible: root.showDatasetCount; text: "文件总数"; font.bold: true; color: Theme.muted; Layout.preferredWidth: 100 }
+                        Label { visible: root.showDatasetStorage; text: "存储占用"; font.bold: true; color: Theme.muted; Layout.preferredWidth: 100 }
+                        Label { text: "操作管理"; font.bold: true; color: Theme.muted; Layout.preferredWidth: root.datasetActionColumnWidth; Layout.minimumWidth: root.datasetActionColumnWidth; horizontalAlignment: Text.AlignHCenter }
                     }
                 }
 
@@ -575,7 +582,7 @@ Item {
                             spacing: 10
 
                             RowLayout {
-                                Layout.preferredWidth: 360
+                                Layout.preferredWidth: root.datasetNameColumnWidth
                                 spacing: 8
 
                                 Label {
@@ -583,7 +590,7 @@ Item {
                                     color: Theme.text
                                     font.pixelSize: 14
                                     font.bold: true
-                                    Layout.preferredWidth: modelData.parent_dataset_name ? 180 : 360
+                                    Layout.preferredWidth: modelData.parent_dataset_name ? Math.round(root.datasetNameColumnWidth * 0.55) : root.datasetNameColumnWidth
                                     elide: Text.ElideRight
                                 }
 
@@ -597,18 +604,21 @@ Item {
                                 }
                             }
                             Item { Layout.fillWidth: true } // 弹簧
-                            Label { text: (modelData.type || "图像") + " / " + root.stageLabel(modelData); color: "#4DD0E1"; Layout.preferredWidth: 140; elide: Text.ElideRight }
-                            Label { text: modelData.sampleCount !== undefined ? modelData.sampleCount : "0"; color: "#94A3B8"; Layout.preferredWidth: 100 }
-                            Label { text: modelData.size || "0 MB"; color: "#94A3B8"; Layout.preferredWidth: 100 }
+                            Label { text: (modelData.type || "图像") + " / " + root.stageLabel(modelData); color: "#4DD0E1"; Layout.preferredWidth: root.datasetTypeColumnWidth; elide: Text.ElideRight }
+                            Label { visible: root.showDatasetCount; text: modelData.sampleCount !== undefined ? modelData.sampleCount : "0"; color: "#94A3B8"; Layout.preferredWidth: 100 }
+                            Label { visible: root.showDatasetStorage; text: modelData.size || "0 MB"; color: "#94A3B8"; Layout.preferredWidth: 100 }
 
                             // 操作按钮区
                             RowLayout {
-                                Layout.preferredWidth: 264
+                                Layout.preferredWidth: root.datasetActionColumnWidth
+                                Layout.minimumWidth: root.datasetActionColumnWidth
                                 spacing: 8
 
                                 Button {
                                     text: "查看"
-                                    Layout.preferredWidth: 60
+                                    Layout.preferredWidth: root.datasetActionButtonWidth
+                                    Layout.minimumWidth: root.datasetActionButtonWidth
+                                    Layout.maximumWidth: root.datasetActionButtonWidth
                                     Layout.preferredHeight: 30
                                     background: Rectangle {
                                         color: parent.hovered ? Qt.rgba(29/255, 78/255, 216/255, 0.16) : Qt.rgba(29/255, 78/255, 216/255, 0.08)
@@ -628,7 +638,9 @@ Item {
 
                                 Button {
                                     text: "导出"
-                                    Layout.preferredWidth: 60
+                                    Layout.preferredWidth: root.datasetActionButtonWidth
+                                    Layout.minimumWidth: root.datasetActionButtonWidth
+                                    Layout.maximumWidth: root.datasetActionButtonWidth
                                     Layout.preferredHeight: 30
                                     background: Rectangle {
                                         color: parent.hovered ? "#15803D" : "#16A34A"
@@ -654,7 +666,9 @@ Item {
 
                                 Button {
                                     text: "修改"
-                                    Layout.preferredWidth: 60
+                                    Layout.preferredWidth: root.datasetActionButtonWidth
+                                    Layout.minimumWidth: root.datasetActionButtonWidth
+                                    Layout.maximumWidth: root.datasetActionButtonWidth
                                     Layout.preferredHeight: 30
                                     background: Rectangle {
                                         color: parent.hovered ? "#0369A1" : "#0284C7"
@@ -676,7 +690,9 @@ Item {
 
                                 Button {
                                     text: "删除"
-                                    Layout.preferredWidth: 60
+                                    Layout.preferredWidth: root.datasetActionButtonWidth
+                                    Layout.minimumWidth: root.datasetActionButtonWidth
+                                    Layout.maximumWidth: root.datasetActionButtonWidth
                                     Layout.preferredHeight: 30
                                     background: Rectangle {
                                         color: parent.hovered ? "#BE123C" : "#E11D48"

@@ -8,19 +8,45 @@ from .._compat import slots_dataclass, to_local_isoformat
 
 from ..service_facade import BackendServiceFacade
 from ..errors import NotFoundError, ValidationError
+from ..localization import localize_user_message
+from ..models import Sample
 
 
 def _normalize_error(exc: Exception) -> dict:
     if isinstance(exc, NotFoundError):
-        return {"ok": False, "error_code": "NOT_FOUND", "message": str(exc)}
+        return {"ok": False, "error_code": "NOT_FOUND", "message": localize_user_message(exc, "未找到请求的资源。")}
     if isinstance(exc, ValidationError):
-        return {"ok": False, "error_code": "VALIDATION_ERROR", "message": str(exc)}
-    return {"ok": False, "error_code": "INTERNAL_ERROR", "message": str(exc)}
+        return {"ok": False, "error_code": "VALIDATION_ERROR", "message": localize_user_message(exc, "输入内容不符合要求，请检查后重试。")}
+    return {"ok": False, "error_code": "INTERNAL_ERROR", "message": "软件内部发生错误，请查看日志了解详细信息。"}
 
 
 @slots_dataclass
 class BackendBridge:
     facade: BackendServiceFacade
+
+    def estimate_context_embedding_variants(self, dataset_id: int, parameters: dict) -> dict:
+        try:
+            from plugins.generation.context_embedding_text_augmenter import _clamp_float, _source_variants
+
+            mask_ratio = _clamp_float((parameters or {}).get("mask_ratio", 0.25), 0.0, 1.0)
+            cross_strength = _clamp_float((parameters or {}).get("cross_lingual_strength", 0.35), 0.0, 1.0)
+            style = str((parameters or {}).get("context_style", "natural") or "natural").strip().lower()
+            total = 0
+            sample_count = 0
+            with self.facade.session_factory() as session:
+                samples = session.query(Sample).filter(Sample.dataset_id == dataset_id, Sample.status != "deleted").all()
+                for sample in samples:
+                    try:
+                        text = Path(sample.file_path).read_text(encoding="utf-8", errors="ignore")
+                    except OSError:
+                        continue
+                    if not text:
+                        continue
+                    total += len(_source_variants(text, mask_ratio, cross_strength, style))
+                    sample_count += 1
+            return {"ok": True, "data": {"estimated_max": total, "sample_count": sample_count}}
+        except Exception as exc:
+            return _normalize_error(exc)
 
     def create_dataset(self, name: str, modality: str, description: str = "") -> dict:
         try:
@@ -225,7 +251,7 @@ class BackendBridge:
             with self.facade.session_factory() as session:
                 result = self.facade.task_repository.delete_task(session, task_id)
                 if result is None:
-                    return {"ok": False, "error_code": "NOT_FOUND", "message": f"Task {task_id} not found."}
+                    return {"ok": False, "error_code": "NOT_FOUND", "message": f"未找到任务（ID：{task_id}）。"}
                 session.commit()
                 return {"ok": True, "data": result}
         except Exception as exc:
@@ -239,7 +265,7 @@ class BackendBridge:
             with self.facade.session_factory() as session:
                 task = self.facade.task_repository.update_task_title(session, task_id, clean_title)
                 if task is None:
-                    return {"ok": False, "error_code": "NOT_FOUND", "message": f"Task {task_id} not found."}
+                    return {"ok": False, "error_code": "NOT_FOUND", "message": f"未找到任务（ID：{task_id}）。"}
                 session.commit()
                 return {"ok": True, "data": self.facade.task_repository._serialize_task(task, session=session)}
         except Exception as exc:
@@ -423,7 +449,7 @@ class BackendBridge:
             with self.facade.session_factory() as session:
                 task = self.facade.task_repository.get_task_model(session, task_id)
                 if task is None:
-                    return {"ok": False, "error_code": "NOT_FOUND", "message": f"Task {task_id} not found."}
+                    return {"ok": False, "error_code": "NOT_FOUND", "message": f"未找到任务（ID：{task_id}）。"}
                 if task.task_type != "training":
                     raise ValidationError("仅支持导出训练任务权重。")
 
@@ -504,11 +530,35 @@ class BackendBridge:
                 continue
             self.facade.algorithm_service.create_algorithm(dict(algo))
         self._repair_text_deduplicate_parameters()
+        self._repair_back_translation_language_options()
         self._repair_tabular_cleaning_parameters()
+        self._repair_audio_variant_parameters()
         self._repair_training_validation_rules(existing_map)
         self._repair_wgan_parameter_ranges()
         self._merge_legacy_algorithm_aliases()
         self._seed_default_bindings(DEFAULT_BINDINGS)
+
+
+    def _repair_back_translation_language_options(self) -> None:
+        """将旧数据库中的中间语言代码迁移为中文显示名称。"""
+        from ..models import Algorithm, AlgorithmParameter
+
+        with self.facade.session_factory() as session:
+            algorithm = session.query(Algorithm).filter(
+                Algorithm.key == "generation.text.back_translation"
+            ).first()
+            if algorithm is None:
+                return
+            parameter = session.query(AlgorithmParameter).filter(
+                AlgorithmParameter.algorithm_id == algorithm.id,
+                AlgorithmParameter.name == "intermediate_language",
+            ).first()
+            if parameter is None:
+                return
+            parameter.default_value = "英语"
+            parameter.options_json = ["英语", "日语", "韩语"]
+            parameter.description = "回译时使用的中间语言"
+            session.commit()
 
 
     def _repair_wgan_parameter_ranges(self) -> None:
@@ -605,6 +655,38 @@ class BackendBridge:
                     algorithm.id,
                     seed_parameters[algorithm.key],
 
+                )
+            session.commit()
+
+    def _repair_audio_variant_parameters(self) -> None:
+        """同步使用单源变体上限的音频生成算法参数。"""
+        from ..models import Algorithm
+        from ..seed_data import DEFAULT_ALGORITHMS
+
+        parameter_keys = {
+            "generation.audio.channel_config",
+            "generation.audio.energy_amplitude",
+            "generation.audio.filter_processing",
+            "generation.audio.specaugment",
+            "generation.audio.spatial_acoustics",
+            "generation.audio.timeseries_structure",
+            "generation.audio.tempo_pitch",
+            "generation.audio.quality_distortion",
+            "generation.audio.composite",
+            "generation.audio.spectrum_reconstruction",
+        }
+        seed_parameters = {
+            item["key"]: item.get("parameters", [])
+            for item in DEFAULT_ALGORITHMS
+            if item.get("key") in parameter_keys
+        }
+        with self.facade.session_factory() as session:
+            algorithms = session.query(Algorithm).filter(Algorithm.key.in_(parameter_keys)).all()
+            for algorithm in algorithms:
+                self.facade.algorithm_repository.replace_parameters(
+                    session,
+                    algorithm.id,
+                    seed_parameters[algorithm.key],
                 )
             session.commit()
 

@@ -10,6 +10,7 @@ Pillow
 opencv-python>=4.5.4
 librosa
 soundfile
+imageio-ffmpeg
 mutagen
 torch
 torchvision

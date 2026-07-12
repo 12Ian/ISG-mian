@@ -30,6 +30,7 @@ Item {
 
     property string viewMode: "history"
     property bool isCleaning: false
+    property bool hasActiveCleaningTasks: false
     property bool isCompleted: false
     property int currentCount: 0
     property int totalCount: 0
@@ -651,14 +652,17 @@ Item {
             } else {
                 root.showCleaningFailure(message)
             }
+            backendService.getCleaningTasks(0, "")
         }
 
         function onCleaningTasksUpdated(data) {
             var items = []
             if (data && data.items) items = data.items
             var historyItems = []
+            var hasActiveTasks = false
             for (var i = 0; i < items.length; i++) {
                 var task = items[i]
+                if (task.status === "running" || task.status === "pending") hasActiveTasks = true
                 var sourceName = task.source_dataset_name || ("\u6570\u636e\u96c6#" + (task.source_dataset_id || ""))
                 var targetName = task.target_dataset_name || ""
                 var paramsObj = task.parameters || task.parameters_json || {}
@@ -692,8 +696,13 @@ Item {
                         root.lastFailureTaskId = task.id
                         root.showCleaningFailure(task.error_message || task.progress_message || "\u6e05\u6d17\u4efb\u52a1\u6267\u884c\u5931\u8d25")
                     }
+                    if (task.status === "completed" || task.status === "failed" || task.status === "cancelled" || task.status === "interrupted") {
+                        root.isCleaning = false
+                        root.isCompleted = task.status === "completed"
+                    }
                 }
             }
+            root.hasActiveCleaningTasks = hasActiveTasks
             root.allCleaningHistoryItems = historyItems
             root.applyCleaningHistoryFilter()
         }
@@ -990,7 +999,7 @@ Item {
         id: progressPollTimer
         interval: 1000
         repeat: true
-        running: root.isCleaning && root.currentTaskId > 0
+        running: root.visible && (root.isCleaning || root.hasActiveCleaningTasks)
         onTriggered: {
             backendService.getCleaningTasks(0, "")
         }
@@ -1000,7 +1009,17 @@ Item {
         root.loadCleaningParameterPresets()
         backendService.getDatasets(1, 100, "")
         backendService.getAlgorithms("cleaning", "")
+        root.refreshCleaningHistoryState()
+    }
+
+    onVisibleChanged: {
+        if (visible) root.refreshCleaningHistoryState()
+    }
+
+    function refreshCleaningHistoryState() {
         backendService.getCleaningTasks(0, "")
+        var detailTaskId = root.currentHistoryItem ? Number(root.currentHistoryItem.taskId || 0) : root.currentTaskId
+        if (detailTaskId > 0) backendService.getCleaningSuggestions(detailTaskId, "", 1, 200)
     }
 
     function getCurrentTime() {

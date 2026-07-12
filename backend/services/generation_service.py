@@ -236,7 +236,7 @@ class GenerationService(ServiceBase):
                 )
                 if not result.get("ok", False):
                     error_code = result.get("error_code", "ALGORITHM_RUNTIME_ERROR")
-                    error_message = result.get("message", "Generation plugin failed.")
+                    error_message = "生成任务已取消。" if error_code == "CANCELLED" else result.get("message", "Generation plugin failed.")
                     self.task_manager.fail(task_id, error_code=error_code, error_message=error_message)
                     return {"ok": False, "error_code": error_code, "message": error_message}
 
@@ -339,7 +339,7 @@ class GenerationService(ServiceBase):
                 )
                 if not result.get("ok", False):
                     error_code = result.get("error_code", "ALGORITHM_RUNTIME_ERROR")
-                    error_message = result.get("message", "Generation plugin failed.")
+                    error_message = "生成任务已取消。" if error_code == "CANCELLED" else result.get("message", "Generation plugin failed.")
                     self.task_manager.fail(task_id, error_code=error_code, error_message=error_message)
                     return {"ok": False, "error_code": error_code, "message": error_message}
 
@@ -691,12 +691,20 @@ class GenerationService(ServiceBase):
         return "image" in artifact_types or "generated_samples" in produces or "outputs" in produces
 
     def _serialize_generation_output(self, session, row: GenerationOutput) -> dict:
-        source_sample = session.query(Sample).filter(Sample.id == row.source_sample_id).first()
+        source_sample_id = row.source_sample_id
+        source_sample = session.query(Sample).filter(Sample.id == source_sample_id).first()
+        if source_sample is None:
+            # 兼容旧版插件未写入 source_sample_id 的历史生成记录。
+            original_path = (row.metadata_json or {}).get("original")
+            if original_path:
+                source_sample = session.query(Sample).filter(Sample.file_path == str(original_path)).first()
+                if source_sample is not None:
+                    source_sample_id = source_sample.id
         output_sample = session.query(Sample).filter(Sample.id == row.output_sample_id).first()
         return {
             "id": row.id,
             "task_id": row.task_id,
-            "source_sample_id": row.source_sample_id,
+            "source_sample_id": source_sample_id,
             "output_sample_id": row.output_sample_id,
             "algorithm_id": row.algorithm_id,
             "status": row.status,

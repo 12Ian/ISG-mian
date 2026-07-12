@@ -30,6 +30,7 @@ Item {
 
     property string viewMode: "history"
     property bool isGenerating: false
+    property bool hasActiveGenerationTasks: false
     property bool isCompleted: false
     property int currentCount: 0
     property int totalCount: 1000
@@ -39,6 +40,7 @@ Item {
     property int lastFailureTaskId: 0
     property string generationErrorMessage: ""
     property string generationMode: "independent"
+    property int contextVariantEstimate: -1
 
     property var selectedStrategies: []
     property var generationAlgorithms: []
@@ -319,7 +321,8 @@ Item {
                     maxValue: param.max_value !== undefined ? param.max_value : param.max,
                     options: opts,
                     optionsJson: JSON.stringify(opts),
-                    rangeText: root.parameterRangeText(param)
+                    rangeText: root.parameterRangeText(param),
+                    descriptionText: param.description || ""
                 })
             }
             map[String(algo.id)] = params
@@ -330,19 +333,36 @@ Item {
     function parameterRangeText(param) {
         if (!param) return ""
         var opts = param.options || param.options_json || []
-        if (opts && opts.length > 0) return "可选: " + opts.join(", ")
+        if (opts && opts.length > 0) {
+            var optionLabels = []
+            for (var i = 0; i < opts.length; i++) optionLabels.push(root.parameterOptionLabel(opts[i]))
+            return "可选：" + optionLabels.join(" / ")
+        }
         var minValue = param.min_value !== undefined && param.min_value !== null && param.min_value !== "" ? param.min_value : param.min
         var maxValue = param.max_value !== undefined && param.max_value !== null && param.max_value !== "" ? param.max_value : param.max
         var hasMin = minValue !== undefined && minValue !== null && minValue !== ""
         var hasMax = maxValue !== undefined && maxValue !== null && maxValue !== ""
-        if (hasMin && hasMax) return "范围: " + minValue + " - " + maxValue
-        if (hasMin) return "范围: >= " + minValue
-        if (hasMax) return "范围: <= " + maxValue
+        if (hasMin && hasMax) return "范围：" + minValue + " ～ " + maxValue
+        if (hasMin) return "范围：不小于 " + minValue
+        if (hasMax) return "范围：不大于 " + maxValue
         var ptype = String(param.type || "").toLowerCase()
-        if (ptype === "bool" || ptype === "boolean") return "可选: true, false"
+        if (ptype === "bool" || ptype === "boolean") return "可选：是 / 否"
         if (ptype === "int" || ptype === "integer" || ptype === "float" || ptype === "number") return "数值"
         if (ptype === "string") return "文本"
         return ""
+    }
+
+    function parameterOptionLabel(value) {
+        var text = String(value)
+        var normalized = text.toLowerCase()
+        if (normalized === "sentence") return "句子级"
+        if (normalized === "paragraph") return "段落级"
+        if (normalized === "true") return "是"
+        if (normalized === "false") return "否"
+        if (normalized === "formal") return "正式"
+        if (normalized === "casual") return "口语化"
+        if (normalized === "concise") return "简洁"
+        return text
     }
 
     function normalizeParameterInput(param, value) {
@@ -381,6 +401,34 @@ Item {
                 break
             }
         }
+        contextEstimateTimer.restart()
+    }
+
+    function refreshContextVariantEstimate() {
+        root.contextVariantEstimate = -1
+        var source = root.currentSourceDataset()
+        if (!source || !source.id) return
+        var contextAlgorithmId = 0
+        for (var i = 0; i < root.selectedStrategies.length; i++) {
+            var algo = root.algorithmById(root.selectedStrategies[i])
+            if (algo && String(algo.key || "") === "generation.text.context_embedding") {
+                contextAlgorithmId = Number(algo.id)
+                break
+            }
+        }
+        if (!contextAlgorithmId) return
+        var params = {}
+        var list = root.paramsDataMap[String(contextAlgorithmId)] || []
+        for (var p = 0; p < list.length; p++) params[list[p].n] = list[p].v
+        var result = backendService.estimateContextEmbeddingVariants(source.id, params)
+        if (result && result.status === "success") root.contextVariantEstimate = Number(result.estimated_max || 0)
+    }
+
+    Timer {
+        id: contextEstimateTimer
+        interval: 350
+        repeat: false
+        onTriggered: root.refreshContextVariantEstimate()
     }
 
     function groupGenerationAlgorithms(algorithms) {
@@ -429,6 +477,7 @@ Item {
     }
 
     function selectableAlgorithm(algo) {
+        if (!algo) return false
         return root.generationMode !== "pipeline" || root.algorithmSupportsPipeline(algo)
     }
 
@@ -580,7 +629,9 @@ Item {
                     v: params[item.n] !== undefined ? String(params[item.n]) : item.v,
                     type: item.type,
                     options: item.options,
-                    optionsJson: item.optionsJson
+                    optionsJson: item.optionsJson,
+                    rangeText: item.rangeText,
+                    descriptionText: item.descriptionText
                 }
                 targetList.push(copied)
             }
@@ -735,6 +786,8 @@ Item {
                 ? ((sourceTitle || "\u6e90\u6837\u672c") + "  ->  " + (generatedTitle || "\u751f\u6210\u6837\u672c"))
                 : (sourceTitle || "\u6e90\u6837\u672c")
         previewPlayer.stop()
+        previewLeftPlayer.stop()
+        previewRightPlayer.stop()
         samplePreviewPopup.open()
     }
 
@@ -748,6 +801,33 @@ Item {
             previewPlayer.source = root.previewSource
         }
         samplePreviewPopup.open()
+    }
+
+    function openMonitorAudioPreview(sourceName, generatedName, sourcePath, generatedPath, hasGenerated) {
+        if (!sourcePath) {
+            root.showToast("⚠️ 当前记录没有可播放的音频路径")
+            return
+        }
+        if (root.previewKindForPath(sourcePath) !== "audio"
+                || (hasGenerated && generatedPath && root.previewKindForPath(generatedPath) !== "audio")) {
+            root.showToast("⚠️ 当前文件不是支持的音频格式")
+            return
+        }
+        root.comparisonPreviewMode = !!(hasGenerated && generatedPath)
+        root.previewLeftData = root.previewPayloadWithFallback({}, sourcePath, sourceName || "源样本")
+        root.previewRightData = root.previewPayloadWithFallback({}, generatedPath || "", generatedName || "生成样本")
+        root.previewHasGenerated = root.comparisonPreviewMode
+        root.previewTitle = root.previewHasGenerated
+                ? ((sourceName || "源样本") + "  ->  " + (generatedName || "生成样本"))
+                : (sourceName || "源样本")
+        previewPlayer.stop()
+        previewLeftPlayer.stop()
+        previewRightPlayer.stop()
+        if (root.comparisonPreviewMode) {
+            samplePreviewPopup.open()
+        } else {
+            root.openSinglePreview(root.previewLeftData)
+        }
     }
 
     function computeHasDetailParams(obj) {
@@ -795,6 +875,7 @@ Item {
         function onGenerationStatusUpdated(message, success, progressVal) {
             root.showToast(success ? "✅ " + message : "⚠️ " + message)
             root.progress = progressVal / 100.0
+            root.currentCount = Math.round(root.progress * root.totalCount)
             root.isGenerating = false
             if (success) {
                 root.isCompleted = true
@@ -804,20 +885,30 @@ Item {
             } else {
                 root.showGenerationFailure(message)
             }
+            // 后台线程结束后立即同步历史卡片，避免停留在最后一次轮询进度。
+            backendService.getEnhancementTasks(0, "")
         }
 
         function onEnhancementTasksUpdated(data) {
             var items = []
             if (data && data.items) items = data.items
             var historyItems = []
+            var hasActiveTasks = false
             for (var i = 0; i < items.length; i++) {
                 var task = items[i]
+                if (task.status === "running" || task.status === "pending") hasActiveTasks = true
                 var sourceName = task.source_dataset_name || ("数据集#" + (task.source_dataset_id || ""))
                 var targetName = task.target_dataset_name || ""
                 var paramsObj = task.parameters || task.parameters_json || {}
                 var payloadObj = task.payload || task.payload_json || {}
+                var resultObj = task.result || task.result_json || {}
+                if (typeof resultObj === "string") {
+                    try { resultObj = JSON.parse(resultObj) } catch (e) { resultObj = {} }
+                }
                 var algorithmIds = root.normalizeAlgorithmIds(task)
                 var targetCount = paramsObj.target_count || payloadObj.target_count || 0
+                var hasGeneratedCount = resultObj.generated_count !== undefined && resultObj.generated_count !== null
+                var generatedCount = hasGeneratedCount ? Number(resultObj.generated_count) : 0
                 var algoDesc = root.formatParameters(algorithmIds, paramsObj)
                 var historyItem = {
                     isSelected: false,
@@ -838,13 +929,17 @@ Item {
                     status: task.status || "",
                     progress: task.progress || 0,
                     progressMessage: task.progress_message || "",
+                    generatedCount: generatedCount,
+                    hasGeneratedCount: hasGeneratedCount,
                     errorMessage: task.error_message || ""
                 }
                 historyItems.push(historyItem)
                 if (root.isGenerating && (task.id || 0) === root.currentTaskId) {
                     var pct = task.progress || 0
                     root.progress = pct / 100.0
-                    root.currentCount = Math.floor(root.progress * root.totalCount)
+                    root.currentCount = task.status === "completed" && hasGeneratedCount
+                            ? generatedCount
+                            : Math.round(root.progress * root.totalCount)
                     root.currentTargetDatasetId = task.target_dataset_id || root.currentTargetDatasetId
                     if (targetName) {
                         root.currentTargetDatasetName = targetName
@@ -853,14 +948,24 @@ Item {
                         root.lastFailureTaskId = task.id
                         root.showGenerationFailure(task.error_message || task.progress_message || "生成任务执行失败")
                     }
+                    if (task.status === "completed" || task.status === "failed" || task.status === "cancelled" || task.status === "interrupted") {
+                        root.isGenerating = false
+                        root.isCompleted = task.status === "completed"
+                    }
                 }
             }
+            root.hasActiveGenerationTasks = hasActiveTasks
             root.allGenerationHistoryItems = historyItems
             root.applyGenerationHistoryFilter()
         }
 
         function onAlgorithmsUpdated(algorithms) {
-            if (!algorithms || !algorithms.length) return
+            var source = root.currentSourceDataset()
+            var expectedModality = source ? (source.modality || "") : ""
+            algorithms = (algorithms || []).filter(function(algo) {
+                var modality = algo.modality || ""
+                return modality === expectedModality || modality === "multimodal"
+            })
             var map = {}
             var labelMap = {}
             var algorithmLabelMap = {}
@@ -1217,7 +1322,16 @@ Item {
             function setPreviewData(data, audioPlayer) {
                 payload = data || {}
                 player = audioPlayer
-                if (kind === "audio" && fileSource !== "" && player) player.source = fileSource
+                if (!player) return
+                player.stop()
+                var path = payload.file_path || payload.path || payload.sample_path || ""
+                var resolvedKind = payload.preview_kind || root.previewKindForPath(path)
+                var resolvedSource = path ? root.localFileUrl(path) : ""
+                if (resolvedKind === "audio" && resolvedSource !== "") {
+                    player.source = resolvedSource
+                } else {
+                    player.source = ""
+                }
             }
 
             Image {
@@ -1336,6 +1450,10 @@ Item {
         id: previewPlayer
         autoPlay: false
         audioOutput: previewAudio
+        onErrorOccurred: function(error, errorString) {
+            if (error !== MediaPlayer.NoError)
+                root.showToast("⚠️ 音频播放失败：" + (errorString || "无法打开音频文件"))
+        }
     }
 
     AudioOutput {
@@ -1366,7 +1484,7 @@ Item {
         id: progressPollTimer
         interval: 1000
         repeat: true
-        running: root.isGenerating && root.currentTaskId > 0
+        running: root.visible && (root.isGenerating || root.hasActiveGenerationTasks)
         onTriggered: {
             backendService.getEnhancementTasks(0, "")
         }
@@ -1376,7 +1494,17 @@ Item {
         root.loadGenerationParameterPresets()
         backendService.getDatasets(1, 100, "")
         backendService.getAlgorithms("generation", "")
+        root.refreshGenerationHistoryState()
+    }
+
+    onVisibleChanged: {
+        if (visible) root.refreshGenerationHistoryState()
+    }
+
+    function refreshGenerationHistoryState() {
         backendService.getEnhancementTasks(0, "")
+        var detailTaskId = root.currentHistoryItem ? Number(root.currentHistoryItem.taskId || 0) : root.currentTaskId
+        if (detailTaskId > 0) backendService.getGenerationOutputs(detailTaskId, "", 1, 200)
     }
 
     function getCurrentTime() {
@@ -1968,6 +2096,7 @@ Item {
                                 onCurrentIndexChanged: {
                                     root.selectedStrategies = []
                                     root.loadGenerationAlgorithms()
+                                    contextEstimateTimer.restart()
                                 }
                             }
                         }
@@ -2027,6 +2156,12 @@ Item {
                                 }
                             }
                             Text { text: "条"; color: root.textMuted; font.pixelSize: 12 }
+                            Text {
+                                visible: root.contextVariantEstimate >= 0
+                                text: "建议最多约 " + root.contextVariantEstimate + " 条有效变体"
+                                color: root.contextVariantEstimate > 0 && root.totalCount > root.contextVariantEstimate ? "#F59E0B" : root.primaryColor
+                                font.pixelSize: 11
+                            }
                         }
 
                         Item { Layout.fillWidth: true }
@@ -2047,7 +2182,15 @@ Item {
                                             root.showToast("⚠️ 请先选择可用源数据集")
                                             return
                                         }
-                                        var algoIds = root.selectedStrategies.slice()
+                                        var algoIds = root.selectedStrategies.filter(function(id) {
+                                            return root.selectableAlgorithm(root.algorithmById(id))
+                                        })
+                                        if (algoIds.length === 0) {
+                                            root.selectedStrategies = []
+                                            root.showToast("⚠ 请重新选择与当前数据集类型匹配的算法")
+                                            return
+                                        }
+                                        root.selectedStrategies = algoIds
                                         var algoStr = algoIds.join(",")
                                         var params = root.selectedGenerationParameters()
                                         var taskResult = backendService.createEnhancementTask(source.id, algoStr, params, root.totalCount)
@@ -2170,6 +2313,7 @@ Item {
                                                             if (idx !== -1) arr.splice(idx, 1)
                                                             else arr.push(algoId)
                                                             root.selectedStrategies = arr
+                                                            contextEstimateTimer.restart()
                                                             root.isCompleted = false
                                                             previewModel.clear()
                                                             root.currentCount = 0
@@ -2235,16 +2379,13 @@ Item {
                                                     width: parent.width; spacing: 6
                                                     RowLayout {
                                                         width: parent.width
-                                                        spacing: 8
-                                                        Text { text: modelData.label || modelData.n; color: root.textMuted; font.pixelSize: 12; Layout.fillWidth: true; elide: Text.ElideRight }
                                                         Text {
-                                                            visible: modelData.rangeText !== undefined && modelData.rangeText !== ""
-                                                            text: modelData.rangeText
-                                                            color: root.primaryColor
-                                                            font.pixelSize: 11
-                                                            horizontalAlignment: Text.AlignRight
-                                                            Layout.preferredWidth: 96
-                                                            elide: Text.ElideRight
+                                                            text: modelData.label || modelData.n
+                                                            color: root.textMuted
+                                                            font.pixelSize: 12
+                                                            font.bold: true
+                                                            Layout.fillWidth: true
+                                                            wrapMode: Text.WordWrap
                                                         }
                                                     }
                                                     // 有options → 下拉框
@@ -2290,6 +2431,23 @@ Item {
                                                                 root.setParamValue(selectedAlgoDelegate.selectedAlgoId, modelData.n, text)
                                                             }
                                                         }
+                                                    }
+                                                    Text {
+                                                        visible: (modelData.rangeText !== undefined && modelData.rangeText !== "") ||
+                                                                 (modelData.descriptionText !== undefined && modelData.descriptionText !== "")
+                                                        width: parent.width
+                                                        text: {
+                                                            var parts = []
+                                                            if (modelData.rangeText) parts.push(modelData.rangeText)
+                                                            if (modelData.descriptionText && modelData.descriptionText !== modelData.rangeText)
+                                                                parts.push(modelData.descriptionText)
+                                                            return parts.join(" · ")
+                                                        }
+                                                        color: root.primaryColor
+                                                        opacity: 0.82
+                                                        font.pixelSize: 10
+                                                        lineHeight: 1.2
+                                                        wrapMode: Text.WordWrap
                                                     }
                                                 }
                                             }
@@ -2390,7 +2548,10 @@ Item {
                                         cursorShape: sourceSampleId > 0 ? Qt.PointingHandCursor : Qt.ArrowCursor
                                         onClicked: {
                                             if (sourceSampleId > 0) {
-                                                root.openGenerationPreview(sourceSampleId, hasGenerated ? outputSampleId : 0, sourceName, generatedName, sourcePath, generatedPath)
+                                                if (root.previewKindForPath(generatedPath || sourcePath) === "audio")
+                                                    root.openMonitorAudioPreview(sourceName, generatedName, sourcePath, generatedPath, hasGenerated)
+                                                else
+                                                    root.openGenerationPreview(sourceSampleId, hasGenerated ? outputSampleId : 0, sourceName, generatedName, sourcePath, generatedPath)
                                             }
                                         }
                                     }
@@ -2478,21 +2639,44 @@ Item {
 
                         RowLayout {
                             Layout.fillWidth: true
-                            Layout.preferredHeight: 46
-                            Layout.maximumHeight: 46
-                            spacing: 15
+                            Layout.preferredHeight: 44
+                            Layout.maximumHeight: 44
+                            spacing: 10
                             Rectangle {
                                 Layout.fillWidth: true
                                 Layout.fillHeight: true
-                                radius: 6
+                                Layout.minimumWidth: 150
+                                radius: 10
                                 color: root.isCompleted ? root.primaryColor : root.bgDark
-                                border.color: root.isCompleted ? "transparent" : root.borderColor
+                                border.color: root.isCompleted ? Qt.lighter(root.primaryColor, 1.12) : root.borderColor
                                 border.width: 1
                                 opacity: root.isCompleted ? 1.0 : 0.4
                                 RowLayout {
-                                    anchors.centerIn: parent; spacing: 10
-                                    Text { text: "💾"; color: root.isCompleted ? "white" : root.textMuted; font.pixelSize: 16 }
-                                    Text { text: "完成扩增并打包入库"; color: root.isCompleted ? "white" : root.textMuted; font.bold: true; font.pixelSize: 14 }
+                                    anchors.centerIn: parent
+                                    spacing: 8
+
+                                    Rectangle {
+                                        Layout.preferredWidth: 22
+                                        Layout.preferredHeight: 22
+                                        radius: 11
+                                        color: root.isCompleted ? Qt.rgba(1, 1, 1, 0.18) : "transparent"
+                                        border.color: root.isCompleted ? Qt.rgba(1, 1, 1, 0.45) : root.textMuted
+                                        border.width: 1
+                                        Text {
+                                            anchors.centerIn: parent
+                                            text: "✓"
+                                            color: root.isCompleted ? "white" : root.textMuted
+                                            font.bold: true
+                                            font.pixelSize: 13
+                                        }
+                                    }
+
+                                    Text {
+                                        text: "保存并入库"
+                                        color: root.isCompleted ? "white" : root.textMuted
+                                        font.bold: true
+                                        font.pixelSize: 14
+                                    }
                                 }
                                 MouseArea {
                                     anchors.fill: parent
@@ -2506,9 +2690,10 @@ Item {
                             }
 
                             Rectangle {
-                                Layout.preferredWidth: 150
+                                Layout.preferredWidth: Math.min(130, Math.max(104, parent.width * 0.28))
+                                Layout.minimumWidth: 104
                                 Layout.fillHeight: true
-                                radius: 6
+                                radius: 10
                                 color: root.isCompleted ? Qt.rgba(245, 63, 63, 0.1) : root.bgDark
                                 border.color: root.isCompleted ? root.dangerColor : root.borderColor
                                 border.width: 1
@@ -2850,6 +3035,16 @@ Item {
                                 Layout.fillWidth: true
                                 Label { text: "目标数量: "; color: root.textMuted; font.pixelSize: 13 }
                                 Label { text: model.targetCount || "-"; color: root.successColor; font.bold: true; font.family: "Courier"; font.pixelSize: 13 }
+                                Rectangle { Layout.leftMargin: 14; width: 1; height: 12; color: root.borderColor }
+                                Label { text: "实际数量: "; color: root.textMuted; font.pixelSize: 13 }
+                                Label {
+                                    text: model.hasGeneratedCount ? model.generatedCount : "-"
+                                    color: root.primaryColor
+                                    font.bold: true
+                                    font.family: "Courier"
+                                    font.pixelSize: 13
+                                }
+                                Item { Layout.fillWidth: true }
                             }
 
                             RowLayout {
@@ -3147,7 +3342,10 @@ Item {
                                     cursorShape: sourceSampleId > 0 ? Qt.PointingHandCursor : Qt.ArrowCursor
                                     onClicked: {
                                         if (sourceSampleId > 0) {
-                                            root.openGenerationPreview(sourceSampleId, hasGenerated ? outputSampleId : 0, sourceName, generatedName, sourcePath, generatedPath)
+                                            if (root.previewKindForPath(generatedPath || sourcePath) === "audio")
+                                                root.openMonitorAudioPreview(sourceName, generatedName, sourcePath, generatedPath, hasGenerated)
+                                            else
+                                                root.openGenerationPreview(sourceSampleId, hasGenerated ? outputSampleId : 0, sourceName, generatedName, sourcePath, generatedPath)
                                         }
                                     }
                                 }

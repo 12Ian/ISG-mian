@@ -1343,7 +1343,7 @@ Item {
                             var m = editingParamsModel.get(i)
                             var ptype = root.normalizeParamType(m.type)
                             if (!root.validateParamValue(m.v, ptype)) {
-                                root.showToast("Invalid default value for " + (m.n || "parameter") + ": expected " + ptype)
+                                root.showToast("参数“" + (m.n || "未命名参数") + "”的默认值无效，应为 " + ptype + " 类型")
                                 return
                             }
                             pArray.push({

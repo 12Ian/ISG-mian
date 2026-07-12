@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
+from utils.audio_io import load_audio
+
 SUPPORTED_EXTENSIONS = {".wav", ".mp3", ".flac", ".ogg", ".m4a"}
 
 
@@ -48,6 +50,7 @@ def run(payload: dict, context) -> dict:
     output_dir.mkdir(parents=True, exist_ok=True)
     target_count = max(1, int(payload.get("target_count") or len(samples)))
     outputs = []
+    read_errors = []
 
     for idx in range(target_count):
         if context.is_cancel_requested():
@@ -64,10 +67,13 @@ def run(payload: dict, context) -> dict:
                 "message": f"Cannot read source sample: {sample_path}",
             }
 
-        result = _inject_environment_noise(sample_path, output_dir, idx, noise_type, target_snr)
+        result, error = _inject_environment_noise(sample_path, output_dir, idx, noise_type, target_snr)
+        if error:
+            read_errors.append(error)
         if result:
             outputs.append(
                 {
+                    "source_sample_id": sample.get("id"),
                     "output_path": result["path"],
                     "relative_path": Path(result["path"]).name,
                     "metadata": {
@@ -78,7 +84,9 @@ def run(payload: dict, context) -> dict:
                 }
             )
 
-    return {"ok": True, "outputs": outputs, "logs": []}
+    if not outputs and read_errors:
+        return {"ok": False, "error_code": "AUDIO_READ_FAILED", "message": read_errors[0], "outputs": [], "logs": read_errors}
+    return {"ok": True, "outputs": outputs, "logs": read_errors}
 
 
 def _resolve_path(sample: dict) -> Optional[Path]:
@@ -91,16 +99,16 @@ def _resolve_path(sample: dict) -> Optional[Path]:
     return None
 
 
-def _inject_environment_noise(path: Path, output_dir: Path, idx: int, noise_type: str, snr_db: float) -> Optional[dict]:
+def _inject_environment_noise(path: Path, output_dir: Path, idx: int, noise_type: str, snr_db: float) -> tuple[Optional[dict], Optional[str]]:
     try:
         import numpy as np
         import librosa
         import soundfile as sf
     except Exception:
-        return None
+        return None, "缺少音频处理依赖"
 
     try:
-        y, sr = librosa.load(str(path), sr=None, mono=False)
+        y, sr = load_audio(path, mono=False)
         if y.ndim == 1:
             y = y[np.newaxis, :]
         T = y.shape[-1]
@@ -133,9 +141,9 @@ def _inject_environment_noise(path: Path, output_dir: Path, idx: int, noise_type
 
         out_path = output_dir / f"env_noise_{idx}_{path.name}"
         sf.write(str(out_path), y_save, int(sr))
-        return {"path": str(out_path)}
-    except Exception:
-        return None
+        return {"path": str(out_path)}, None
+    except Exception as exc:
+        return None, str(exc)
 
 
 def _match_length(y: "np.ndarray", target_len: int) -> "np.ndarray":

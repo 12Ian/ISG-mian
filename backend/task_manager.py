@@ -6,6 +6,7 @@ from ._compat import slots_dataclass
 from pathlib import Path
 
 from .errors import NotFoundError, ValidationError
+from .localization import localize_user_message
 
 
 @slots_dataclass
@@ -51,7 +52,7 @@ class TaskManager:
                 session.commit()
                 return {"ok": True, "data": {"task_id": task_id, "status": "cancelled"}}
 
-            task.progress_message = "Cancellation requested"
+            task.progress_message = "已请求取消任务"
             self.task_repository.add_task_log(session, task_id=task_id, level="warning", message="Cancellation requested")
             session.commit()
         return {"ok": True, "data": {"task_id": task_id, "status": "cancellation_requested"}}
@@ -116,6 +117,7 @@ class TaskManager:
             session.commit()
 
     def fail(self, task_id: int, *, error_code: str, error_message: str) -> None:
+        localized_error = localize_user_message(error_message, "任务执行失败，请查看日志了解详细信息。")
         with self.session_factory() as session:
             task = self.task_repository.get_task_model(session, task_id)
             if task is None:
@@ -124,9 +126,9 @@ class TaskManager:
                 raise ValidationError(f"Task {task_id} cannot fail from status '{task.status}'.")
             task.status = "cancelled" if error_code == "CANCELLED" else "failed"
             task.error_code = error_code
-            task.error_message = error_message
+            task.error_message = localized_error
             task.finished_at = datetime.now(timezone.utc)
-            self.task_repository.add_task_log(session, task_id=task_id, level="error" if error_code != "CANCELLED" else "warning", message=error_message, payload_json={"error_code": error_code})
+            self.task_repository.add_task_log(session, task_id=task_id, level="error" if error_code != "CANCELLED" else "warning", message=error_message, payload_json={"error_code": error_code, "localized_message": localized_error})
             session.commit()
 
     def build_context(self, task_id: int) -> TaskPluginContext:

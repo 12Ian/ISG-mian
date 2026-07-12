@@ -20,6 +20,7 @@ from backend import (
 )
 from backend.database import Base
 from backend.qt.bridge import BackendBridge
+from backend.localization import localize_user_message
 
 
 GENERATION_PARAMETER_PRESETS_KEY = "generation.parameter_presets"
@@ -82,6 +83,10 @@ class BackendService(QObject):
         self._bridge.seed_default_algorithms()
         self._bridge.facade.task_manager.mark_interrupted_tasks()
 
+    @staticmethod
+    def _user_message(message, fallback="操作失败，请查看日志了解详细信息。"):
+        return localize_user_message(message, fallback)
+
 
     def _run_in_background(self, task_id: int, runner, status_signal, success_msg: str):
         def worker():
@@ -90,9 +95,9 @@ class BackendService(QObject):
                 if result.get("ok"):
                     status_signal.emit(success_msg, True)
                 else:
-                    status_signal.emit(result.get("message", "任务执行失败"), False)
+                    status_signal.emit(self._user_message(result.get("message"), "任务执行失败，请查看日志了解详细信息。"), False)
             except Exception as exc:
-                status_signal.emit(str(exc), False)
+                status_signal.emit(self._user_message(exc, "任务执行失败，请查看日志了解详细信息。"), False)
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -103,9 +108,9 @@ class BackendService(QObject):
                 if result.get("ok"):
                     self.generationStatusUpdated.emit("生成任务已完成", True, 100.0)
                 else:
-                    self.generationStatusUpdated.emit(result.get("message", "任务执行失败"), False, 0.0)
+                    self.generationStatusUpdated.emit(self._user_message(result.get("message"), "生成任务执行失败，请查看日志了解详细信息。"), False, 0.0)
             except Exception as exc:
-                self.generationStatusUpdated.emit(str(exc), False, 0.0)
+                self.generationStatusUpdated.emit(self._user_message(exc, "生成任务执行失败，请查看日志了解详细信息。"), False, 0.0)
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -143,7 +148,7 @@ class BackendService(QObject):
                 result = self._bridge.get_dataset_directory(datasetId, path)
                 self.datasetDirectoryUpdated.emit(result)
             except Exception as exc:
-                self.datasetDirectoryUpdated.emit({"ok": False, "message": str(exc)})
+                self.datasetDirectoryUpdated.emit({"ok": False, "message": self._user_message(exc, "数据集目录加载失败，请查看日志了解详细信息。")})
             finally:
                 self.datasetDirectoryLoading.emit(False)
         threading.Thread(target=worker, daemon=True).start()
@@ -214,11 +219,11 @@ class BackendService(QObject):
             try:
                 result = import_func()
             except Exception as exc:
-                result = {"ok": False, "message": str(exc)}
+                result = {"ok": False, "message": self._user_message(exc, "数据导入失败，请查看日志了解详细信息。")}
             try:
                 self._handle_import_result(result)
             except Exception as exc:
-                self.importStatusUpdated.emit(str(exc), False)
+                self.importStatusUpdated.emit(self._user_message(exc, "数据导入失败，请查看日志了解详细信息。"), False)
 
         threading.Thread(target=run_import, daemon=True).start()
         return {"status": "started", "message": "导入任务已开始"}
@@ -342,6 +347,14 @@ class BackendService(QObject):
         if not result.get("ok"):
             return {"status": "error", "message": result.get("message", "未知错误")}
         return {"status": "success", "id": result["data"]["task_id"], "task_status": result["data"]["status"], "target_dataset_id": result["data"].get("target_dataset_id", 0), "target_dataset_name": result["data"].get("target_dataset_name", "")}
+
+    @Slot(int, dict, result=dict)
+    def estimateContextEmbeddingVariants(self, datasetId: int, parameters: dict) -> dict:
+        result = self._bridge.estimate_context_embedding_variants(datasetId, parameters or {})
+        if not result.get("ok"):
+            return {"status": "error", "message": self._user_message(result.get("message"), "暂时无法估算有效变体数量。")}
+        data = result.get("data", {})
+        return {"status": "success", "estimated_max": data.get("estimated_max", 0), "sample_count": data.get("sample_count", 0)}
 
     @Slot(int, str)
     def getEnhancementTasks(self, datasetId: int, status: str):
@@ -575,7 +588,7 @@ class BackendService(QObject):
                 else:
                     self.trainingStatusUpdated.emit(result.get("message", "任务执行失败"), False, 0.0)
             except Exception as exc:
-                self.trainingStatusUpdated.emit(str(exc), False, 0.0)
+                self.trainingStatusUpdated.emit(self._user_message(exc, "训练任务执行失败，请查看日志了解详细信息。"), False, 0.0)
         threading.Thread(target=worker, daemon=True).start()
 
     def _cancel_task_in_background(self, task_id: int):

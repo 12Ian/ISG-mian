@@ -133,7 +133,7 @@ class TrainingService(ServiceBase):
             )
             if not result.get("ok", False):
                 error_code = result.get("error_code", "ALGORITHM_RUNTIME_ERROR")
-                error_message = result.get("message", "Training plugin failed.")
+                error_message = "训练任务已取消。" if error_code == "CANCELLED" else result.get("message", "Training plugin failed.")
                 self.task_manager.fail(task_id, error_code=error_code, error_message=error_message)
                 return {"ok": False, "error_code": error_code, "message": error_message}
 

@@ -291,8 +291,12 @@ Item {
     }
 
     function historyHasTask(taskId) {
+        return historyIndexForTask(taskId) >= 0
+    }
+
+    function historyIndexForTask(taskId) {
         var id = Number(taskId || 0)
-        if (id <= 0) return false
+        if (id <= 0) return -1
         for (var i = 0; i < evalHistoryModel.count; i++) {
             var item = evalHistoryModel.get(i)
             var ids = []
@@ -302,10 +306,10 @@ Item {
                 ids = []
             }
             for (var j = 0; j < ids.length; j++) {
-                if (Number(ids[j]) === id) return true
+                if (Number(ids[j]) === id) return i
             }
         }
-        return false
+        return -1
     }
 
     function buildAutoHistoryEntry(task) {
@@ -409,9 +413,29 @@ Item {
     function syncHistoryFromTrainingTask(task) {
         if (!task) return
         var status = task.status || ""
+        var historyIndex = root.historyIndexForTask(task.id || 0)
+        if (historyIndex >= 0) {
+            var resultJson = task.result || {}
+            var artifactCount = resultJson.artifacts ? resultJson.artifacts.length : 0
+            evalHistoryModel.setProperty(historyIndex, "trainStatus", trainingStatusLabel(status))
+            evalHistoryModel.setProperty(historyIndex, "evalReport",
+                status === "completed" ? ("训练完成，模型产物 " + artifactCount + " 个") : ("训练" + trainingStatusLabel(status)))
+            return
+        }
         if (status !== "completed" && status !== "failed" && status !== "interrupted" && status !== "cancelled") return
-        if (historyHasTask(task.id || 0)) return
         evalHistoryModel.insert(0, buildAutoHistoryEntry(task))
+    }
+
+    function syncHistoryFromEvaluationTask(task) {
+        if (!task) return
+        var historyIndex = root.historyIndexForTask(task.id || 0)
+        if (historyIndex < 0) return
+        var status = task.status || ""
+        var label = status === "completed" ? "已完成" : status === "running" ? "评估中" :
+                    status === "failed" ? "失败" : (status === "cancelled" || status === "interrupted") ? "中断" : "待评估"
+        evalHistoryModel.setProperty(historyIndex, "trainStatus", label)
+        evalHistoryModel.setProperty(historyIndex, "evalReport",
+            status === "completed" ? "评估已完成" : status === "failed" ? (task.error_message || "评估失败") : label)
     }
 
     function upsertTrainingTask(task) {
@@ -672,8 +696,10 @@ Item {
         }
 
         function onEvaluationTasksUpdated(data) {
+            var allItems = data && data.items ? data.items : []
+            for (var ai = 0; ai < allItems.length; ai++) root.syncHistoryFromEvaluationTask(allItems[ai])
             if (root.isEvaluating && root.pendingEvalTaskIds.length > 0) {
-                var items = data.items || []
+                var items = allItems
                 for (var ti = 0; ti < items.length; ti++) {
                     var it = items[ti]
                     var taskId = it.id || 0
@@ -777,7 +803,10 @@ Item {
         backendService.getScenarios()
         backendService.getDatasets(1, 100, "")
         backendService.getAlgorithms("", "")
-        root.restoreTrainingTasksFromBackend()
+        root.refreshEvaluationHistoryState()
+    }
+    onVisibleChanged: {
+        if (visible) root.refreshEvaluationHistoryState()
     }
     Component.onDestruction: {
         root.saveToAppState()
@@ -850,6 +879,16 @@ Item {
         // 场景加载完成后，以数据库状态同步训练队列
         if (scenarioModel.count === 0) return
         backendService.getTrainingTasks(0, "")
+    }
+
+    function refreshEvaluationHistoryState() {
+        if (!root.hasBackendService()) return
+        backendService.getTrainingTasks(0, "")
+        backendService.getEvaluationTasks("")
+        var ids = root.pendingEvalTaskIds.slice()
+        for (var i = 0; i < ids.length; i++) {
+            if (Number(ids[i]) > 0) backendService.getEvaluationResults(Number(ids[i]))
+        }
     }
 
     // ================= Toast =================
@@ -941,7 +980,7 @@ Item {
                     background: Rectangle { color: root.primaryColor; radius: 4 }
                     contentItem: Text { text: parent.text; color: "black"; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                     onClicked: {
-                        var dsSet = {}; var algoSet = {}; var detailsArr = []; var scenarioName = ""
+                        var dsSet = {}; var algoSet = {}; var detailsArr = []; var scenarioName = ""; var savedTaskIds = []
                         var headers = root.evalMetricHeaders || []
                         var sourceModel = activeEvalSourceModel.count > 0 ? activeEvalSourceModel : taskQueueModel
                         for (var i = 0; i < sourceModel.count; i++) {
@@ -952,6 +991,7 @@ Item {
                             var detail = {dataset: t.dataset, algo: t.algo}
                             if (t.checkpointName) detail.checkpoint = t.checkpointName
                             var evalTaskId = t.evalTaskId || 0
+                            if (evalTaskId > 0 && savedTaskIds.indexOf(evalTaskId) < 0) savedTaskIds.push(evalTaskId)
                             for (var hj = 0; hj < evalResultModel.count; hj++) {
                                 var r = evalResultModel.get(hj)
                                 if (r.taskId === evalTaskId) {
@@ -977,7 +1017,7 @@ Item {
                             evalReport: allDone ? ("共 " + evalResultModel.count + " 条评估结果") : "暂无报告",
                             time: root.getCurrentTime(),
                             detailsJson: JSON.stringify(detailsArr),
-                            taskIdsJson: JSON.stringify([])
+                            taskIdsJson: JSON.stringify(savedTaskIds)
                         })
                         root.saveToAppState()
                         saveProjectPopup.close()

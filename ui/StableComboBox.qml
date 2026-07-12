@@ -44,15 +44,18 @@ ComboBox {
         }
 
         onPaint: {
-            context.clearRect(0, 0, width, height)
-            context.strokeStyle = Theme.text
-            context.lineWidth = 2
-            context.lineCap = "round"
-            context.beginPath()
-            context.moveTo(1, 1)
-            context.lineTo(width / 2, height - 1)
-            context.lineTo(width - 1, 1)
-            context.stroke()
+            var ctx = getContext("2d")
+            if (!ctx)
+                return
+            ctx.clearRect(0, 0, width, height)
+            ctx.strokeStyle = Theme.text
+            ctx.lineWidth = 2
+            ctx.lineCap = "round"
+            ctx.beginPath()
+            ctx.moveTo(1, 1)
+            ctx.lineTo(width / 2, height - 1)
+            ctx.lineTo(width - 1, 1)
+            ctx.stroke()
         }
     }
 

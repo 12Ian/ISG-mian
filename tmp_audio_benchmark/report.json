@@ -1,0 +1,343 @@
+{
+  "sample_count": 3,
+  "samples": [
+    {
+      "id": -1,
+      "sample_path": "C:\\Users\\sdl\\Documents\\GitHub\\ISG-mian\\tmp_audio_benchmark\\inputs\\input_00.wav",
+      "profile": [
+        1.5,
+        16000,
+        1,
+        ".wav"
+      ]
+    },
+    {
+      "id": -2,
+      "sample_path": "C:\\Users\\sdl\\Documents\\GitHub\\ISG-mian\\tmp_audio_benchmark\\inputs\\input_01.wav",
+      "profile": [
+        2.0,
+        22050,
+        1,
+        ".wav"
+      ]
+    },
+    {
+      "id": -3,
+      "sample_path": "C:\\Users\\sdl\\Documents\\GitHub\\ISG-mian\\tmp_audio_benchmark\\inputs\\input_02.wav",
+      "profile": [
+        2.5,
+        44100,
+        2,
+        ".wav"
+      ]
+    }
+  ],
+  "algorithms": [
+    {
+      "key": "generation.audio.noise_injection",
+      "name": "噪声注入增强",
+      "status": "passed",
+      "requested": 3,
+      "generated": 3,
+      "readable": 3,
+      "silent": 0,
+      "clipped": 0,
+      "non_finite": 0,
+      "duration_ratios": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "sample_rates": [
+        16000,
+        22050,
+        44100
+      ],
+      "channels": [
+        1
+      ],
+      "errors": [],
+      "result_error": "",
+      "elapsed_seconds": 0.037
+    },
+    {
+      "key": "generation.audio.spectrum_reconstruction",
+      "name": "频谱重构增强",
+      "status": "failed",
+      "error": "ValueError: operands could not be broadcast together with shapes (1025,47) (1,1025) ",
+      "elapsed_seconds": 16.243
+    },
+    {
+      "key": "generation.audio.tempo_pitch",
+      "name": "语速音调增强",
+      "status": "passed",
+      "requested": 3,
+      "generated": 3,
+      "readable": 3,
+      "silent": 0,
+      "clipped": 0,
+      "non_finite": 0,
+      "duration_ratios": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "sample_rates": [
+        16000,
+        22050,
+        44100
+      ],
+      "channels": [
+        1
+      ],
+      "errors": [],
+      "result_error": "",
+      "elapsed_seconds": 21.292
+    },
+    {
+      "key": "generation.audio.energy_amplitude",
+      "name": "能量幅度增强",
+      "status": "passed",
+      "requested": 3,
+      "generated": 3,
+      "readable": 3,
+      "silent": 0,
+      "clipped": 0,
+      "non_finite": 0,
+      "duration_ratios": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "sample_rates": [
+        16000,
+        22050,
+        44100
+      ],
+      "channels": [
+        1
+      ],
+      "errors": [],
+      "result_error": "",
+      "elapsed_seconds": 0.022
+    },
+    {
+      "key": "generation.audio.timeseries_structure",
+      "name": "时序结构增强",
+      "status": "passed",
+      "requested": 3,
+      "generated": 3,
+      "readable": 3,
+      "silent": 0,
+      "clipped": 0,
+      "non_finite": 0,
+      "duration_ratios": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "sample_rates": [
+        16000,
+        22050,
+        44100
+      ],
+      "channels": [
+        1
+      ],
+      "errors": [],
+      "result_error": "",
+      "elapsed_seconds": 0.023
+    },
+    {
+      "key": "generation.audio.channel_config",
+      "name": "声道配置增强",
+      "status": "passed",
+      "requested": 3,
+      "generated": 3,
+      "readable": 3,
+      "silent": 0,
+      "clipped": 0,
+      "non_finite": 0,
+      "duration_ratios": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "sample_rates": [
+        16000,
+        22050,
+        44100
+      ],
+      "channels": [
+        1,
+        2
+      ],
+      "errors": [],
+      "result_error": "",
+      "elapsed_seconds": 0.021
+    },
+    {
+      "key": "generation.audio.specaugment",
+      "name": "频谱遮挡",
+      "status": "passed",
+      "requested": 3,
+      "generated": 3,
+      "readable": 3,
+      "silent": 0,
+      "clipped": 0,
+      "non_finite": 0,
+      "duration_ratios": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "sample_rates": [
+        16000,
+        22050,
+        44100
+      ],
+      "channels": [
+        1
+      ],
+      "errors": [],
+      "result_error": "",
+      "elapsed_seconds": 2.911
+    },
+    {
+      "key": "generation.audio.filter_processing",
+      "name": "滤波处理增强",
+      "status": "passed",
+      "requested": 3,
+      "generated": 3,
+      "readable": 3,
+      "silent": 0,
+      "clipped": 0,
+      "non_finite": 0,
+      "duration_ratios": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "sample_rates": [
+        16000,
+        22050,
+        44100
+      ],
+      "channels": [
+        1
+      ],
+      "errors": [],
+      "result_error": "",
+      "elapsed_seconds": 0.019
+    },
+    {
+      "key": "generation.audio.environment_noise",
+      "name": "环境噪声增强",
+      "status": "passed",
+      "requested": 3,
+      "generated": 3,
+      "readable": 3,
+      "silent": 0,
+      "clipped": 0,
+      "non_finite": 0,
+      "duration_ratios": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "sample_rates": [
+        16000,
+        22050,
+        44100
+      ],
+      "channels": [
+        1,
+        2
+      ],
+      "errors": [],
+      "result_error": "",
+      "elapsed_seconds": 0.026
+    },
+    {
+      "key": "generation.audio.spatial_acoustics",
+      "name": "空间声学增强",
+      "status": "passed",
+      "requested": 3,
+      "generated": 3,
+      "readable": 3,
+      "silent": 0,
+      "clipped": 1,
+      "non_finite": 0,
+      "duration_ratios": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "sample_rates": [
+        16000,
+        22050,
+        44100
+      ],
+      "channels": [
+        1
+      ],
+      "errors": [],
+      "result_error": "",
+      "elapsed_seconds": 0.045
+    },
+    {
+      "key": "generation.audio.quality_distortion",
+      "name": "音色失真增强",
+      "status": "passed",
+      "requested": 3,
+      "generated": 3,
+      "readable": 3,
+      "silent": 0,
+      "clipped": 0,
+      "non_finite": 0,
+      "duration_ratios": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "sample_rates": [
+        16000,
+        22050,
+        44100
+      ],
+      "channels": [
+        1
+      ],
+      "errors": [],
+      "result_error": "",
+      "elapsed_seconds": 0.027
+    },
+    {
+      "key": "generation.audio.composite",
+      "name": "组合策略增强",
+      "status": "passed",
+      "requested": 3,
+      "generated": 3,
+      "readable": 3,
+      "silent": 0,
+      "clipped": 0,
+      "non_finite": 0,
+      "duration_ratios": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "sample_rates": [
+        16000,
+        22050,
+        44100
+      ],
+      "channels": [
+        1
+      ],
+      "errors": [],
+      "result_error": "",
+      "elapsed_seconds": 0.368
+    }
+  ]
+}
