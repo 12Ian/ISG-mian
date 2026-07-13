@@ -1844,7 +1844,61 @@ Item {
                                 }
                                 Text { text: scenario; color: root.textColor; font.pixelSize: 13; Layout.preferredWidth: 160; elide: Text.ElideRight }
                                 Text { text: dataset; color: root.textColor; font.pixelSize: 13; Layout.fillWidth: true; elide: Text.ElideRight }
-                                Text { text: algo; color: "#4DD0E1"; font.pixelSize: 13; font.bold: true; Layout.preferredWidth: 160; elide: Text.ElideRight }
+                                Item {
+                                    id: algoNameCell
+                                    Layout.preferredWidth: 160
+                                    height: 30
+                                    clip: true
+                                    property bool textOverflow: algoNameText.implicitWidth > width
+
+                                    Text {
+                                        id: algoNameText
+                                        x: 0
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        text: algo
+                                        color: "#4DD0E1"
+                                        font.pixelSize: 13
+                                        font.bold: true
+                                        elide: algoNameMouseArea.containsMouse ? Text.ElideNone : Text.ElideRight
+                                        width: algoNameMouseArea.containsMouse && algoNameCell.textOverflow
+                                               ? implicitWidth : algoNameCell.width
+                                        wrapMode: Text.NoWrap
+                                    }
+
+                                    MouseArea {
+                                        id: algoNameMouseArea
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        acceptedButtons: Qt.NoButton
+                                        propagateComposedEvents: true
+                                        onExited: {
+                                            algoNameScroll.stop()
+                                            algoNameText.x = 0
+                                        }
+                                    }
+
+                                    SequentialAnimation {
+                                        id: algoNameScroll
+                                        running: algoNameMouseArea.containsMouse && algoNameCell.textOverflow
+                                        loops: Animation.Infinite
+                                        PauseAnimation { duration: 450 }
+                                        NumberAnimation {
+                                            target: algoNameText
+                                            property: "x"
+                                            to: -(algoNameText.implicitWidth - algoNameCell.width)
+                                            duration: Math.max(900, (algoNameText.implicitWidth - algoNameCell.width) * 22)
+                                            easing.type: Easing.Linear
+                                        }
+                                        PauseAnimation { duration: 700 }
+                                        NumberAnimation {
+                                            target: algoNameText
+                                            property: "x"
+                                            to: 0
+                                            duration: 250
+                                            easing.type: Easing.OutQuad
+                                        }
+                                    }
+                                }
                                 Item { Layout.preferredWidth: 220; height: 30
                                     Text { text: "待训练"; color: root.textMuted; font.pixelSize: 12; font.bold: true; anchors.verticalCenter: parent.verticalCenter; visible: trainStatus === 0 }
                                     ColumnLayout { anchors.verticalCenter: parent.verticalCenter; visible: trainStatus === 1; anchors.left: parent.left; anchors.right: parent.right
