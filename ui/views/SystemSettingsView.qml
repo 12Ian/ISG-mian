@@ -1,6 +1,7 @@
 import QtQuick 2.15
 import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
+import QtQuick.Dialogs
 import ".."
 
 Item {
@@ -26,6 +27,16 @@ Item {
 
     ListModel { id: settingsOverviewModel }
     ListModel { id: operationLogsModel }
+
+    FolderDialog {
+        id: storageRootDialog
+        title: "选择存储根目录"
+        onAccepted: {
+            var path = selectedFolder.toString()
+            storageRootInput.text = decodeURIComponent(path.replace(/^(file:\/{2,3})/, ""))
+            root.persistSetting("storage.root_dir", storageRootInput.text, "存储目录已保存")
+        }
+    }
 
     HelpIcon {
         anchors.top: parent.top
@@ -262,6 +273,23 @@ Item {
                                 text: root.storageRoot
                                 selectByMouse: true
                             }
+                        }
+                        Button {
+                            text: "修改"
+                            background: Rectangle {
+                                color: parent.hovered ? root.tableHoverBg : root.bgDark
+                                border.color: root.borderColor
+                                border.width: 1
+                                radius: 4
+                            }
+                            contentItem: Text {
+                                text: parent.text
+                                color: root.textColor
+                                font.pixelSize: 13
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                            onClicked: storageRootDialog.open()
                         }
                     }
 

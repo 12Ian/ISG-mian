@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import shutil
 from .._compat import slots_dataclass, to_local_isoformat
+from ..errors import ValidationError
 
 from .base import ServiceBase
 
@@ -59,6 +60,8 @@ class SettingsService(ServiceBase):
             return item.value_json if item else None
 
     def update_setting(self, key: str, value) -> dict:
+        if key == "storage.root_dir":
+            value = self._set_storage_root(value)
         with self.session_factory() as session:
             setting = self.settings_repository.upsert_setting(session, key, value)
             self.log_repository.add(
@@ -84,6 +87,18 @@ class SettingsService(ServiceBase):
                         session, key, spec["value"], spec["description"]
                     )
             session.commit()
+            storage_setting = self.settings_repository.get_setting(session, "storage.root_dir")
+            if storage_setting is not None:
+                self._set_storage_root(storage_setting.value_json)
+
+    def _set_storage_root(self, value) -> str:
+        raw_value = str(value or "").strip()
+        if not raw_value:
+            raise ValidationError("存储根目录不能为空。")
+        try:
+            return str(self.paths.set_storage_root(raw_value))
+        except OSError as exc:
+            raise ValidationError(f"无法使用存储根目录: {exc}") from exc
 
     def list_operation_logs(self, page: int, page_size: int, resource_type: str = "") -> dict:
         with self.session_factory() as session:
