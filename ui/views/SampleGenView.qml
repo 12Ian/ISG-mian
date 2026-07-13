@@ -3066,8 +3066,8 @@ Item {
                             Button {
                                 text: "查看详情"
                                 Layout.preferredWidth: 90; Layout.preferredHeight: 30
-                                background: Rectangle { color: parent.hovered ? Theme.hover : Theme.control; radius: 4; border.color: Theme.border }
-                                contentItem: Text { text: parent.text; color: "#D1D5DB"; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                background: Rectangle { color: parent.hovered ? "#E8F1FF" : Theme.control; radius: 4; border.color: parent.hovered ? Theme.primary : "#9CA3AF" }
+                                contentItem: Text { text: parent.text; color: Theme.text; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                                 onClicked: {
                                     var detailIds = root.parseAlgorithmIds(model.algorithmIdsText || model.algorithmIds || "")
                                     var detailParams = root.parseJsonObject(model.parametersJsonText || model.parameters || {})
@@ -3104,8 +3104,8 @@ Item {
                             Button {
                                 text: "修改名称"
                                 Layout.preferredWidth: 90; Layout.preferredHeight: 30
-                                background: Rectangle { color: parent.hovered ? Theme.hover : Theme.control; radius: 4; border.color: Theme.border }
-                                contentItem: Text { text: parent.text; color: "#D1D5DB"; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                background: Rectangle { color: parent.hovered ? "#E8F1FF" : Theme.control; radius: 4; border.color: parent.hovered ? Theme.primary : "#9CA3AF" }
+                                contentItem: Text { text: parent.text; color: Theme.text; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                                 onClicked: {
                                     root.pendingEditIndex = index
                                     editProjectNameInput.text = model.projectName
