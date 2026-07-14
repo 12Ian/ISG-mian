@@ -275,8 +275,11 @@ def _run_training(payload: dict, context) -> dict:
 def _build_backbone(models, backbone: str):
     if backbone != 'resnet18':
         raise ValueError(f'unsupported backbone: {backbone}')
-    try:
-        from torchvision.models import ResNet18_Weights
-        return models.resnet18(weights=ResNet18_Weights.DEFAULT)
-    except Exception:
-        return models.resnet18(weights=None)
+    import torch
+
+    weights_path = Path(__file__).resolve().parent.parent / 'assets' / 'resnet18-f37072fd.pth'
+    if not weights_path.is_file():
+        raise FileNotFoundError(f'offline ResNet18 weights not found: {weights_path}')
+    model = models.resnet18(weights=None)
+    model.load_state_dict(torch.load(weights_path, map_location='cpu'))
+    return model
