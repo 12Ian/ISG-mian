@@ -13,22 +13,30 @@ from utils.general import LOGGER, colorstr, cv2
 from utils.plots import plot_images, plot_labels, plot_results
 from utils.torch_utils import de_parallel
 
-try:
-    from utils.loggers.clearml.clearml_utils import ClearmlLogger
-except ImportError:
-    ClearmlLogger = None
+ONLINE_LOGGERS_ENABLED = os.getenv("ISG_ENABLE_ONLINE_LOGGERS") == "1"
+TENSORBOARD_ENABLED = os.getenv("ISG_ENABLE_TENSORBOARD") == "1"
+ClearmlLogger = None
+WandbLogger = None
 
-try:
-    from utils.loggers.wandb.wandb_utils import WandbLogger
-except ImportError:
-    WandbLogger = None
+if ONLINE_LOGGERS_ENABLED:
+    try:
+        from utils.loggers.clearml.clearml_utils import ClearmlLogger
+    except Exception:
+        ClearmlLogger = None
 
-LOGGERS = ("csv", "tb", "wandb", "clearml", "comet")  # *.csv, TensorBoard, Weights & Biases, ClearML
+    try:
+        from utils.loggers.wandb.wandb_utils import WandbLogger
+    except Exception:
+        WandbLogger = None
+
+LOGGERS = ("csv",)  # 桌面版默认仅保留 CSV，避免 TensorBoard 间接加载 TensorFlow。
 RANK = int(os.getenv("RANK", -1))
 
 try:
+    if not TENSORBOARD_ENABLED:
+        raise ImportError
     from torch.utils.tensorboard import SummaryWriter
-except ImportError:
+except Exception:
 
     def SummaryWriter(*args):
         """Fall back to SummaryWriter returning None if TensorBoard is not installed."""
@@ -36,6 +44,8 @@ except ImportError:
 
 
 try:
+    if not ONLINE_LOGGERS_ENABLED:
+        raise ImportError
     import wandb
 
     assert hasattr(wandb, "__version__")  # verify package import not local dir
@@ -46,18 +56,20 @@ try:
             wandb_login_success = False
         if not wandb_login_success:
             wandb = None
-except (ImportError, AssertionError):
+except Exception:
     wandb = None
 
 try:
+    if not ONLINE_LOGGERS_ENABLED:
+        raise ImportError
     import clearml
 
     assert hasattr(clearml, "__version__")  # verify package import not local dir
-except (ImportError, AssertionError):
+except Exception:
     clearml = None
 
 try:
-    if RANK in {0, -1}:
+    if ONLINE_LOGGERS_ENABLED and RANK in {0, -1}:
         import comet_ml
 
         assert hasattr(comet_ml, "__version__")  # verify package import not local dir
@@ -65,7 +77,7 @@ try:
 
     else:
         comet_ml = None
-except (ImportError, AssertionError):
+except Exception:
     comet_ml = None
 
 
@@ -113,11 +125,12 @@ class Loggers:
         for k in LOGGERS:
             setattr(self, k, None)  # init empty logger dictionary
         self.csv = True  # always log to csv
+        self.tb = None
         self.ndjson_console = "ndjson_console" in self.include  # log ndjson to console
         self.ndjson_file = "ndjson_file" in self.include  # log ndjson to file
 
         # Messages
-        if not comet_ml:
+        if ONLINE_LOGGERS_ENABLED and not comet_ml:
             prefix = colorstr("Comet: ")
             s = f"{prefix}run 'pip install comet_ml' to automatically track and visualize YOLOv5 🚀 runs in Comet"
             self.logger.info(s)

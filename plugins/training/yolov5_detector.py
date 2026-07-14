@@ -10,6 +10,8 @@ import os, sys, shutil, json, yaml
 
 
 _YOLOV5_ROOT = Path(__file__).resolve().parent.parent / "detection" / "yolov5_core"
+os.environ.setdefault("NO_ALBUMENTATIONS_UPDATE", "1")
+os.environ.setdefault("YOLO_OFFLINE", "true")
 
 PARAMETERS = [
     {
@@ -19,8 +21,8 @@ PARAMETERS = [
         "default": "yolov5n.pt",
         "min": None,
         "max": None,
-        "options": ["yolov5n.pt", "yolov5s.pt", "yolov5m.pt", "yolov5l.pt", "yolov5x.pt", ""],
-        "description": "预训练权重文件 (yolov5n/s/m/l/x.pt，空字符串=从头训练)",
+        "options": ["yolov5n.pt", ""],
+        "description": "内置 yolov5n.pt；空字符串表示从头训练",
         "required": False,
     },
     {
@@ -116,6 +118,12 @@ def run(payload: dict, context) -> dict:
 
 
 def _run_training(payload: dict, context) -> dict:
+    # PyInstaller 无控制台模式下标准输出流为 None，tqdm 写入进度时会直接崩溃。
+    if sys.stdout is None:
+        sys.stdout = open(os.devnull, "w", encoding="utf-8")
+    if sys.stderr is None:
+        sys.stderr = open(os.devnull, "w", encoding="utf-8")
+
     params = payload.get("parameters", {}) or {}
     inp = payload.get("input", {})
     out_dir = Path(payload["output"]["output_dir"])
@@ -125,7 +133,8 @@ def _run_training(payload: dict, context) -> dict:
     batch_size = int(params.get("batch_size", 16))
     img_size = int(params.get("img_size", 640))
     device = str(params.get("device", "") or "")
-    weights = str(params.get("weights", "yolov5n.pt") or "yolov5n.pt")
+    weights_value = params.get("weights", "yolov5n.pt")
+    weights = "yolov5n.pt" if weights_value is None else str(weights_value)
     model_cfg = str(params.get("model_yaml", "models/yolov5n.yaml") or "models/yolov5n.yaml")
     train_ratio = float(params.get("train_ratio", 0.7))
     val_ratio = float(params.get("val_ratio", 0.15))
@@ -183,8 +192,13 @@ def _run_training(payload: dict, context) -> dict:
         yaml.dump(yaml_data, f)
 
     # 权重和模型配置路径
-    weights_path = _YOLOV5_ROOT / weights
-    weights_arg = str(weights_path) if weights_path.is_file() else weights
+    weights_arg = _resolve_weights_path(weights)
+    if weights and not Path(weights_arg).is_file():
+        return {
+            "ok": False,
+            "error_code": "OFFLINE_WEIGHT_MISSING",
+            "message": f"离线权重不存在: {weights}。请选择内置 yolov5n.pt 或从头训练。",
+        }
     model_cfg_path = _YOLOV5_ROOT / model_cfg
     model_cfg_arg = str(model_cfg_path) if model_cfg_path.is_file() else ""
 
@@ -280,6 +294,27 @@ def _parse_labels(raw_labels):
     if not isinstance(raw_labels, list):
         return []
     return [l for l in raw_labels if isinstance(l, dict)]
+
+
+def _resolve_weights_path(weights: str) -> str:
+    """优先使用应用内置权重，避免安装目录中的残缺同名下载文件。"""
+    requested = Path(weights).expanduser()
+    if requested.is_absolute():
+        return str(requested)
+
+    candidates = [
+        _YOLOV5_ROOT / requested,
+        _YOLOV5_ROOT.parents[2] / requested,
+    ]
+    bundle_root = getattr(sys, "_MEIPASS", None)
+    if bundle_root:
+        candidates.append(Path(bundle_root) / requested)
+    candidates.append(Path.cwd() / requested)
+
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate.resolve())
+    return weights
 
 
 def _split_train_val_test(samples, train_ratio, val_ratio):

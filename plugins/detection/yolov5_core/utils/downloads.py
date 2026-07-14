@@ -84,49 +84,8 @@ def safe_download(file, url, url2=None, min_bytes=1e0, error_msg=""):
 
 
 def attempt_download(file, repo="ultralytics/yolov5", release="v7.0"):
-    """Download a file from GitHub release assets or via direct URL if not found locally."""
-    from utils.general import LOGGER
-
-    def github_assets(repository, version="latest"):
-        """Fetches GitHub repository release tag and asset names using the GitHub API."""
-        if version != "latest":
-            version = f"tags/{version}"  # i.e. tags/v7.0
-        response = requests.get(f"https://api.github.com/repos/{repository}/releases/{version}").json()  # github api
-        return response["tag_name"], [x["name"] for x in response["assets"]]  # tag, assets
-
+    """Resolve a local model file without attempting runtime downloads."""
     file = Path(str(file).strip().replace("'", ""))
     if not file.exists():
-        # URL specified
-        name = Path(urllib.parse.unquote(str(file))).name  # decode '%2F' to '/' etc.
-        if str(file).startswith(("http:/", "https:/")):  # download
-            url = str(file).replace(":/", "://")  # Pathlib turns :// -> :/
-            file = name.split("?")[0]  # parse authentication https://url.com/file.txt?auth...
-            if Path(file).is_file():
-                LOGGER.info(f"Found {url} locally at {file}")  # file already exists
-            else:
-                safe_download(file=file, url=url, min_bytes=1e5)
-            return file
-
-        # GitHub assets
-        assets = [f"yolov5{size}{suffix}.pt" for size in "nsmlx" for suffix in ("", "6", "-cls", "-seg")]  # default
-        try:
-            tag, assets = github_assets(repo, release)
-        except Exception:
-            try:
-                tag, assets = github_assets(repo)  # latest release
-            except Exception:
-                try:
-                    tag = subprocess.check_output("git tag", shell=True, stderr=subprocess.STDOUT).decode().split()[-1]
-                except Exception:
-                    tag = release
-
-        if name in assets:
-            file.parent.mkdir(parents=True, exist_ok=True)  # make parent dir (if required)
-            safe_download(
-                file,
-                url=f"https://github.com/{repo}/releases/download/{tag}/{name}",
-                min_bytes=1e5,
-                error_msg=f"{file} missing, try downloading from https://github.com/{repo}/releases/{tag}",
-            )
-
+        raise FileNotFoundError(f"Offline model file not found: {file}")
     return str(file)

@@ -25,10 +25,13 @@ from copy import deepcopy
 from datetime import datetime, timedelta
 from pathlib import Path
 
-try:
-    import comet_ml  # must be imported before torch (if installed)
-except ImportError:
-    comet_ml = None
+# 本地桌面训练默认不启用在线实验跟踪，避免可选服务导入 TensorFlow 等无关依赖。
+comet_ml = None
+if os.getenv("ISG_ENABLE_ONLINE_LOGGERS") == "1":
+    try:
+        import comet_ml  # must be imported before torch (if installed)
+    except Exception:
+        comet_ml = None
 
 import numpy as np
 import torch
@@ -389,7 +392,12 @@ def train(hyp, opt, device, callbacks):
         pbar = enumerate(train_loader)
         LOGGER.info(("\n" + "%11s" * 7) % ("Epoch", "GPU_mem", "box_loss", "obj_loss", "cls_loss", "Instances", "Size"))
         if RANK in {-1, 0}:
-            pbar = tqdm(pbar, total=nb, bar_format=TQDM_BAR_FORMAT)  # progress bar
+            pbar = tqdm(
+                pbar,
+                total=nb,
+                bar_format=TQDM_BAR_FORMAT,
+                disable=getattr(sys, "frozen", False),
+            )  # progress bar
         optimizer.zero_grad()
         for i, (imgs, targets, paths, _) in pbar:  # batch -------------------------------------------------------------
             callbacks.run("on_train_batch_start")
@@ -640,7 +648,9 @@ def main(opt, callbacks=Callbacks()):
     if RANK in {-1, 0}:
         print_args(vars(opt))
         check_git_status()
-        check_requirements(ROOT / "requirements.txt")
+        # 冻结程序已在构建阶段验证依赖，运行时不能通过 sys.executable 再调用 pip。
+        if not getattr(sys, "frozen", False):
+            check_requirements(ROOT / "requirements.txt")
 
     # Resume (from specified or most recent last.pt)
     if opt.resume and not check_comet_resume(opt) and not opt.evolve:

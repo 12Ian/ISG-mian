@@ -22,16 +22,13 @@ import torch.nn as nn
 from PIL import Image
 from torch.cuda import amp
 
-# Import 'ultralytics' package or install if missing
+# Import the bundled 'ultralytics' package without runtime installation.
 try:
     import ultralytics
 
     assert hasattr(ultralytics, "__version__")  # verify package is not directory
-except (ImportError, AssertionError):
-    import os
-
-    os.system("pip install -U ultralytics")
-    import ultralytics
+except (ImportError, AssertionError) as exc:
+    raise ImportError("The bundled ultralytics package is required for offline YOLOv5 operation") from exc
 
 from ultralytics.utils.plotting import Annotator, colors, save_one_box
 

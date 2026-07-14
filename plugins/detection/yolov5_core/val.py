@@ -321,7 +321,12 @@ def run(
     loss = torch.zeros(3, device=device)
     jdict, stats, ap, ap_class = [], [], [], []
     callbacks.run("on_val_start")
-    pbar = tqdm(dataloader, desc=s, bar_format=TQDM_BAR_FORMAT)  # progress bar
+    pbar = tqdm(
+        dataloader,
+        desc=s,
+        bar_format=TQDM_BAR_FORMAT,
+        disable=getattr(sys, "frozen", False),
+    )  # progress bar
     for batch_i, (im, targets, paths, shapes) in enumerate(pbar):
         callbacks.run("on_val_batch_start")
         with dt[0]:
@@ -559,7 +564,9 @@ def main(opt):
         $ python val.py --weights yolov5s.pt --data coco128.yaml --img 640
         ```
     """
-    check_requirements(ROOT / "requirements.txt", exclude=("tensorboard", "thop"))
+    # 冻结程序没有独立 pip 解释器，依赖完整性由打包验收保证。
+    if not getattr(sys, "frozen", False):
+        check_requirements(ROOT / "requirements.txt", exclude=("tensorboard", "thop"))
 
     if opt.task in ("train", "val", "test"):  # run normally
         if opt.conf_thres > 0.001:  # https://github.com/ultralytics/yolov5/issues/1466

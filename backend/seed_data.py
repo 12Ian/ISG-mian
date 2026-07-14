@@ -2687,7 +2687,7 @@ _DEFAULT_ALGORITHMS = (
                 "type": "string",
                 "required": False,
                 "default_value": "yolov5n.pt",
-                "description": "预训练权重文件 (yolov5n/s/m/l/x.pt)",
+                "description": "内置 yolov5n.pt；留空表示从头训练",
             },
             {
                 "name": "model_yaml",

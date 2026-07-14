@@ -13,6 +13,7 @@ import os
 import platform
 import random
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -35,14 +36,13 @@ import torch
 import torchvision
 import yaml
 
-# Import 'ultralytics' package or install if missing
+# Import the bundled 'ultralytics' package without runtime installation.
 try:
     import ultralytics
 
     assert hasattr(ultralytics, "__version__")  # verify package is not directory
-except (ImportError, AssertionError):
-    os.system("pip install -U ultralytics")
-    import ultralytics
+except (ImportError, AssertionError) as exc:
+    raise ImportError("The bundled ultralytics package is required for offline YOLOv5 operation") from exc
 
 from ultralytics.utils.checks import check_requirements
 from ultralytics.utils.patches import torch_load
@@ -58,10 +58,11 @@ RANK = int(os.getenv("RANK", -1))
 # Settings
 NUM_THREADS = min(8, max(1, os.cpu_count() - 1))  # number of YOLOv5 multiprocessing threads
 DATASETS_DIR = Path(os.getenv("YOLOv5_DATASETS_DIR", ROOT.parent / "datasets"))  # global datasets directory
-AUTOINSTALL = str(os.getenv("YOLOv5_AUTOINSTALL", True)).lower() == "true"  # global auto-install mode
+AUTOINSTALL = False  # packaged desktop app must not install dependencies at runtime
 VERBOSE = str(os.getenv("YOLOv5_VERBOSE", True)).lower() == "true"  # global verbose mode
 TQDM_BAR_FORMAT = "{l_bar}{bar:10}{r_bar}"  # tqdm bar format
 FONT = "Arial.ttf"  # https://github.com/ultralytics/assets/releases/download/v0.0.0/Arial.ttf
+OFFLINE_FONT = ROOT / "fonts" / "NotoSansSC-VF.ttf"
 
 torch.set_printoptions(linewidth=320, precision=5, profile="long")
 np.set_printoptions(linewidth=320, formatter={"float_kind": "{:11.5g}".format})  # format short g, %precision=5
@@ -340,20 +341,8 @@ def file_size(path):
 
 
 def check_online():
-    """Checks internet connectivity by attempting to create a connection to "1.1.1.1" on port 443, retries once if the
-    first attempt fails.
-    """
-    import socket
-
-    def run_once():
-        """Checks internet connectivity by attempting to create a connection to "1.1.1.1" on port 443."""
-        try:
-            socket.create_connection(("1.1.1.1", 443), 5)  # check host accessibility
-            return True
-        except OSError:
-            return False
-
-    return run_once() or run_once()  # check twice to increase robustness to intermittent connectivity issues
+    """Returns False because the packaged desktop application operates offline."""
+    return False
 
 
 def git_describe(path=ROOT):
@@ -511,13 +500,14 @@ def check_file(file, suffix=""):
 
 
 def check_font(font=FONT, progress=False):
-    """Ensures specified font exists or downloads it from Ultralytics assets, optionally displaying progress."""
+    """Ensures specified font exists by copying the bundled offline font when needed."""
     font = Path(font)
     file = CONFIG_DIR / font.name
     if not font.exists() and not file.exists():
-        url = f"https://github.com/ultralytics/assets/releases/download/v0.0.0/{font.name}"
-        LOGGER.info(f"Downloading {url} to {file}...")
-        torch.hub.download_url_to_file(url, str(file), progress=progress)
+        if not OFFLINE_FONT.is_file():
+            raise FileNotFoundError(f"Offline font not found: {OFFLINE_FONT}")
+        shutil.copy2(OFFLINE_FONT, file)
+    return font if font.exists() else file
 
 
 def check_dataset(data, autodownload=True):

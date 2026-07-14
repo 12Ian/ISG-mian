@@ -9,6 +9,7 @@ import math
 import os
 import random
 import shutil
+import sys
 import time
 from itertools import repeat
 from multiprocessing.pool import Pool, ThreadPool
@@ -24,7 +25,17 @@ import torchvision
 import yaml
 from PIL import ExifTags, Image, ImageOps
 from torch.utils.data import DataLoader, Dataset, dataloader, distributed
-from tqdm import tqdm
+from tqdm import tqdm as _tqdm
+
+
+_TQDM_DISABLED = getattr(sys, "frozen", False) or sys.stderr is None
+
+
+def tqdm(*args, **kwargs):
+    """冻结版没有控制台，关闭不可见的 tqdm 输出以避免写流异常。"""
+    if _TQDM_DISABLED:
+        kwargs["disable"] = True
+    return _tqdm(*args, **kwargs)
 
 from utils.augmentations import (
     Albumentations,
