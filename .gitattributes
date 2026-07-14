@@ -1,0 +1,2 @@
+plugins/assets/*.pth filter=lfs diff=lfs merge=lfs -text
+plugins/detection/yolov5_core/fonts/*.ttf filter=lfs diff=lfs merge=lfs -text
