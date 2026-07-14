@@ -288,6 +288,20 @@ class DatasetService(ServiceBase):
     def list_datasets(self, page: int, page_size: int, status: str) -> dict:
         return self.get_datasets(page=page, page_size=page_size, status=status)
 
+    def get_all_datasets(self, status: str = "") -> dict:
+        with self.session_factory() as session:
+            total, items = self.dataset_repository.list_datasets(
+                session,
+                page=1,
+                page_size=None,
+                status=status or "",
+                include_deleted=False,
+            )
+            return {
+                "total": total,
+                "items": [self._serialize_dataset(session, item) for item in items],
+            }
+
     def import_files(self, dataset_id: int, file_paths: list[str]) -> dict:
         imported_count = 0
         failed_count = 0

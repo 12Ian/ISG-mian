@@ -84,6 +84,14 @@ class BackendBridge:
         except Exception as exc:
             return _normalize_error(exc)
 
+    def get_all_datasets(self, status: str = "") -> dict:
+        try:
+            result = self.facade.dataset_service.get_all_datasets(status)
+            result["items"] = [self.to_qml_dataset(item) for item in result.get("items", [])]
+            return result
+        except Exception as exc:
+            return _normalize_error(exc)
+
     def get_dataset_samples(self, dataset_id: int, page: int, page_size: int, status: str) -> dict:
         try:
             result = self.facade.dataset_service.get_dataset_samples(dataset_id, page, page_size, status)

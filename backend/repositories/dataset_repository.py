@@ -21,19 +21,17 @@ class DatasetRepository(RepositoryBase):
             query = query.filter(Dataset.is_deleted.is_(False))
         return query.first()
 
-    def list_datasets(self, session, *, page: int, page_size: int, status: str = "", include_deleted: bool = False):
+    def list_datasets(self, session, *, page: int, page_size: int | None, status: str = "", include_deleted: bool = False):
         query = session.query(Dataset)
         if not include_deleted:
             query = query.filter(Dataset.is_deleted.is_(False))
         if status:
             query = query.filter(Dataset.status == status)
         total = query.count()
-        items = (
-            query.order_by(Dataset.created_at.desc())
-            .offset(max(page - 1, 0) * page_size)
-            .limit(page_size)
-            .all()
-        )
+        query = query.order_by(Dataset.created_at.desc())
+        if page_size is not None:
+            query = query.offset(max(page - 1, 0) * page_size).limit(page_size)
+        items = query.all()
         return total, items
 
     def create_sample(self, session, **values) -> Sample:

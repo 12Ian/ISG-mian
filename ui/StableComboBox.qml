@@ -72,11 +72,21 @@ ComboBox {
         }
 
         contentItem: ListView {
+            id: popupList
             clip: true
             implicitHeight: Math.min(contentHeight, 300)
             model: control.delegateModel
             currentIndex: control.highlightedIndex
-            ScrollIndicator.vertical: ScrollIndicator {}
+            boundsBehavior: Flickable.StopAtBounds
+
+            ScrollBar.vertical: ScrollBar {
+                id: popupScrollBar
+                width: 12
+                policy: popupList.contentHeight > popupList.height ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff
+                interactive: true
+                hoverEnabled: true
+                active: true
+            }
         }
     }
 
@@ -84,7 +94,7 @@ ComboBox {
         id: optionDelegate
         required property int index
 
-        width: control.width - 8
+        width: control.width - 20
         height: 36
 
         contentItem: Text {

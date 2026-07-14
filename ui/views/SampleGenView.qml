@@ -170,6 +170,32 @@ Item {
         root.sourceDatasets = filtered
     }
 
+    function updateSourceDatasets(data) {
+        var rawList = []
+        if (data && data.items) rawList = data.items
+        else if (Array.isArray(data)) rawList = data
+
+        var sources = []
+        for (var i = 0; i < rawList.length; i++) {
+            var item = rawList[i]
+            var n = item.name || ""
+            var idx = n.indexOf("|Status:")
+            var s = idx !== -1 ? n.substring(idx + 8) : (item.status || "")
+            if (s !== "扩增文件" && s !== "扩展文件") {
+                sources.push({
+                    id: item.id || 0,
+                    name: (item.name || "未命名").split("|Status:")[0],
+                    modality: item.modality || root.modalityFromLabel(item.type || ""),
+                    stage: item.stage || "raw"
+                })
+            }
+        }
+        if (sources.length === 0) sources.push({ id: 0, name: "无可用基础数据集 (请先导入)", modality: "", stage: "raw" })
+        root.allSourceDatasets = sources
+        root.applyDatasetFilter()
+        root.loadGenerationAlgorithms()
+    }
+
     function currentSourceDataset() {
         if (sourceDataCombo.currentIndex < 0 || sourceDataCombo.currentIndex >= root.sourceDatasets.length)
             return null
@@ -726,31 +752,7 @@ Item {
     Connections {
         target: backendService
 
-        function onDatasetsUpdated(data) {
-            var rawList = []
-            if (data && data.items) rawList = data.items
-            else if (Array.isArray(data)) rawList = data
-
-            var sources = []
-            for (var i = 0; i < rawList.length; i++) {
-                var item = rawList[i]
-                var n = item.name || ""
-                var idx = n.indexOf("|Status:")
-                var s = idx !== -1 ? n.substring(idx + 8) : (item.status || "")
-                if (s !== "扩增文件" && s !== "扩展文件") {
-                    sources.push({
-                        id: item.id || 0,
-                        name: (item.name || "未命名").split("|Status:")[0],
-                        modality: item.modality || root.modalityFromLabel(item.type || ""),
-                        stage: item.stage || "raw"
-                    })
-                }
-            }
-            if (sources.length === 0) sources.push({ id: 0, name: "无可用基础数据集 (请先导入)", modality: "", stage: "raw" })
-            root.allSourceDatasets = sources
-            root.applyDatasetFilter()
-            root.loadGenerationAlgorithms()
-        }
+        function onAllDatasetsUpdated(data) { root.updateSourceDatasets(data) }
 
         function onGenerationStatusUpdated(message, success, progressVal) {
             root.showToast(success ? "✅ " + message : "⚠️ " + message)
@@ -1372,7 +1374,7 @@ Item {
 
     Component.onCompleted: {
         root.loadGenerationParameterPresets()
-        backendService.getDatasets(1, 100, "")
+        backendService.getAllDatasets("")
         backendService.getAlgorithms("generation", "")
         root.refreshGenerationHistoryState()
     }
@@ -1563,7 +1565,7 @@ Item {
                         var result = backendService.updateDataset(root.currentTargetDatasetId, newDatasetName, "")
                         if (result && result.status === "success") {
                             root.currentTargetDatasetName = newDatasetName
-                            backendService.getDatasets(1, 100, "")
+                            backendService.getAllDatasets("")
                             backendService.getEnhancementTasks(0, "")
                             root.showToast("✅ 生成结果已保存")
                         } else {
@@ -2764,7 +2766,7 @@ Item {
                     root.currentTaskId = 0
                     root.currentTargetDatasetId = 0
                     root.currentTargetDatasetName = ""
-                    backendService.getDatasets(1, 100, "")
+                    backendService.getAllDatasets("")
                     newGenerationTaskPopup.open()
                 }
             }

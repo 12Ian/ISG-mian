@@ -41,6 +41,7 @@ class BackendService(QObject):
     systemStatsUpdated = Signal(dict)
     recentActivitiesUpdated = Signal(list)
     datasetsUpdated = Signal(dict)
+    allDatasetsUpdated = Signal(dict)
     datasetSamplesUpdated = Signal(dict)
     datasetDirectoryUpdated = Signal(dict)
     datasetDirectoryLoading = Signal(bool)
@@ -133,6 +134,10 @@ class BackendService(QObject):
     def getDatasets(self, page: int, pageSize: int, status: str):
         result = self._bridge.get_datasets(page, pageSize, status)
         self.datasetsUpdated.emit(result)
+
+    @Slot(str)
+    def getAllDatasets(self, status: str):
+        self.allDatasetsUpdated.emit(self._bridge.get_all_datasets(status))
 
     @Slot(int, int, int, str)
     def getDatasetSamples(self, datasetId: int, page: int, pageSize: int, status: str):
