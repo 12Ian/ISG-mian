@@ -41,6 +41,7 @@ tmp_backend_review*/
 data/
 
 # local test scripts and test records
-tests/
-/tests/
-/tests/
+/tests/*
+!/tests/test_clarity_image_augmenter.py
+!/tests/test_algorithm_parameter_contracts.py
+!/tests/test_dataset_selector.py

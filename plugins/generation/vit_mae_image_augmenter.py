@@ -84,7 +84,7 @@ def run(payload: dict, context) -> dict:
     target_count = max(1, int(payload.get("target_count") or len(samples)))
     mask_ratio = _clamp_float(parameters.get("mask_ratio", 0.35), 0.05, 0.9)
     train_cap = _clamp_int(parameters.get("training_steps", parameters.get("train_cap", 120)), 10, 500)
-    ps = _clamp_int(parameters.get("patch_size", parameters.get("ps", 4)), 2, 16)
+    ps = _clamp_int(parameters.get("patch_size", parameters.get("ps", 4)), 2, 32)
     lr = _clamp_float(parameters.get("learning_rate", parameters.get("lr", 0.0001)), 1e-6, 0.1)
     blend_strength = _clamp_float(parameters.get("blend_strength", 0.65), 0.0, 1.0)
     image_size = 64
@@ -164,7 +164,7 @@ def run(payload: dict, context) -> dict:
 
 
 def _run_mask_blur_augmentation(payload, context, output_dir, samples, target_count, method, parameters):
-    ps = _clamp_int(parameters.get("patch_size", parameters.get("ps", 4)), 2, 16)
+    ps = _clamp_int(parameters.get("patch_size", parameters.get("ps", 4)), 2, 32)
     mask_ratio = _clamp_float(parameters.get("mask_ratio", 0.35), 0.05, 0.9)
     outputs = []
     for index in range(target_count):

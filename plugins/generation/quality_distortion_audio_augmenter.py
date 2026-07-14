@@ -27,7 +27,7 @@ PARAMETERS = [
         "label": "量化位深",
         "default": 6,
         "min": 2,
-        "max": 32,
+        "max": 16,
         "options": [],
         "description": "量化比特深度，越低失真越明显",
         "required": False,

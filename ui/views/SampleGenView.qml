@@ -182,125 +182,6 @@ Item {
         backendService.getAlgorithms("generation", modality)
     }
 
-    function imageStrongDefaultValue(algo, param) {
-        if (!algo || algo.modality !== "image" || !param || !param.name) return undefined
-        var key = String(algo.key || "")
-        var name = String(param.name || "")
-        var defaults = {
-            "generation.image.crop": {
-                "crop_ratio": 0.7,
-                "crop_mode": "random"
-            },
-            "generation.image.geometric_transform": {
-                "rotation_degrees": 15,
-                "scale": 0.92,
-                "translate_x_pct": 6,
-                "translate_y_pct": -4,
-                "flip_horizontal": false,
-                "flip_vertical": false
-            },
-            "generation.image.style_transfer": {
-                "strength": 0.85
-            },
-            "generation.image.texture_enhancement": {
-                "texture_strength": 0.75,
-                "detail_sigma": 1.2,
-                "detail_gain": 1.8
-            },
-            "generation.image.lighting_direction": {
-                "light_direction": "left_to_right",
-                "light_strength": 0.75,
-                "ambient_level": 0.1
-            },
-            "generation.image.temperature_calibration": {
-                "stretch_low_pct": 4,
-                "stretch_high_pct": 96,
-                "clahe_clip": 3.5,
-                "clahe_tile": 8
-            },
-            "generation.image.halo_effect": {
-                "mode": "simulate",
-                "halo_strength": 0.75,
-                "halo_radius": 36,
-                "dehalo_clip": 0.7
-            },
-            "generation.image.color_space": {
-                "brightness": 14,
-                "contrast": 1.18,
-                "saturation": 1.25,
-                "hue": 8,
-                "pca_jitter": 0.08
-            },
-            "generation.image.clarity": {
-                "blur_strength": 0,
-                "blur_kernel": 5,
-                "sharpen_strength": 1.2,
-                "sharpen_amount": 0.55
-            },
-            "generation.image.occlusion": {
-                "occlusion_type": "random_erase",
-                "erase_count": 2,
-                "area_ratio": 0.35
-            },
-            "generation.image.environment_simulation": {
-                "fog_intensity": 0.45,
-                "snow_intensity": 0.35,
-                "shadow_intensity": 0.35
-            },
-            "generation.image.deformation_distortion": {
-                "elastic_strength": 8,
-                "elastic_gaussian_kernel": 10,
-                "distortion_k1": 0.18,
-                "distortion_k2": 0.03
-            },
-            "generation.image.imaging_simulation": {
-                "blur_kernel": 5,
-                "downsample": 0.5
-            },
-            "generation.image.linear_transform": {
-                "alpha": 1.6,
-                "beta": 35,
-                "gamma": 1.1
-            },
-            "generation.image.channel_shuffle": {
-                "shuffle": true
-            },
-            "generation.image.cross_modal_fusion": {
-                "clahe_clip": 4,
-                "ir_weight": 0.75
-            },
-            "generation.image.wgan_gp": {
-                "gradient_penalty": 10,
-                "discriminator_iterations": 5,
-                "learning_rate": 0.0001,
-                "enhance_strength": 1.3
-            },
-            "generation.image.diffusion": {
-                "diffusion_steps": 60,
-                "cfg_guidance_scale": 1,
-                "noise_strength": 0.35,
-                "blend_strength": 0.65
-            },
-            "generation.image.vit_mae": {
-                "mask_ratio": 0.45,
-                "learning_rate": 0.0001,
-                "training_steps": 160,
-                "patch_size": 4,
-                "blend_strength": 0.75
-            },
-            "噪声注入": {
-                "noise_type": "gaussian",
-                "noise_intensity": 0.16,
-                "salt_pepper_ratio": 0.5,
-                "shot_noise": 0.06,
-                "read_noise": 0.03
-            }
-        }
-        var values = defaults[key]
-        if (!values || values[name] === undefined) return undefined
-        return values[name]
-    }
-
     function buildParamsDataMap(algorithms) {
         var map = {}
         for (var i = 0; i < algorithms.length; i++) {
@@ -310,8 +191,7 @@ Item {
             for (var p = 0; p < rawParams.length; p++) {
                 var param = rawParams[p]
                 var opts = param.options || param.options_json || []
-                var strongDefault = root.imageStrongDefaultValue(algo, param)
-                var defaultValue = strongDefault !== undefined ? strongDefault : param.default_value
+                var defaultValue = param.default_value
                 params.push({
                     n: param.name || "",
                     label: param.label || param.name || "",

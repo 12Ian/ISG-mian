@@ -529,164 +529,40 @@ class BackendBridge:
             if algo["key"] in existing_map:
                 continue
             self.facade.algorithm_service.create_algorithm(dict(algo))
-        self._repair_text_deduplicate_parameters()
-        self._repair_back_translation_language_options()
-        self._repair_tabular_cleaning_parameters()
-        self._repair_audio_variant_parameters()
+        self._sync_default_algorithm_parameters(DEFAULT_ALGORITHMS)
         self._repair_training_validation_rules(existing_map)
-        self._repair_wgan_parameter_ranges()
         self._merge_legacy_algorithm_aliases()
         self._seed_default_bindings(DEFAULT_BINDINGS)
 
 
-    def _repair_back_translation_language_options(self) -> None:
-        """将旧数据库中的中间语言代码迁移为中文显示名称。"""
-        from ..models import Algorithm, AlgorithmParameter
+    def _sync_default_algorithm_parameters(self, default_algorithms) -> None:
+        """以插件 PARAMETERS 为准同步全部内置算法参数。"""
+        from ..models import Algorithm
+        from ..parameter_ranges import normalize_parameter_type, normalized_parameter_range
 
+        contracts = {item["key"]: item.get("parameters", []) for item in default_algorithms}
         with self.facade.session_factory() as session:
-            algorithm = session.query(Algorithm).filter(
-                Algorithm.key == "generation.text.back_translation"
-            ).first()
-            if algorithm is None:
-                return
-            parameter = session.query(AlgorithmParameter).filter(
-                AlgorithmParameter.algorithm_id == algorithm.id,
-                AlgorithmParameter.name == "intermediate_language",
-            ).first()
-            if parameter is None:
-                return
-            parameter.default_value = "英语"
-            parameter.options_json = ["英语", "日语", "韩语"]
-            parameter.description = "回译时使用的中间语言"
-            session.commit()
-
-
-    def _repair_wgan_parameter_ranges(self) -> None:
-        from ..models import Algorithm, AlgorithmParameter
-
-        expected_ranges = {
-            "gradient_penalty": (0.1, 50.0),
-            "discriminator_iterations": (1.0, 20.0),
-            "learning_rate": (0.000001, 0.1),
-            "enhance_strength": (0.3, 2.0),
-            "training_steps": (20.0, 500.0),
-        }
-        expected_defaults = {
-            "enhance_strength": 1.8,
-            "training_steps": 120,
-        }
-        with self.facade.session_factory() as session:
-            algorithm = session.query(Algorithm).filter(Algorithm.key == "generation.image.wgan_gp").first()
-            if algorithm is None:
-                return
-            existing_parameters = session.query(AlgorithmParameter).filter(AlgorithmParameter.algorithm_id == algorithm.id).all()
-            existing_by_name = {parameter.name: parameter for parameter in existing_parameters}
-            for parameter in existing_parameters:
-                if parameter.name not in expected_ranges:
+            algorithms = session.query(Algorithm).filter(Algorithm.key.in_(contracts)).all()
+            for algorithm in algorithms:
+                expected = contracts[algorithm.key]
+                actual = self.facade.algorithm_repository.list_parameters(session, algorithm.id)
+                if len(actual) == len(expected) and all(
+                    model.name == parameter["name"]
+                    and model.label == parameter.get("label", parameter["name"])
+                    and model.type == normalize_parameter_type(parameter["type"])
+                    and model.required == parameter.get("required", False)
+                    and model.default_value == parameter.get("default")
+                    and model.min_value == normalized_parameter_range(parameter)["min_value"]
+                    and model.max_value == normalized_parameter_range(parameter)["max_value"]
+                    and model.options_json == normalized_parameter_range(parameter)["options"]
+                    and model.description == parameter.get("description", "")
+                    for model, parameter in zip(actual, expected)
+                ):
                     continue
-                min_value, max_value = expected_ranges[parameter.name]
-                parameter.min_value = min_value
-                parameter.max_value = max_value
-                if parameter.name in expected_defaults:
-                    parameter.default_value = expected_defaults[parameter.name]
-            if "training_steps" not in existing_by_name:
-                max_order = max((parameter.order_index for parameter in existing_parameters), default=-1)
-                session.add(
-                    AlgorithmParameter(
-                        algorithm_id=algorithm.id,
-                        name="training_steps",
-                        label="训练步数",
-                        type="int",
-                        required=False,
-                        default_value=120,
-                        min_value=20.0,
-                        max_value=500.0,
-                        options_json=[],
-                        description="WGAN-GP任务内训练步数，越高效果越明显但耗时更长",
-                        order_index=max_order + 1,
-                    )
-                )
-            session.commit()
-
-    def _repair_text_deduplicate_parameters(self) -> None:
-        from ..models import Algorithm
-        from ..seed_data import DEFAULT_ALGORITHMS
-
-        text_dedup = next(
-            (item for item in DEFAULT_ALGORITHMS if item.get("key") == "cleaning.text_deduplicate"),
-            None,
-        )
-        if not text_dedup:
-            return
-        with self.facade.session_factory() as session:
-            algorithm = session.query(Algorithm).filter(Algorithm.key == "cleaning.text_deduplicate").first()
-            if algorithm is None:
-                return
-            self.facade.algorithm_repository.replace_parameters(
-                session,
-                algorithm.id,
-                text_dedup.get("parameters", []),
-            )
-            session.commit()
-
-    def _repair_tabular_cleaning_parameters(self) -> None:
-        from ..models import Algorithm
-        from ..seed_data import DEFAULT_ALGORITHMS
-
-        parameter_keys = {
-            "cleaning.tabular_missing_values",
-            "cleaning.tabular_outliers",
-            "cleaning.tabular_normalize",
-        }
-        seed_parameters = {
-            item["key"]: item.get("parameters", [])
-            for item in DEFAULT_ALGORITHMS
-            if item.get("key") in parameter_keys
-        }
-        with self.facade.session_factory() as session:
-            algorithms = (
-                session.query(Algorithm)
-                .filter(Algorithm.key.in_(parameter_keys))
-                .all()
-            )
-            for algorithm in algorithms:
                 self.facade.algorithm_repository.replace_parameters(
                     session,
                     algorithm.id,
-                    seed_parameters[algorithm.key],
-
-                )
-            session.commit()
-
-    def _repair_audio_variant_parameters(self) -> None:
-        """同步使用单源变体上限的音频生成算法参数。"""
-        from ..models import Algorithm
-        from ..seed_data import DEFAULT_ALGORITHMS
-
-        parameter_keys = {
-            "generation.audio.channel_config",
-            "generation.audio.energy_amplitude",
-            "generation.audio.filter_processing",
-            "generation.audio.specaugment",
-            "generation.audio.spatial_acoustics",
-            "generation.audio.timeseries_structure",
-            "generation.audio.tempo_pitch",
-            "generation.audio.quality_distortion",
-            "generation.audio.composite",
-            "generation.audio.spectrum_reconstruction",
-        }
-        seed_parameters = {
-            item["key"]: item.get("parameters", [])
-            for item in DEFAULT_ALGORITHMS
-            if item.get("key") in parameter_keys
-        }
-        with self.facade.session_factory() as session:
-            algorithms = session.query(Algorithm).filter(Algorithm.key.in_(parameter_keys)).all()
-            for algorithm in algorithms:
-                self.facade.algorithm_repository.replace_parameters(
-                    session,
-                    algorithm.id,
-                    seed_parameters[algorithm.key],
+                    expected,
                 )
             session.commit()
 

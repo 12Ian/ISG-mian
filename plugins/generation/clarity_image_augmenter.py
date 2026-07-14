@@ -20,17 +20,6 @@ PARAMETERS = [
         "required": False,
     },
     {
-        "name": "blur_kernel",
-        "type": "int",
-        "label": "模糊核大小",
-        "default": 5,
-        "min": 3,
-        "max": 31,
-        "options": [],
-        "description": "高斯模糊卷积核大小，自动调整为奇数",
-        "required": False,
-    },
-    {
         "name": "sharpen_strength",
         "type": "float",
         "label": "锐化强度",
@@ -66,7 +55,6 @@ def run(payload: dict, context) -> dict:
 
     target_count = max(1, int(payload.get("target_count") or len(samples)))
     blur_strength = _clamp_float(parameters.get("blur_strength", 0.0), 0.0, 10.0)
-    blur_kernel = _clamp_int(parameters.get("blur_kernel", 5), 3, 31)
     sharpen_strength = _clamp_float(parameters.get("sharpen_strength", parameters.get("sharp_strength", 1.2)), 0.0, 5.0)
     sharpen_amount = _clamp_float(parameters.get("sharpen_amount", parameters.get("sharp_amount", 0.55)), 0.0, 1.0)
 
@@ -83,13 +71,22 @@ def run(payload: dict, context) -> dict:
         if len(img.shape) == 2:
             img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
 
-        out = img.copy()
-        if blur_strength > 0:
-            kernel = blur_kernel + int(blur_strength * 2)
-            kernel = max(3, min(kernel + (kernel + 1) % 2, 31))
-            out = cv2.GaussianBlur(out, (kernel, kernel), sigmaX=max(0.1, blur_strength))
+        blur_enabled = blur_strength > 0
+        sharpen_enabled = sharpen_strength > 0 and sharpen_amount > 0
+        if blur_enabled and sharpen_enabled:
+            applied_effect = "blur" if index % 2 == 0 else "sharpen"
+        elif blur_enabled:
+            applied_effect = "blur"
+        elif sharpen_enabled:
+            applied_effect = "sharpen"
+        else:
+            applied_effect = "none"
 
-        if sharpen_strength > 0:
+        out = img.copy()
+        if applied_effect == "blur":
+            out = cv2.GaussianBlur(out, (0, 0), sigmaX=blur_strength)
+
+        if applied_effect == "sharpen":
             blurred = cv2.GaussianBlur(out, (0, 0), 1.0)
             amount = sharpen_amount * sharpen_strength
             out = cv2.addWeighted(out, 1.0 + amount, blurred, -amount, 0)
@@ -105,10 +102,10 @@ def run(payload: dict, context) -> dict:
                 "relative_path": output_path.name,
                 "metadata": {
                     "method": "clarity",
+                    "applied_effect": applied_effect,
                     "algorithm_key": payload.get("algorithm_key", "generation.image.clarity"),
                     "parameters": {
                         "blur_strength": blur_strength,
-                        "blur_kernel": blur_kernel,
                         "sharpen_strength": sharpen_strength,
                         "sharpen_amount": sharpen_amount,
                     },
@@ -124,14 +121,6 @@ def run(payload: dict, context) -> dict:
 def _clamp_float(value, low, high):
     try:
         parsed = float(value)
-    except (TypeError, ValueError):
-        parsed = low
-    return max(low, min(parsed, high))
-
-
-def _clamp_int(value, low, high):
-    try:
-        parsed = int(value)
     except (TypeError, ValueError):
         parsed = low
     return max(low, min(parsed, high))

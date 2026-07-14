@@ -1,6 +1,12 @@
 from __future__ import annotations
 
-DEFAULT_ALGORITHMS = (
+from pathlib import Path
+
+from .plugins.contracts import synchronize_default_algorithm_contracts
+
+
+# 参数列表在文件末尾统一由各插件的 PARAMETERS 覆盖。
+_DEFAULT_ALGORITHMS = (
     {
         "key": "cleaning.duplicate_detector",
         "name": "重复样本检测",
@@ -936,31 +942,29 @@ DEFAULT_ALGORITHMS = (
                 "type": "number",
                 "required": False,
                 "default_value": 0.0,
-                "description": "高斯模糊强度",
-            },
-            {
-                "name": "blur_kernel",
-                "label": "模糊核大小",
-                "type": "integer",
-                "required": False,
-                "default_value": 5,
-                "description": "高斯模糊卷积核尺寸",
+                "min": 0.0,
+                "max": 10.0,
+                "description": "高斯模糊强度，0 表示不模糊",
             },
             {
                 "name": "sharpen_strength",
                 "label": "锐化强度",
                 "type": "number",
                 "required": False,
-                "default_value": 0.0,
-                "description": "反锐化掩模锐化强度",
+                "default_value": 1.2,
+                "min": 0.0,
+                "max": 5.0,
+                "description": "反遮罩锐化强度，0 表示不锐化",
             },
             {
                 "name": "sharpen_amount",
                 "label": "锐化量",
                 "type": "number",
                 "required": False,
-                "default_value": 0.5,
-                "description": "锐化叠加比例",
+                "default_value": 0.55,
+                "min": 0.0,
+                "max": 1.0,
+                "description": "锐化细节叠加比例",
             },
         ],
     },
@@ -2974,6 +2978,11 @@ DEFAULT_ALGORITHMS = (
             },
         ],
     },
+)
+
+DEFAULT_ALGORITHMS = synchronize_default_algorithm_contracts(
+    _DEFAULT_ALGORITHMS,
+    Path(__file__).resolve().parent.parent,
 )
 
 # 训练算法默认关联的评估插件
