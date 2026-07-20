@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import field
+from pathlib import Path
 from .._compat import slots_dataclass
 
 from ..errors import NotFoundError, ValidationError
 from ..parameter_ranges import normalized_parameter_range
 from ..plugins import PluginRunner
+from core.data_management.dataset_requirements import normalize_dataset_requirements
 from .base import ServiceBase
 
 
@@ -13,6 +15,7 @@ from .base import ServiceBase
 class AlgorithmService(ServiceBase):
     algorithm_repository: object
     log_repository: object
+    model_asset_service: object | None = None
     plugin_runner: PluginRunner = field(default_factory=PluginRunner)
 
     def create_algorithm(self, payload: dict) -> dict:
@@ -173,6 +176,7 @@ class AlgorithmService(ServiceBase):
                 for item in self.algorithm_repository.list_parameters(session, algorithm.id)
             ],
         }
+        self._append_model_asset_options(data)
         # 训练算法：内嵌绑定的评估算法信息
         if algorithm.category == "training":
             binding = self.algorithm_repository.get_binding_for_training(session, algorithm.id)
@@ -182,6 +186,54 @@ class AlgorithmService(ServiceBase):
                     data["bound_evaluation_key"] = eval_algo.key
                     data["bound_evaluation_name"] = eval_algo.name
         return data
+
+    def _append_model_asset_options(self, data: dict) -> None:
+        if self.model_asset_service is None or data.get("category") != "training":
+            return
+        family = self.model_asset_service.family_for_algorithm_key(data.get("key", ""))
+        if not family:
+            return
+        model_paths = self.model_asset_service.paths_for_family(family)
+        if not model_paths:
+            return
+        model_parameter_names = {
+            "weights",
+            "weight",
+            "weights_path",
+            "model",
+            "model_path",
+            "model_yaml",
+            "model_cfg",
+            "cfg",
+            "checkpoint",
+            "pretrained",
+            "pretrained_weights",
+        }
+        for parameter in data.get("parameters", []):
+            parameter_name = str(parameter.get("name") or "").casefold()
+            if parameter_name not in model_parameter_names:
+                continue
+            options = list(parameter.get("options") or [])
+            for model_path in model_paths:
+                suffix = Path(model_path).suffix.casefold()
+                if parameter_name in {"weights", "weight", "weights_path", "pretrained", "pretrained_weights"}:
+                    if suffix not in {".pt", ".pth"}:
+                        continue
+                elif parameter_name in {"model_yaml", "model_cfg", "cfg"}:
+                    if suffix not in {".yaml", ".yml"}:
+                        continue
+                elif suffix not in {".pt", ".pth", ".yaml", ".yml"}:
+                    continue
+                replaced = False
+                model_name = Path(model_path).name.casefold()
+                for index, option in enumerate(options):
+                    if Path(str(option)).name.casefold() == model_name:
+                        options[index] = model_path
+                        replaced = True
+                        break
+                if not replaced and model_path not in options:
+                    options.append(model_path)
+            parameter["options"] = options
 
     def _serialize_parameter(self, item) -> dict:
         base = {
@@ -230,6 +282,14 @@ class AlgorithmService(ServiceBase):
         vr = payload.get("validation_rules") or payload.get("validation_rules_json")
         if isinstance(vr, dict):
             rules.update(vr)
+        requirements = payload.get("dataset_requirements")
+        if requirements is None and isinstance(vr, dict) and "dataset_requirements" in vr:
+            requirements = vr.get("dataset_requirements")
+        if requirements is not None:
+            try:
+                rules["dataset_requirements"] = normalize_dataset_requirements(requirements)
+            except ValueError as exc:
+                raise ValidationError(f"数据集要求配置错误：{exc}") from exc
         for field_name in ["runtime_artifact_path", "dataset_path", "label_path", "test_path", "model_path"]:
             if payload.get(field_name):
                 rules[field_name] = payload[field_name]

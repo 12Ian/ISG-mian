@@ -392,6 +392,30 @@ class BackendBridge:
         except Exception as exc:
             return _normalize_error(exc)
 
+    def get_model_assets(self, family: str = "") -> dict:
+        try:
+            return self.facade.model_asset_service.list_assets(family)
+        except Exception as exc:
+            return _normalize_error(exc)
+
+    def import_model_asset(self, source_path: str, family: str) -> dict:
+        try:
+            return self.facade.model_asset_service.import_asset(source_path, family)
+        except Exception as exc:
+            return _normalize_error(exc)
+
+    def delete_model_asset(self, asset_id: str) -> dict:
+        try:
+            return self.facade.model_asset_service.delete_asset(asset_id)
+        except Exception as exc:
+            return _normalize_error(exc)
+
+    def get_training_compatibility(self, dataset_id: int) -> dict:
+        try:
+            return {"ok": True, "data": self.facade.training_service.get_compatibility(dataset_id)}
+        except Exception as exc:
+            return _normalize_error(exc)
+
     def get_training_tasks(self, dataset_id: int, status: str) -> dict:
         try:
             return self.get_tasks("training", status, 1, 200)

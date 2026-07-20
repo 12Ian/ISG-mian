@@ -60,7 +60,7 @@ def get_agl_algorithm_spec(key: str) -> AGLAlgorithmSpec:
         raise ValueError(f"Unsupported AGL algorithm key: {key}") from exc
 
 
-def run_agl_algorithm(*, algorithm_key: str, sample_path: str, parameters: dict, output_dir: str, index: int) -> str | None:
+def run_agl_algorithm(*, algorithm_key: str, sample_path: str, parameters: dict, output_dir: str, index: int) -> dict | None:
     manager = AlgorithmManager()
     spec = get_agl_algorithm_spec(algorithm_key)
     if spec.requires_torch and not manager._torch_available():
@@ -71,4 +71,10 @@ def run_agl_algorithm(*, algorithm_key: str, sample_path: str, parameters: dict,
         raise ValueError(f"AGL method not found for key {algorithm_key}: {spec.method_name}")
 
     Path(output_dir).mkdir(parents=True, exist_ok=True)
-    return method(sample_path, parameters or {}, output_dir, index)
+    output_path = method(sample_path, parameters or {}, output_dir, index)
+    if not output_path:
+        return None
+    return {
+        "output_path": str(output_path),
+        "transform": getattr(manager, "last_generation_metadata", {}) or {},
+    }

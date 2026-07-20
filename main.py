@@ -58,6 +58,8 @@ class BackendService(QObject):
 
     enhancementTasksUpdated = Signal(dict)
     algorithmsUpdated = Signal(list)
+    modelAssetsUpdated = Signal(dict)
+    modelAssetOperationFinished = Signal(dict)
     generationStatusUpdated = Signal(str, bool, float)
     generationOutputsUpdated = Signal(dict)
 
@@ -69,6 +71,7 @@ class BackendService(QObject):
 
     trainingTasksUpdated = Signal(dict)
     trainingStatusUpdated = Signal(str, bool, float)
+    trainingCompatibilityUpdated = Signal(dict)
     testSetImported = Signal(dict)
     algorithmBindingsUpdated = Signal(dict)
 
@@ -447,6 +450,28 @@ class BackendService(QObject):
     def validateAlgorithm(self, algorithmId: int) -> dict:
         return self._bridge.validate_algorithm(algorithmId)
 
+    @Slot(str)
+    def getModelAssets(self, family: str):
+        self.modelAssetsUpdated.emit(self._bridge.get_model_assets(family))
+
+    @Slot(str, str, result=dict)
+    def importModelAsset(self, filePath: str, family: str) -> dict:
+        def worker():
+            result = self._bridge.import_model_asset(filePath, family)
+            self.modelAssetOperationFinished.emit(result)
+            if result.get("ok"):
+                self.algorithmsUpdated.emit(self._bridge.get_algorithms("", ""))
+
+        threading.Thread(target=worker, daemon=True).start()
+        return {"status": "started", "message": "模型导入已开始"}
+
+    @Slot(str, result=dict)
+    def deleteModelAsset(self, assetId: str) -> dict:
+        result = self._bridge.delete_model_asset(assetId)
+        if result.get("ok"):
+            self.algorithmsUpdated.emit(self._bridge.get_algorithms("", ""))
+        return result
+
     @Slot(result=dict)
     def openAlgorithmPluginSpec(self) -> dict:
         spec_path = Path(__file__).resolve().parent / "docs" / "ISG算法插件开发规范_专业版.pdf"
@@ -567,6 +592,16 @@ class BackendService(QObject):
             return {"status": "error", "message": result.get("message", "未知错误")}
         return {"status": "success", "id": result["data"]["task_id"], "task_status": result["data"]["status"]}
 
+    @Slot(int)
+    def getTrainingCompatibility(self, datasetId: int):
+        def worker():
+            result = self._bridge.get_training_compatibility(datasetId)
+            self.trainingCompatibilityUpdated.emit(
+                result.get("data", {"dataset_id": datasetId, "items": []})
+            )
+
+        threading.Thread(target=worker, daemon=True).start()
+
     @Slot(int, str)
     def getTrainingTasks(self, datasetId: int, status: str):
         result = self._bridge.get_training_tasks(datasetId, status)
@@ -669,6 +704,12 @@ def start_qml_app():
 
 
 def main():
+    if "--self-test-yolov5" in sys.argv:
+        from packaging_self_test import run_yolov5_self_test
+
+        report_index = sys.argv.index("--self-test-yolov5") + 1
+        report_path = sys.argv[report_index] if report_index < len(sys.argv) else "yolov5-self-test.json"
+        sys.exit(0 if run_yolov5_self_test(report_path) else 1)
     start_qml_app()
 
 

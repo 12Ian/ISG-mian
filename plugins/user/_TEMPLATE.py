@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-"""
-自定义算法插件基础模板。
+"""普通算法插件模板（生成、清洗、评估等非训练插件）。
 
 复制后改文件名、PARAMETERS 和 run() 即可在算法配置页注册。
+训练算法请使用同目录的 _TRAINING_TEMPLATE.py。
 """
 
 from __future__ import annotations
@@ -41,7 +41,6 @@ PARAMETERS: list[dict[str, Any]] = [
         "required": False,
     },
 ]
-
 
 def run(payload: dict[str, Any], context: Any) -> dict[str, Any]:
     """算法执行入口。"""

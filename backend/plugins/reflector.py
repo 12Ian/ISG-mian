@@ -8,6 +8,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from core.data_management.dataset_requirements import normalize_dataset_requirements
+
 
 _REQUIRED_FIELDS = {"name", "type", "default"}
 _ALLOWED_TYPES = {"string", "int", "float", "bool", "select"}
@@ -69,7 +71,18 @@ def reflect_parameters(script_path: Path) -> dict[str, Any]:
             return {"ok": False, "error": f"PARAMETERS 格式错误: {error}"}
 
         normalized = _normalize_parameters(parameters)
-        return {"ok": True, "parameters": normalized}
+        try:
+            dataset_requirements = normalize_dataset_requirements(
+                getattr(module, "DATASET_REQUIREMENTS", {})
+            )
+        except ValueError as exc:
+            return {"ok": False, "error": f"DATASET_REQUIREMENTS 格式错误: {exc}"}
+        return {
+            "ok": True,
+            "parameters": normalized,
+            "dataset_requirements": dataset_requirements,
+            "custom_dataset_validator": callable(getattr(module, "validate_dataset", None)),
+        }
 
     except Exception as exc:
         return {"ok": False, "error": f"脚本加载失败: {exc}"}

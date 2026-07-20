@@ -3,12 +3,14 @@ from __future__ import annotations
 from dataclasses import field
 from .._compat import slots_dataclass
 from pathlib import Path
+from sqlalchemy import func
 
 from ..errors import NotFoundError, ValidationError
 from ..models import Algorithm, Dataset, Sample
 from ..plugins import PluginRunner
 from .base import ServiceBase
 from .sample_ordering import interleave_by_top_folder
+from .training_compatibility import analyze_training_compatibility, build_dataset_summary
 
 
 @slots_dataclass
@@ -18,6 +20,7 @@ class TrainingService(ServiceBase):
     algorithm_repository: object
     dataset_repository: object
     plugin_runner: PluginRunner = field(default_factory=PluginRunner)
+    compatibility_cache: dict = field(default_factory=dict)
 
     def create_task(
         self,
@@ -52,6 +55,19 @@ class TrainingService(ServiceBase):
             if algorithm.status != "enabled":
                 raise ValidationError("Algorithm must be enabled.")
 
+            samples = (
+                session.query(Sample)
+                .filter(Sample.dataset_id == dataset.id, Sample.status != "deleted")
+                .order_by(Sample.id.asc())
+                .all()
+            )
+            compatibility = analyze_training_compatibility(dataset, samples, algorithm, parameters)
+            compatibility = self._apply_custom_dataset_validator(
+                dataset, samples, algorithm, compatibility
+            )
+            if not compatibility["compatible"]:
+                raise ValidationError(f"数据集与训练算法不兼容：{compatibility['reason']}")
+
             resolved_parameters = {**(parameters or {}), "algorithm_id": algorithm.id}
             title = f"Training: {algorithm.name} on {dataset.name}"
 
@@ -77,6 +93,94 @@ class TrainingService(ServiceBase):
                 "ok": True,
                 "data": {"task_id": task.id, "status": task.status},
             }
+
+    def get_compatibility(self, dataset_id: int) -> dict:
+        with self.session_factory() as session:
+            dataset = session.query(Dataset).filter(Dataset.id == dataset_id).first()
+            if dataset is None or dataset.is_deleted or dataset.status == "deleted":
+                raise NotFoundError(f"Dataset {dataset_id} not found.")
+            sample_count, latest_sample_update = (
+                session.query(func.count(Sample.id), func.max(Sample.updated_at))
+                .filter(Sample.dataset_id == dataset.id, Sample.status != "deleted")
+                .one()
+            )
+            algorithm_count, latest_algorithm_update = (
+                session.query(func.count(Algorithm.id), func.max(Algorithm.updated_at))
+                .filter(Algorithm.category == "training", Algorithm.status == "enabled")
+                .one()
+            )
+            cache_key = (
+                dataset.id,
+                int(sample_count or 0),
+                str(latest_sample_update or ""),
+                str(dataset.updated_at or ""),
+                int(algorithm_count or 0),
+                str(latest_algorithm_update or ""),
+            )
+            cached = self.compatibility_cache.get(cache_key)
+            if cached is not None:
+                return cached
+            samples = (
+                session.query(Sample)
+                .filter(Sample.dataset_id == dataset.id, Sample.status != "deleted")
+                .order_by(Sample.id.asc())
+                .all()
+            )
+            algorithms = self.algorithm_repository.list_algorithms(
+                session, category="training", modality=""
+            )
+            items = []
+            for algorithm in algorithms:
+                if algorithm.status != "enabled":
+                    continue
+                result = analyze_training_compatibility(dataset, samples, algorithm)
+                result = self._apply_custom_dataset_validator(
+                    dataset, samples, algorithm, result
+                )
+                items.append(
+                    {
+                        "algorithm_id": algorithm.id,
+                        "algorithm_key": algorithm.key,
+                        "compatible": result["compatible"],
+                        "reason": result["reason"],
+                    }
+                )
+            result = {"dataset_id": dataset.id, "items": items}
+            self.compatibility_cache = {
+                key: value
+                for key, value in self.compatibility_cache.items()
+                if key[0] != dataset.id
+            }
+            self.compatibility_cache[cache_key] = result
+            return result
+
+    def _apply_custom_dataset_validator(self, dataset, samples, algorithm, result: dict) -> dict:
+        rules = algorithm.validation_rules_json or {}
+        if not result.get("compatible") or not rules.get("custom_dataset_validator"):
+            return result
+        try:
+            callable_obj = self.plugin_runner.load_callable(
+                module_path=algorithm.module_path or None,
+                callable_name=algorithm.callable_name or None,
+                script_path=algorithm.script_path or None,
+            )
+            validator = getattr(callable_obj, "__globals__", {}).get("validate_dataset")
+            if not callable(validator):
+                return {"compatible": False, "reason": "算法声明了自定义数据校验，但未找到 validate_dataset(summary)"}
+            custom_result = validator(build_dataset_summary(dataset, samples))
+            if isinstance(custom_result, bool):
+                return {
+                    "compatible": custom_result,
+                    "reason": "自定义数据校验通过" if custom_result else "自定义数据校验未通过",
+                }
+            if not isinstance(custom_result, dict) or "compatible" not in custom_result:
+                return {"compatible": False, "reason": "validate_dataset 必须返回 bool 或包含 compatible 的 dict"}
+            return {
+                "compatible": bool(custom_result.get("compatible")),
+                "reason": str(custom_result.get("reason") or "自定义数据校验完成"),
+            }
+        except Exception as exc:
+            return {"compatible": False, "reason": f"自定义数据校验执行失败：{exc}"}
 
     def run_task(self, task_id: int, context=None) -> dict:
         with self.session_factory() as session:

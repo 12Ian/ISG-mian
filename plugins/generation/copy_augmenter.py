@@ -54,6 +54,8 @@ def run(payload: dict[str, Any], context: Any) -> dict[str, Any]:
                 "source_sample_id": sample.get("id"),
                 "output_path": str(target),
                 "relative_path": target.name,
+                "labels": list(sample.get("labels") or sample.get("labels_json") or []),
+                "label_policy": "inherit",
                 "metadata": {
                     "method": "copy",
                     "algorithm_key": payload.get("algorithm_key", "generation.copy_augmenter"),
@@ -74,11 +76,7 @@ def _write_augmented_copy(source_path: Path, target: Path) -> bool:
         if img is None:
             shutil.copy2(source_path, target)
             return False
-        h, w = img.shape[:2]
-        center = (w / 2.0, h / 2.0)
-        matrix = cv2.getRotationMatrix2D(center, 2.5, 1.0)
-        rotated = cv2.warpAffine(img, matrix, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
-        enhanced = cv2.convertScaleAbs(rotated, alpha=1.12, beta=8)
+        enhanced = cv2.convertScaleAbs(img, alpha=1.12, beta=8)
         blur = cv2.GaussianBlur(enhanced, (0, 0), 1.0)
         out = cv2.addWeighted(enhanced, 1.25, blur, -0.25, 0)
         return bool(write_image(target, out))

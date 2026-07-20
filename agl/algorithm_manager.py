@@ -48,18 +48,42 @@ class AlgorithmManager:
             center = (width // 2, height // 2)
             M = cv2.getRotationMatrix2D(center, angle, 1.0)
             img = cv2.warpAffine(img, M, (width, height))
+            transform_matrix = np.vstack([M, [0.0, 0.0, 1.0]])
             
             # 缩放
             scale = parameters.get('缩放比例', 1.0)
             img = cv2.resize(img, None, fx=scale, fy=scale)
+            output_height, output_width = img.shape[:2]
+            resize_matrix = np.array(
+                [[output_width / width, 0.0, 0.0], [0.0, output_height / height, 0.0], [0.0, 0.0, 1.0]],
+                dtype=np.float64,
+            )
+            transform_matrix = resize_matrix @ transform_matrix
             
             # 水平翻转
             if parameters.get('水平翻转', False):
                 img = cv2.flip(img, 1)
+                transform_matrix = np.array(
+                    [[-1.0, 0.0, float(output_width)], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                    dtype=np.float64,
+                ) @ transform_matrix
             
             # 垂直翻转
             if parameters.get('垂直翻转', False):
                 img = cv2.flip(img, 0)
+                transform_matrix = np.array(
+                    [[1.0, 0.0, 0.0], [0.0, -1.0, float(output_height)], [0.0, 0.0, 1.0]],
+                    dtype=np.float64,
+                ) @ transform_matrix
+
+            self.last_generation_metadata = {
+                "label_transform": "affine",
+                "matrix": transform_matrix,
+                "source_width": width,
+                "source_height": height,
+                "output_width": output_width,
+                "output_height": output_height,
+            }
             
             # 保存结果
             output_path = os.path.join(output_dir, f"geometric_{index}.jpg")
@@ -399,6 +423,9 @@ class AlgorithmManager:
 
             out = img
             h, w = img.shape[:2]
+            capture_label_transform = bool(parameters.get("_capture_label_transform", False))
+            composed_map_x = None
+            composed_map_y = None
 
             # 弹性形变
             elastic_strength = float(parameters.get("弹性强度", 0.0))  # 0~100 左右
@@ -418,6 +445,9 @@ class AlgorithmManager:
                 map_x = (x + dx).astype(np.float32)
                 map_y = (y + dy).astype(np.float32)
                 out = cv2.remap(out, map_x, map_y, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
+                if capture_label_transform:
+                    composed_map_x = map_x
+                    composed_map_y = map_y
 
             # 光学畸变（径向畸变模型）
             k1 = float(parameters.get("畸变系数k1", 0.0))
@@ -436,6 +466,41 @@ class AlgorithmManager:
                 map_x = ((x_dist + 1.0) * 0.5 * (w - 1)).astype(np.float32)
                 map_y = ((y_dist + 1.0) * 0.5 * (h - 1)).astype(np.float32)
                 out = cv2.remap(out, map_x, map_y, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
+                if capture_label_transform:
+                    if composed_map_x is None:
+                        composed_map_x = map_x
+                        composed_map_y = map_y
+                    else:
+                        composed_map_x = cv2.remap(
+                            composed_map_x,
+                            map_x,
+                            map_y,
+                            interpolation=cv2.INTER_LINEAR,
+                            borderMode=cv2.BORDER_REFLECT,
+                        )
+                        composed_map_y = cv2.remap(
+                            composed_map_y,
+                            map_x,
+                            map_y,
+                            interpolation=cv2.INTER_LINEAR,
+                            borderMode=cv2.BORDER_REFLECT,
+                        )
+
+            if capture_label_transform:
+                if composed_map_x is None:
+                    composed_map_x, composed_map_y = np.meshgrid(
+                        np.arange(w, dtype=np.float32),
+                        np.arange(h, dtype=np.float32),
+                    )
+                self.last_generation_metadata = {
+                    "label_transform": "remap",
+                    "map_x": composed_map_x,
+                    "map_y": composed_map_y,
+                    "source_width": w,
+                    "source_height": h,
+                    "output_width": w,
+                    "output_height": h,
+                }
 
             output_path = os.path.join(output_dir, f"deform_{index}.jpg")
             cv2.imwrite(output_path, out)
@@ -2314,6 +2379,18 @@ class AlgorithmManager:
                     return None
                 img = cv2.flip(img, 1)
                 img = cv2.GaussianBlur(img, (5, 5), 0)
+                height, width = img.shape[:2]
+                self.last_generation_metadata = {
+                    "label_transform": "affine",
+                    "matrix": np.array(
+                        [[-1.0, 0.0, float(width)], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                        dtype=np.float64,
+                    ),
+                    "source_width": width,
+                    "source_height": height,
+                    "output_width": width,
+                    "output_height": height,
+                }
                 output_path = os.path.join(output_dir, f"gan_{index}.jpg")
                 cv2.imwrite(output_path, img)
                 return output_path

@@ -5,6 +5,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from core.sample_generation.detection_label_transform import transform_affine_labels
+
 
 PARAMETERS = [
     {
@@ -97,10 +99,10 @@ def run(payload: dict, context) -> dict:
         return {"ok": False, "error_code": "NO_INPUT_SAMPLES", "message": "No source samples provided."}
 
     target_count = max(1, int(payload.get("target_count") or parameters.get("target_count") or len(samples)))
-    rotation = float(parameters.get("rotation_degrees", parameters.get("angle", 15.0)) or 15.0)
-    scale = float(parameters.get("scale", 0.92) or 0.92)
-    translate_x_pct = float(parameters.get("translate_x_pct", 6.0) or 6.0)
-    translate_y_pct = float(parameters.get("translate_y_pct", -4.0) or -4.0)
+    rotation = _as_float(parameters.get("rotation_degrees", parameters.get("angle", 15.0)), 15.0)
+    scale = _as_float(parameters.get("scale", 0.92), 0.92)
+    translate_x_pct = _as_float(parameters.get("translate_x_pct", 6.0), 6.0)
+    translate_y_pct = _as_float(parameters.get("translate_y_pct", -4.0), -4.0)
     flip_horizontal = _as_bool(parameters.get("flip_horizontal", False))
     flip_vertical = _as_bool(parameters.get("flip_vertical", False))
     border_value = int(parameters.get("border_value", 0) or 0)
@@ -116,15 +118,28 @@ def run(payload: dict, context) -> dict:
         if image is None:
             return {"ok": False, "error_code": "IMAGE_READ_ERROR", "message": f"Cannot read image: {source_path}"}
 
-        augmented = _transform_image(
-            image,
+        h, w = image.shape[:2]
+        matrix = _build_affine_matrix(
+            width=w,
+            height=h,
             rotation_degrees=rotation,
             scale=scale,
             translate_x_pct=translate_x_pct,
             translate_y_pct=translate_y_pct,
+        )
+        augmented = _transform_image(
+            image,
+            matrix=matrix,
             flip_horizontal=flip_horizontal,
             flip_vertical=flip_vertical,
             border_value=border_value,
+        )
+        label_matrix = _compose_flip_matrix(matrix, w, h, flip_horizontal, flip_vertical)
+        labels = transform_affine_labels(
+            sample.get("labels") or sample.get("labels_json") or [],
+            image_width=w,
+            image_height=h,
+            matrix=label_matrix,
         )
         output_path = output_dir / f"{source_path.stem}_geo_{index:04d}{source_path.suffix or '.jpg'}"
         if not _write_image(output_path, augmented):
@@ -151,6 +166,8 @@ def run(payload: dict, context) -> dict:
                 "source_sample_id": sample.get("id"),
                 "output_path": str(output_path),
                 "relative_path": output_path.name,
+                "labels": labels,
+                "label_policy": "transformed",
                 "metadata": metadata,
                 "status": "created",
             }
@@ -163,19 +180,12 @@ def run(payload: dict, context) -> dict:
 def _transform_image(
     image,
     *,
-    rotation_degrees: float,
-    scale: float,
-    translate_x_pct: float,
-    translate_y_pct: float,
+    matrix,
     flip_horizontal: bool,
     flip_vertical: bool,
     border_value: int,
 ):
     height, width = image.shape[:2]
-    center = (width / 2.0, height / 2.0)
-    matrix = cv2.getRotationMatrix2D(center, rotation_degrees, scale)
-    matrix[0, 2] += width * translate_x_pct / 100.0
-    matrix[1, 2] += height * translate_y_pct / 100.0
     transformed = cv2.warpAffine(
         image,
         matrix,
@@ -193,6 +203,30 @@ def _transform_image(
     return transformed
 
 
+def _build_affine_matrix(
+    *,
+    width: int,
+    height: int,
+    rotation_degrees: float,
+    scale: float,
+    translate_x_pct: float,
+    translate_y_pct: float,
+):
+    matrix = cv2.getRotationMatrix2D((width / 2.0, height / 2.0), rotation_degrees, scale)
+    matrix[0, 2] += width * translate_x_pct / 100.0
+    matrix[1, 2] += height * translate_y_pct / 100.0
+    return matrix
+
+
+def _compose_flip_matrix(matrix, width: int, height: int, flip_horizontal: bool, flip_vertical: bool):
+    result = np.vstack([np.asarray(matrix, dtype=np.float64), [0.0, 0.0, 1.0]])
+    if flip_horizontal:
+        result = np.asarray([[-1.0, 0.0, float(width)], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]) @ result
+    if flip_vertical:
+        result = np.asarray([[1.0, 0.0, 0.0], [0.0, -1.0, float(height)], [0.0, 0.0, 1.0]]) @ result
+    return result
+
+
 def _border_value_for(image, value: int):
     channels = 1 if len(image.shape) == 2 else image.shape[2]
     if channels == 1:
@@ -204,6 +238,12 @@ def _as_bool(value) -> bool:
     if isinstance(value, bool):
         return value
     return str(value).strip().lower() in {"1", "true", "yes", "y", "是"}
+
+
+def _as_float(value, default: float) -> float:
+    if value in (None, ""):
+        return float(default)
+    return float(value)
 
 
 def _read_image(path: Path):

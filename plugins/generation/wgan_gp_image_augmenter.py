@@ -5,6 +5,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from core.sample_generation.detection_label_transform import has_detection_labels
+
 from ._image_io import read_image, write_image
 
 
@@ -84,6 +86,12 @@ def run(payload: dict, context) -> dict:
     samples = [sample for sample in samples if _is_image_sample(sample)]
     if not samples:
         return {"ok": False, "error_code": "NO_INPUT_SAMPLES"}
+    if any(has_detection_labels(sample.get("labels") or sample.get("labels_json") or []) for sample in samples):
+        return {
+            "ok": False,
+            "error_code": "UNSUPPORTED_LABEL_TRANSFORM",
+            "message": "WGAN-GP 会改变图像内容，暂不能可靠继承检测框。",
+        }
 
     target_count = max(1, int(payload.get("target_count") or len(samples)))
     gp_lambda = float(parameters.get("gp_lambda", parameters.get("gradient_penalty", 10.0)) or 10.0)

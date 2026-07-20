@@ -4,6 +4,13 @@ from dataclasses import field
 from .._compat import slots_dataclass
 from pathlib import Path
 
+from core.sample_generation.detection_label_transform import has_detection_labels
+from core.data_management.multimodal_association import (
+    sample_group_id,
+    sample_metadata,
+    sample_role,
+)
+
 from ..errors import NotFoundError, ValidationError
 from ..models import Algorithm, Dataset, GenerationOutput, Sample
 from ..parameter_ranges import normalize_parameter_value
@@ -53,6 +60,9 @@ class GenerationService(ServiceBase):
             if not source_samples:
                 raise ValidationError("Source dataset must contain at least one active sample.")
 
+            generation_mode = str((parameters or {}).get("generation_mode") or "independent")
+            if generation_mode not in {"independent", "pipeline"}:
+                raise ValidationError("generation_mode must be 'independent' or 'pipeline'.")
             algorithms: list[Algorithm] = []
             for algorithm_id in algorithm_ids:
                 algorithm = self.algorithm_repository.get_algorithm(session, algorithm_id)
@@ -62,15 +72,14 @@ class GenerationService(ServiceBase):
                     raise ValidationError("All algorithms must be generation algorithms.")
                 if algorithm.status != "enabled":
                     raise ValidationError("All algorithms must be enabled.")
-                if algorithm.modality not in {source_dataset.modality, "multimodal"}:
+                if not self._algorithm_matches_dataset(algorithm.modality, source_dataset.modality, generation_mode):
                     raise ValidationError("Algorithm modality must match the source dataset modality.")
+                if self._unsafe_for_multimodal_companions(algorithm.key, source_dataset.modality):
+                    raise ValidationError(f"算法 {algorithm.name} 会改变空间位置，暂不能与多模态 mask/雷达安全同步。")
                 algorithms.append(algorithm)
 
             target_dataset = self._resolve_target_dataset(session, source_dataset, target_dataset_id)
             resolved_algorithm_ids = [algorithm.id for algorithm in algorithms]
-            generation_mode = str((parameters or {}).get("generation_mode") or "independent")
-            if generation_mode not in {"independent", "pipeline"}:
-                raise ValidationError("generation_mode must be 'independent' or 'pipeline'.")
             if generation_mode == "pipeline":
                 for algorithm in algorithms:
                     if not self._supports_pipeline(algorithm, source_dataset.modality):
@@ -167,8 +176,10 @@ class GenerationService(ServiceBase):
                     raise ValidationError("All algorithms must be generation algorithms.")
                 if algorithm.status != "enabled":
                     raise ValidationError("All algorithms must be enabled.")
-                if algorithm.modality not in {source_dataset.modality, "multimodal"}:
+                if not self._algorithm_matches_dataset(algorithm.modality, source_dataset.modality, generation_mode):
                     raise ValidationError("Algorithm modality must match the source dataset modality.")
+                if self._unsafe_for_multimodal_companions(algorithm.key, source_dataset.modality):
+                    raise ValidationError(f"算法 {algorithm.name} 会改变空间位置，暂不能与多模态 mask/雷达安全同步。")
                 if generation_mode == "pipeline" and not self._supports_pipeline(algorithm, source_dataset.modality):
                     raise ValidationError(f"Algorithm {algorithm.name} does not support pipeline generation.")
                 algorithms.append(algorithm)
@@ -211,6 +222,11 @@ class GenerationService(ServiceBase):
             for algorithm, algorithm_target_count in zip(algorithms, target_counts_by_algorithm):
                 if algorithm_target_count <= 0:
                     continue
+                algorithm_samples = self._samples_for_algorithm(
+                    source_samples, source_dataset.modality, algorithm.modality
+                )
+                if not algorithm_samples:
+                    raise ValidationError(f"算法 {algorithm.name} 没有可用的输入样本。")
                 payload = {
                     "task_id": task_id,
                     "algorithm_key": algorithm.key,
@@ -221,7 +237,7 @@ class GenerationService(ServiceBase):
                     "input": {
                         "dataset_id": source_dataset.id,
                         "dataset_path": source_dataset.storage_path,
-                        "samples": [self._serialize_sample(sample) for sample in source_samples],
+                        "samples": [self._serialize_sample(sample) for sample in algorithm_samples],
                     },
                     "output": {
                         "output_dir": self.task_manager.get_output_dir(task_id),
@@ -416,9 +432,13 @@ class GenerationService(ServiceBase):
             if not output_path:
                 continue
             source_sample_id = output.get("source_sample_id")
-            source_sample = input_by_id.get(source_sample_id)
-            if source_sample is None and index < len(input_samples):
-                source_sample = input_samples[index]
+            positional_sample = input_samples[index] if index < len(input_samples) else None
+            if positional_sample is not None and (
+                source_sample_id is None or positional_sample.get("id") == source_sample_id
+            ):
+                source_sample = positional_sample
+            else:
+                source_sample = input_by_id.get(source_sample_id) or positional_sample
             original_source_sample_id = (
                 output.get("original_source_sample_id")
                 or (source_sample or {}).get("original_source_sample_id")
@@ -429,6 +449,10 @@ class GenerationService(ServiceBase):
             previous_chain = list((source_sample or {}).get("pipeline_algorithms", []))
             pipeline_algorithms = previous_chain + [algorithm.key]
             metadata["pipeline_algorithms"] = pipeline_algorithms
+            labels, label_policy = self._resolve_output_labels(
+                output,
+                (source_sample or {}).get("labels", []),
+            )
             result.append(
                 {
                     "id": original_source_sample_id,
@@ -439,7 +463,8 @@ class GenerationService(ServiceBase):
                     "sample_type": (source_sample or {}).get("sample_type"),
                     "relative_path": output.get("relative_path") or Path(output_path).name,
                     "metadata": metadata,
-                    "labels": output.get("labels", (source_sample or {}).get("labels", [])),
+                    "labels": labels,
+                    "label_policy": label_policy,
                     "source_sample_id": original_source_sample_id,
                     "original_source_sample_id": original_source_sample_id,
                     "pipeline_algorithms": pipeline_algorithms,
@@ -507,6 +532,7 @@ class GenerationService(ServiceBase):
             return []
 
         persisted_items: list[dict] = []
+        multimodal_indexes: dict[int, dict[str, list[Sample]]] = {}
         with self.session_factory() as session:
             target_dataset = session.query(Dataset).filter(Dataset.id == target_dataset_id).first()
             if target_dataset is None:
@@ -520,15 +546,33 @@ class GenerationService(ServiceBase):
                 source_sample = None
                 if output.get("source_sample_id"):
                     source_sample = session.query(Sample).filter(Sample.id == output.get("source_sample_id")).first()
-                inherited_labels = output.get("labels")
-                if inherited_labels is None and source_sample is not None:
-                    inherited_labels = list(source_sample.labels_json or [])
+                source_labels = list(source_sample.labels_json or []) if source_sample is not None else []
+                inherited_labels, label_policy = self._resolve_output_labels(output, source_labels)
                 inherited_metadata = dict(output.get("metadata", {}) or {})
-                if inherited_labels:
+                inherited_metadata["label_policy"] = label_policy
+                if label_policy == "inherit" and inherited_labels:
                     inherited_metadata.setdefault("labels_inherited", True)
                     inherited_metadata.setdefault("source_labels", inherited_labels)
+                elif label_policy == "transformed":
+                    inherited_metadata.setdefault("labels_transformed", True)
+                elif label_policy == "drop":
+                    inherited_metadata.setdefault("labels_dropped", True)
+
+                generated_group_id = ""
+                if target_dataset.modality == "multimodal" and source_sample is not None and sample_role(source_sample) == "image":
+                    source_group_id = sample_group_id(source_sample)
+                    generated_group_id = f"{source_group_id}__generated_{task_id}_{len(persisted_items):06d}"
+                    inherited_metadata.update(
+                        {
+                            "multimodal_group_id": generated_group_id,
+                            "multimodal_role": "image",
+                            "source_multimodal_group_id": source_group_id,
+                        }
+                    )
 
                 requested_relative_path = output.get("relative_path") or output_path.name
+                if generated_group_id:
+                    requested_relative_path = (Path("groups") / generated_group_id / "image" / Path(requested_relative_path).name).as_posix()
                 generated_root = Path(target_dataset.storage_path) / "generated"
                 copied = self.file_indexer.copy_into_dataset(output_path, generated_root, requested_relative_path)
                 final_relative_path = copied.relative_to(generated_root).as_posix()
@@ -558,6 +602,15 @@ class GenerationService(ServiceBase):
                 )
                 session.add(row)
                 session.flush()
+                if generated_group_id and source_sample is not None:
+                    self._copy_multimodal_companions(
+                        session=session,
+                        source_sample=source_sample,
+                        target_dataset=target_dataset,
+                        generated_root=generated_root,
+                        generated_group_id=generated_group_id,
+                        indexes=multimodal_indexes,
+                    )
                 persisted_items.append(self._serialize_generation_output(session, row))
 
             self._refresh_dataset_stats(session, target_dataset)
@@ -570,6 +623,65 @@ class GenerationService(ServiceBase):
             )
             session.commit()
         return persisted_items
+
+    def _copy_multimodal_companions(
+        self,
+        *,
+        session,
+        source_sample: Sample,
+        target_dataset: Dataset,
+        generated_root: Path,
+        generated_group_id: str,
+        indexes: dict[int, dict[str, list[Sample]]],
+    ) -> None:
+        source_dataset_id = source_sample.dataset_id
+        if source_dataset_id not in indexes:
+            grouped: dict[str, list[Sample]] = {}
+            source_samples = (
+                session.query(Sample)
+                .filter(Sample.dataset_id == source_dataset_id, Sample.status != "deleted")
+                .all()
+            )
+            for sample in source_samples:
+                grouped.setdefault(sample_group_id(sample), []).append(sample)
+            indexes[source_dataset_id] = grouped
+
+        for companion in indexes[source_dataset_id].get(sample_group_id(source_sample), []):
+            role = sample_role(companion)
+            if companion.id == source_sample.id or role == "image":
+                continue
+            companion_path = Path(companion.file_path or "")
+            if not companion_path.is_file():
+                continue
+            relative_path = (
+                Path("groups") / generated_group_id / role / companion_path.name
+            ).as_posix()
+            copied = self.file_indexer.copy_into_dataset(companion_path, generated_root, relative_path)
+            metadata = sample_metadata(companion)
+            metadata.update(
+                {
+                    "multimodal_group_id": generated_group_id,
+                    "multimodal_role": role,
+                    "source_multimodal_group_id": sample_group_id(source_sample),
+                    "companion_copied": True,
+                }
+            )
+            self.dataset_repository.create_sample(
+                session,
+                dataset_id=target_dataset.id,
+                source_sample_id=companion.id,
+                name=copied.name,
+                modality=target_dataset.modality,
+                file_path=str(copied),
+                relative_path=copied.relative_to(generated_root).as_posix(),
+                sha256=self.file_indexer.compute_sha256(copied),
+                mime_type=self.file_indexer.detect_mime_type(copied),
+                extension=copied.suffix.lower(),
+                size_bytes=copied.stat().st_size,
+                status="generated",
+                metadata_json=metadata,
+                labels_json=list(companion.labels_json or []),
+            )
 
     def _persist_source_outputs(self, *, task_id: int, target_dataset_id: int, source_samples: list[Sample]) -> int:
         if not source_samples:
@@ -651,6 +763,28 @@ class GenerationService(ServiceBase):
             modality_breakdown=modality_breakdown,
         )
 
+    def _resolve_output_labels(self, output: dict, source_labels) -> tuple[list, str]:
+        policy_value = output.get("label_policy")
+        if policy_value is None:
+            policy = "transformed" if "labels" in output else "inherit"
+        else:
+            policy = str(policy_value).strip().lower()
+
+        if policy == "inherit":
+            labels = output.get("labels")
+            return list(source_labels or []) if labels is None else list(labels or []), policy
+        if policy == "transformed":
+            if "labels" not in output or output.get("labels") is None:
+                raise ValidationError("增强插件声明已变换标签，但没有返回 labels。")
+            return list(output.get("labels") or []), policy
+        if policy == "drop":
+            return [], policy
+        if policy == "unsupported":
+            if has_detection_labels(source_labels):
+                raise ValidationError("该增强会改变目标位置，但暂不支持检测框变换。")
+            return list(source_labels or []), "inherit"
+        raise ValidationError(f"未知的标签处理策略：{policy_value}")
+
     def _serialize_sample(self, sample: Sample) -> dict:
         return {
             "id": sample.id,
@@ -673,6 +807,31 @@ class GenerationService(ServiceBase):
             return True
         image_extensions = {".bmp", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp"}
         return path.suffix.lower() in image_extensions
+
+    def _algorithm_matches_dataset(self, algorithm_modality: str, dataset_modality: str, generation_mode: str) -> bool:
+        if algorithm_modality in {dataset_modality, "multimodal"}:
+            return True
+        return (
+            generation_mode == "independent"
+            and dataset_modality == "multimodal"
+            and algorithm_modality == "image"
+        )
+
+    def _samples_for_algorithm(self, samples: list[Sample], dataset_modality: str, algorithm_modality: str) -> list[Sample]:
+        if dataset_modality != "multimodal" or algorithm_modality != "image":
+            return samples
+        return [sample for sample in samples if sample_role(sample) == "image"]
+
+    def _unsafe_for_multimodal_companions(self, algorithm_key: str, dataset_modality: str) -> bool:
+        if dataset_modality != "multimodal":
+            return False
+        return algorithm_key in {
+            "generation.image.crop",
+            "generation.image.geometric_transform",
+            "generation.image.deformation_distortion",
+            "agl.image.geometric",
+            "agl.image.deformation",
+        }
 
     def _supports_pipeline(self, algorithm: Algorithm, modality: str) -> bool:
         input_contract = algorithm.input_contract_json or {}

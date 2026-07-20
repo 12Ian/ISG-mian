@@ -9,6 +9,7 @@ from .services import (
     DatasetService,
     EvaluationService,
     GenerationService,
+    ModelAssetService,
     SettingsService,
     TrainingService,
 )
@@ -33,6 +34,7 @@ class BackendServiceFacade:
     algorithm_service: AlgorithmService
     settings_service: SettingsService
     training_service: TrainingService
+    model_asset_service: ModelAssetService
 
     @classmethod
     def build(cls, *, paths: BackendPaths, session_factory):
@@ -75,7 +77,14 @@ class BackendServiceFacade:
             algorithm_repository=algorithm_repository,
             dataset_repository=dataset_repository,
         )
-        algorithm_service = AlgorithmService(paths=paths, session_factory=session_factory, algorithm_repository=algorithm_repository, log_repository=log_repository)
+        model_asset_service = ModelAssetService(paths=paths, session_factory=session_factory)
+        algorithm_service = AlgorithmService(
+            paths=paths,
+            session_factory=session_factory,
+            algorithm_repository=algorithm_repository,
+            log_repository=log_repository,
+            model_asset_service=model_asset_service,
+        )
         settings_service = SettingsService(paths=paths, session_factory=session_factory, settings_repository=settings_repository, log_repository=log_repository)
         return cls(
             paths=paths,
@@ -93,4 +102,5 @@ class BackendServiceFacade:
             training_service=training_service,
             algorithm_service=algorithm_service,
             settings_service=settings_service,
+            model_asset_service=model_asset_service,
         )

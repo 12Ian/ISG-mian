@@ -5,6 +5,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from core.sample_generation.detection_label_transform import transform_crop_labels
+
 from ._image_io import read_image, write_image
 
 PARAMETERS = [
@@ -69,6 +71,15 @@ def run(payload: dict, context) -> dict:
             y = np.random.randint(0, max(1, h - crop_h + 1))
 
         cropped = image[y:y + crop_h, x:x + crop_w].copy()
+        labels = transform_crop_labels(
+            sample.get("labels") or sample.get("labels_json") or [],
+            image_width=w,
+            image_height=h,
+            crop_x=x,
+            crop_y=y,
+            crop_width=crop_w,
+            crop_height=crop_h,
+        )
         output_path = output_dir / f"{Path(source_path).stem}_crop_{index:04d}{Path(source_path).suffix or '.jpg'}"
         if not write_image(output_path, cropped):
             return {"ok": False, "error_code": "IMAGE_WRITE_ERROR", "message": f"Cannot write image: {output_path}"}
@@ -77,7 +88,10 @@ def run(payload: dict, context) -> dict:
             "source_sample_id": sample.get("id"),
             "output_path": str(output_path),
             "relative_path": output_path.name,
+            "labels": labels,
+            "label_policy": "transformed",
             "metadata": {"method": "crop", "crop_ratio": crop_ratio, "crop_mode": crop_mode,
+                         "crop_region": {"x": int(x), "y": int(y), "width": crop_w, "height": crop_h},
                          "algorithm_key": payload.get("algorithm_key", "generation.image.crop")},
             "status": "created",
         })

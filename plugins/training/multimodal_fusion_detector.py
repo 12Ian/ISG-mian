@@ -9,6 +9,9 @@ from pathlib import Path
 import os, sys, json, logging, random
 import numpy as np
 
+from core.data_management.detection_annotations import sanitize_normalized_bbox
+from core.data_management.multimodal_association import sample_group_id, sample_role
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -58,6 +61,107 @@ def _resolve_dataset_dirs(dataset_root: str) -> tuple[str, str, str]:
     return "", "", ""
 
 
+def _collect_training_pairs(samples: list[dict], dataset_root: str) -> tuple[list[dict], list[str]]:
+    """优先读取 labels_json，并按多模态组关联图片与雷达；旧 YOLO 目录作为回退。"""
+    radar_by_group = {}
+    for sample in samples:
+        if sample_role(sample) == "radar":
+            path = sample.get("file_path") or sample.get("path") or ""
+            if path and os.path.isfile(path):
+                radar_by_group[sample_group_id(sample)] = path
+
+    raw_pairs = []
+    class_names = set()
+    for sample in samples:
+        path = sample.get("file_path") or sample.get("path") or ""
+        if sample_role(sample) != "image" or not _is_supported_image_path(path) or not os.path.isfile(path):
+            continue
+        labels = []
+        for label in sample.get("labels") or sample.get("labels_json") or []:
+            if not isinstance(label, dict):
+                continue
+            bbox = sanitize_normalized_bbox(label.get("bbox") or [])
+            class_value = label.get("class_name") or label.get("name")
+            if class_value in (None, "") and label.get("class_id") is not None:
+                class_value = f"class_{label.get('class_id')}"
+            class_name = str(class_value or "").strip()
+            if bbox is None or not class_name:
+                continue
+            labels.append({"class_name": class_name, "bbox": bbox})
+            class_names.add(class_name)
+        if labels:
+            raw_pairs.append(
+                {
+                    "img": path,
+                    "radar": radar_by_group.get(sample_group_id(sample)),
+                    "labels": labels,
+                }
+            )
+
+    if not raw_pairs:
+        raw_pairs, class_names = _collect_legacy_yolo_pairs(samples, dataset_root)
+
+    ordered_names = sorted(class_names, key=str.casefold)
+    class_to_id = {name: index for index, name in enumerate(ordered_names)}
+    for pair in raw_pairs:
+        for label in pair["labels"]:
+            label["class_id"] = class_to_id[label["class_name"]]
+    return raw_pairs, ordered_names
+
+
+def _collect_legacy_yolo_pairs(samples: list[dict], dataset_root: str) -> tuple[list[dict], set[str]]:
+    image_dir = radar_dir = label_dir = None
+    for sample in samples:
+        relative_path = sample.get("relative_path", "")
+        file_path = sample.get("file_path", sample.get("path", ""))
+        source = file_path or relative_path
+        if _is_radar_feature_file(source):
+            radar_dir = str(Path(file_path).parent) if file_path else ""
+        elif _is_yolo_label_file(source):
+            label_dir = str(Path(file_path).parent) if file_path else ""
+        elif _is_rgb_image_file(source):
+            image_dir = str(Path(file_path).parent) if file_path else ""
+    if not image_dir and dataset_root:
+        image_dir, radar_dir, label_dir = _resolve_dataset_dirs(dataset_root)
+    if not image_dir or not os.path.isdir(image_dir):
+        return [], set()
+
+    pairs = []
+    class_names = set()
+    for image_name in sorted(os.listdir(image_dir)):
+        if not image_name.lower().endswith((".jpg", ".jpeg", ".png")):
+            continue
+        stem = Path(image_name).stem
+        labels = []
+        label_path = os.path.join(label_dir or "", stem + ".txt")
+        if os.path.isfile(label_path):
+            with open(label_path, encoding="utf-8") as handle:
+                for line in handle:
+                    parts = line.strip().split()
+                    if len(parts) < 5:
+                        continue
+                    bbox = sanitize_normalized_bbox([float(value) for value in parts[1:5]])
+                    if bbox is None:
+                        continue
+                    class_name = f"class_{int(parts[0])}"
+                    labels.append({"class_name": class_name, "bbox": bbox})
+                    class_names.add(class_name)
+        if labels:
+            radar_path = os.path.join(radar_dir or "", stem + ".npz")
+            pairs.append(
+                {
+                    "img": os.path.join(image_dir, image_name),
+                    "radar": radar_path if os.path.isfile(radar_path) else None,
+                    "labels": labels,
+                }
+            )
+    return pairs, class_names
+
+
+def _is_supported_image_path(path_value: str) -> bool:
+    return Path(path_value).suffix.casefold() in {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"}
+
+
 def run(payload: dict, context) -> dict:
     try:
         return _run_training(payload, context)
@@ -83,74 +187,15 @@ def _run_training(payload: dict, context) -> dict:
     samples = inp.get("samples", [])
     dataset_root = inp.get("dataset_path", "")
 
-    image_dir = None; radar_dir = None; label_dir = None
-    for s in samples:
-        rp = s.get("relative_path", "")
-        fp = s.get("file_path", s.get("path", ""))
-        source = fp or rp
-        if _is_radar_feature_file(source):
-            radar_dir = str(Path(fp).parent) if fp else ""
-        elif _is_yolo_label_file(source):
-            label_dir = str(Path(fp).parent) if fp else ""
-        elif _is_rgb_image_file(source):
-            image_dir = str(Path(fp).parent) if fp else ""
-
-    # 回退: 从 dataset_path 推测
-    if not image_dir and dataset_root:
-        image_dir, radar_dir, label_dir = _resolve_dataset_dirs(dataset_root)
-
-    # 最后一招: 遍历样本找 images 目录下的真图
-    if not image_dir:
-        for s in samples:
-            fp = s.get("file_path", s.get("path", "")) or s.get("relative_path", "")
-            if _is_rgb_image_file(fp):
-                image_dir = str(Path(fp).parent)
-                break
-
-    if not image_dir or not os.path.isdir(image_dir):
-        return {"ok": False, "error_code": "NO_IMAGES", "message": "未找到图片目录"}
-
-    image_files = sorted([f for f in os.listdir(image_dir) if f.lower().endswith(('.jpg', '.png'))])
-    context.set_progress(1.0, f"图片: {len(image_files)}")
-
-    # 收集配对样本
-    paired = []
-    class_names = []
-    for img_name in image_files:
-        stem = os.path.splitext(img_name)[0]
-        img_path = os.path.join(image_dir, img_name)
-
-        radar_path = None
-        if radar_dir:
-            rp = os.path.join(radar_dir, stem + ".npz")
-            if os.path.isfile(rp):
-                radar_path = rp
-
-        labels = []
-        if label_dir:
-            lp = os.path.join(label_dir, stem + ".txt")
-            if os.path.isfile(lp):
-                with open(lp) as f:
-                    for line in f:
-                        parts = line.strip().split()
-                        if len(parts) >= 5:
-                            cls_id = int(parts[0])
-                            bbox = [float(x) for x in parts[1:5]]
-                            labels.append({"class_id": cls_id, "bbox": bbox})
-
-        if labels:
-            paired.append({"img": img_path, "radar": radar_path, "labels": labels})
-            for l in labels:
-                cn = f"class_{l['class_id']}"
-                if cn not in class_names:
-                    class_names.append(cn)
+    paired, class_names = _collect_training_pairs(samples, dataset_root)
+    context.set_progress(1.0, f"有效图片: {len(paired)}")
 
     if len(paired) < 10:
         return {"ok": False, "error_code": "INSUFFICIENT_DATA", "message": f"有效配对样本不足: {len(paired)}"}
 
-    class_names = sorted(class_names)
     nc = len(class_names)
-    context.set_progress(2.0, f"配对: {len(paired)}, 类别: {nc} (雷达: {sum(1 for p in paired if p['radar'])} 组)")
+    box_count = sum(len(pair["labels"]) for pair in paired)
+    context.set_progress(2.0, f"配对: {len(paired)}, 检测框: {box_count}, 类别: {nc} (雷达: {sum(1 for p in paired if p['radar'])} 组)")
 
     # 划分
     random.shuffle(paired)
@@ -217,12 +262,16 @@ def _run_training(payload: dict, context) -> dict:
 
     class FusionDataset(Dataset):
         def __init__(self, data):
-            self.data = data
+            self.data = [
+                (item, label)
+                for item in data
+                for label in item["labels"]
+            ]
         def __len__(self):
             return len(self.data)
         def __getitem__(self, idx):
             from PIL import Image
-            item = self.data[idx]
+            item, lbl = self.data[idx]
             img = tf(Image.open(item["img"]).convert("RGB"))
             has_radar = 1.0 if item["radar"] else 0.0
             radar = torch.zeros(3, img_size, img_size)
@@ -235,8 +284,6 @@ def _run_training(payload: dict, context) -> dict:
                     radar = rd
                 except:
                     pass
-            # 标签: 取第一个 bbox + class
-            lbl = item["labels"][0]
             cls_id = lbl["class_id"]
             bbox = lbl["bbox"]  # YOLO format: cx,cy,w,h
             return img, radar, torch.tensor(has_radar), torch.tensor(cls_id, dtype=torch.long), torch.tensor(bbox, dtype=torch.float32)
@@ -299,8 +346,16 @@ def _run_training(payload: dict, context) -> dict:
             break
 
     # 保存测试集
-    np.savez(out_dir / "test_data.npz", test_pairs=np.array([p["img"] for p in test_data]),
-             test_labels=json.dumps([{"class_id": p["labels"][0]["class_id"], "bbox": p["labels"][0]["bbox"]} for p in test_data]))
+    test_records = [
+        {"image": pair["img"], "class_id": label["class_id"], "bbox": label["bbox"]}
+        for pair in test_data
+        for label in pair["labels"]
+    ]
+    np.savez(
+        out_dir / "test_data.npz",
+        test_pairs=np.array([record["image"] for record in test_records]),
+        test_labels=json.dumps(test_records, ensure_ascii=False),
+    )
 
     context.set_progress(98.0, f"最佳验证精度: {best_val_acc:.1f}%")
     return {"ok": True, "outputs": [{"artifact_path": str(best_path),

@@ -9,6 +9,13 @@ from .._compat import to_local_isoformat
 from .._compat import slots_dataclass
 from pathlib import Path
 
+from core.data_management.detection_annotations import (
+    AnnotationFormatError,
+    scan_detection_dataset,
+    summarize_annotation_errors,
+)
+from core.data_management.multimodal_association import with_multimodal_association
+
 from ..errors import NotFoundError, ValidationError
 from ..models import Dataset, Sample
 from ..storage import FileIndexer
@@ -30,7 +37,7 @@ def _normalize_manifest_label(label) -> dict:
         if class_id is not None:
             result["class_id"] = int(class_id)
         # 保留其他字段
-        for key in ("split", "confidence", "area"):
+        for key in ("split", "confidence", "area", "bbox_format", "source_format", "source_class_id"):
             val = label.get(key)
             if val is not None:
                 result[key] = val
@@ -395,6 +402,10 @@ class DatasetService(ServiceBase):
         folder = Path(folder_path)
         if not folder.is_dir():
             raise ValidationError("Import folder does not exist.")
+        with self.session_factory() as session:
+            dataset_modality = self._require_dataset(
+                session, dataset_id, include_deleted=False
+            ).modality
 
         # Build label lookup from manifest if present
         label_map: dict[str, list[dict]] = {}
@@ -419,9 +430,36 @@ class DatasetService(ServiceBase):
                 logging.getLogger("isg").warning(f"Failed to parse manifest: {traceback.format_exc()}")
 
         records = []
-        yolo_records = [] if label_map else self._collect_yolo_detection_records(folder)
-        if yolo_records:
-            records = yolo_records
+        detection_scan = None
+        if not label_map:
+            try:
+                detection_scan = scan_detection_dataset(folder)
+            except AnnotationFormatError as exc:
+                raise ValidationError(str(exc)) from exc
+            if detection_scan and detection_scan["report"].get("errors"):
+                raise ValidationError(summarize_annotation_errors(detection_scan["report"]))
+        detection_records = detection_scan["records"] if detection_scan else []
+        if detection_records and dataset_modality == "multimodal":
+            detection_by_path = {
+                Path(record["relative_path"]).as_posix(): record
+                for record in detection_records
+            }
+            paths = folder.rglob("*") if include_subfolders else folder.iterdir()
+            for path in paths:
+                if not path.is_file() or path.name == "dataset_manifest.json" or not self._is_supported_import_file(path):
+                    continue
+                relative_path = path.relative_to(folder).as_posix() if include_subfolders else path.name
+                detection_record = detection_by_path.get(relative_path)
+                records.append(
+                    {
+                        "source_path": path,
+                        "relative_path": relative_path,
+                        "labels": list((detection_record or {}).get("labels", [])),
+                        "metadata": dict((detection_record or {}).get("metadata", {})),
+                    }
+                )
+        elif detection_records:
+            records = detection_records
         elif include_subfolders:
             for path in folder.rglob("*"):
                 if path.is_file() and path.name != "dataset_manifest.json" and self._is_supported_import_file(path):
@@ -457,9 +495,12 @@ class DatasetService(ServiceBase):
                 rel_path = Path(record["relative_path"]).as_posix()
                 labels = list(record.get("labels", [])) or label_map.get(rel_path, [])
                 # 无manifest标签时，从子文件夹名推断标签
-                if not labels and not yolo_records and "/" in rel_path:
+                if not labels and not detection_records and dataset.modality != "multimodal" and "/" in rel_path:
                     inferred = rel_path.split("/")[0]
                     labels = [{"type": "classification", "class_name": inferred, "source": "folder_name"}]
+                metadata = dict(record.get("metadata", {}))
+                if dataset.modality == "multimodal":
+                    metadata = with_multimodal_association(metadata, rel_path)
                 sample = self.dataset_repository.create_sample(
                     session,
                     dataset_id=dataset.id,
@@ -473,7 +514,7 @@ class DatasetService(ServiceBase):
                     extension=copied.suffix.lower(),
                     size_bytes=copied.stat().st_size,
                     status="raw",
-                    metadata_json={},
+                    metadata_json=metadata,
                     labels_json=labels,
                 )
                 imported_count += 1
@@ -503,10 +544,24 @@ class DatasetService(ServiceBase):
                 extra["class_distribution"] = class_dist
                 extra["label_mode"] = "manifest"
                 dataset.extra_json = extra
+            elif detection_scan:
+                extra = dict(dataset.extra_json or {})
+                extra["label_mode"] = "detection_annotation"
+                extra["import_format"] = f"{detection_scan['format']}_detection"
+                extra["annotation_report"] = detection_scan["report"]
+                dataset.extra_json = extra
             self._refresh_dataset_stats(session, dataset)
             self._write_dataset_manifest(session, dataset)
             session.commit()
-            return {"ok": True, "data": {"imported_count": imported_count, "failed_count": failed_count, "errors": errors}}
+            return {
+                "ok": True,
+                "data": {
+                    "imported_count": imported_count,
+                    "failed_count": failed_count,
+                    "errors": errors,
+                    "annotation_report": detection_scan["report"] if detection_scan else None,
+                },
+            }
 
     def import_dataset_bundle(self, payload: dict) -> dict:
         source_path = Path((payload or {}).get("source_path", "")).expanduser()
@@ -656,6 +711,11 @@ class DatasetService(ServiceBase):
         samples_dict = manifest.get("samples", {})
         if not samples_dict:
             raise ValidationError("Manifest contains no samples.")
+        manifest_is_detection = any(
+            isinstance(label, dict) and len(label.get("bbox", [])) >= 4
+            for entry in samples_dict.values()
+            for label in (entry.get("labels") or [])
+        )
 
         train_records: list[dict] = []
         test_records: list[dict] = []
@@ -675,7 +735,12 @@ class DatasetService(ServiceBase):
                 "relative_path": rel_path,
                 "class_name": class_name,
                 "labels": labels_json,
-                "metadata": {"source_path": str(full_path), "label_source": "manifest", "split": split},
+                "metadata": {
+                    "source_path": str(full_path),
+                    "label_source": "manifest",
+                    "annotation_format": "manifest" if manifest_is_detection else "",
+                    "split": split,
+                },
                 "split": split,
                 "sample_modality": self._guess_modality(full_path),
                 "import_format": "manifest",
@@ -855,13 +920,18 @@ class DatasetService(ServiceBase):
             return records, "path_label_file"
 
         if data_path.is_dir():
+            try:
+                detection_scan = scan_detection_dataset(data_path, default_split=split)
+            except AnnotationFormatError as exc:
+                raise ValidationError(str(exc)) from exc
+            if detection_scan:
+                if detection_scan["report"].get("errors"):
+                    raise ValidationError(summarize_annotation_errors(detection_scan["report"]))
+                return detection_scan["records"], f"{detection_scan['format']}_detection"
             list_file = self._find_first_existing(data_path, ["train_abs.txt", "kfold_train.txt", "labels.txt", "annotations.txt"])
             if list_file:
                 records = self._parse_path_label_file(list_file, data_path, split)
                 return records, "path_label_file"
-            yolo_records = self._collect_yolo_detection_records(data_path, default_split=split)
-            if yolo_records:
-                return yolo_records, "yolo_detection"
             records = self._infer_folder_tree_records(data_path, split=split)
             return records, "folder_tree"
 
@@ -1681,6 +1751,9 @@ class DatasetService(ServiceBase):
         if not isinstance(label, dict):
             return {}
         payload: dict[str, object] = {}
+        label_type = str(label.get("type") or "").strip()
+        if label_type:
+            payload["type"] = label_type
         class_name = label.get("class_name", label.get("name", ""))
         if class_name not in (None, ""):
             payload["class_name"] = str(class_name)
@@ -1696,6 +1769,10 @@ class DatasetService(ServiceBase):
                 payload["bbox"] = [float(value) for value in bbox[:4]]
             except (TypeError, ValueError):
                 pass
+        for key in ("bbox_format", "source_format", "source_class_id"):
+            value = label.get(key)
+            if value not in (None, ""):
+                payload[key] = value
         return payload
 
     def _format_split_ratio(self, split_counts: dict[str, int]) -> str:

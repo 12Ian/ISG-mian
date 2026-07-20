@@ -5,6 +5,11 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from core.sample_generation.detection_label_transform import (
+    has_detection_labels,
+    transform_remap_labels,
+)
+
 from ._image_io import read_image, write_image
 
 
@@ -67,10 +72,13 @@ def run(payload: dict, context) -> dict:
         return {"ok": False, "error_code": "NO_INPUT_SAMPLES", "message": "未提供源样本。"}
 
     target_count = max(1, int(payload.get("target_count") or len(samples)))
-    elastic_strength = float(parameters.get("elastic_strength", parameters.get("弹性强度", 8.0)) or 8.0)
-    elastic_sigma = float(parameters.get("elastic_gaussian_kernel", parameters.get("elastic_sigma", parameters.get("弹性高斯核", 10.0))) or 10.0)
-    k1 = float(parameters.get("distortion_k1", parameters.get("k1", parameters.get("畸变系数k1", 0.18))) or 0.18)
-    k2 = float(parameters.get("distortion_k2", parameters.get("k2", parameters.get("畸变系数k2", 0.03))) or 0.03)
+    elastic_strength = _as_float(parameters.get("elastic_strength", parameters.get("弹性强度", 8.0)), 8.0)
+    elastic_sigma = _as_float(
+        parameters.get("elastic_gaussian_kernel", parameters.get("elastic_sigma", parameters.get("弹性高斯核", 10.0))),
+        10.0,
+    )
+    k1 = _as_float(parameters.get("distortion_k1", parameters.get("k1", parameters.get("畸变系数k1", 0.18))), 0.18)
+    k2 = _as_float(parameters.get("distortion_k2", parameters.get("k2", parameters.get("畸变系数k2", 0.03))), 0.03)
 
     outputs = []
     for index in range(target_count):
@@ -88,6 +96,10 @@ def run(payload: dict, context) -> dict:
 
         out = img
         h, w = img.shape[:2]
+        source_labels = sample.get("labels") or sample.get("labels_json") or []
+        transform_detection_labels = has_detection_labels(source_labels)
+        composed_map_x = None
+        composed_map_y = None
 
         # 弹性形变
         if elastic_strength > 0:
@@ -103,6 +115,13 @@ def run(payload: dict, context) -> dict:
             map_x = (x + dx).astype(np.float32)
             map_y = (y + dy).astype(np.float32)
             out = cv2.remap(out, map_x, map_y, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
+            if transform_detection_labels:
+                composed_map_x, composed_map_y = _compose_remap(
+                    composed_map_x,
+                    composed_map_y,
+                    map_x,
+                    map_y,
+                )
 
         # 径向畸变
         if k1 != 0.0 or k2 != 0.0:
@@ -116,6 +135,31 @@ def run(payload: dict, context) -> dict:
             map_x = ((x_dist + 1.0) * 0.5 * (w - 1)).astype(np.float32)
             map_y = ((y_dist + 1.0) * 0.5 * (h - 1)).astype(np.float32)
             out = cv2.remap(out, map_x, map_y, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
+            if transform_detection_labels:
+                composed_map_x, composed_map_y = _compose_remap(
+                    composed_map_x,
+                    composed_map_y,
+                    map_x,
+                    map_y,
+                )
+
+        if transform_detection_labels:
+            if composed_map_x is None:
+                composed_map_x, composed_map_y = np.meshgrid(
+                    np.arange(w, dtype=np.float32),
+                    np.arange(h, dtype=np.float32),
+                )
+            labels = transform_remap_labels(
+                source_labels,
+                image_width=w,
+                image_height=h,
+                map_x=composed_map_x,
+                map_y=composed_map_y,
+            )
+            label_policy = "transformed"
+        else:
+            labels = list(source_labels)
+            label_policy = "inherit"
 
         output_path = output_dir / f"{source_path.stem}_deform_{index:04d}{source_path.suffix or '.jpg'}"
         if not write_image(output_path, out):
@@ -125,9 +169,12 @@ def run(payload: dict, context) -> dict:
             "source_sample_id": sample.get("id"),
             "output_path": str(output_path),
             "relative_path": output_path.name,
+            "labels": labels,
+            "label_policy": label_policy,
             "metadata": {
                 "method": "deformation_distortion",
                 "algorithm_key": payload.get("algorithm_key", "generation.image.deformation_distortion"),
+                "label_transform": "remap" if transform_detection_labels else "inherit",
                 "parameters": {"elastic_strength": elastic_strength, "elastic_sigma": elastic_sigma, "k1": k1, "k2": k2},
             },
             "status": "created",
@@ -135,3 +182,30 @@ def run(payload: dict, context) -> dict:
         context.set_progress((index + 1) * 100 / target_count, f"形变畸变 {index + 1}/{target_count}")
 
     return {"ok": True, "outputs": outputs, "logs": []}
+
+
+def _compose_remap(composed_map_x, composed_map_y, map_x, map_y):
+    if composed_map_x is None:
+        return map_x, map_y
+    return (
+        cv2.remap(
+            composed_map_x,
+            map_x,
+            map_y,
+            interpolation=cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_REFLECT,
+        ),
+        cv2.remap(
+            composed_map_y,
+            map_x,
+            map_y,
+            interpolation=cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_REFLECT,
+        ),
+    )
+
+
+def _as_float(value, default: float) -> float:
+    if value in (None, ""):
+        return float(default)
+    return float(value)

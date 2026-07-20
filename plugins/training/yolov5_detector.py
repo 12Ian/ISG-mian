@@ -6,7 +6,11 @@ YOLOv5 目标检测训练插件。
 """
 from __future__ import annotations
 from pathlib import Path
-import os, sys, shutil, json, yaml
+import os, sys, shutil, json, re, yaml
+
+import utils as _shared_utils  # 预加载合并后的项目/YOLOv5 utils，避免同名模块抢占。
+from core.data_management.detection_annotations import sanitize_normalized_bbox
+from core.hardware_adapter import resolve_yolo_device
 
 
 _YOLOV5_ROOT = Path(__file__).resolve().parent.parent / "detection" / "yolov5_core"
@@ -98,8 +102,8 @@ PARAMETERS = [
         "default": "",
         "min": None,
         "max": None,
-        "options": ["", "0", "1", "cpu"],
-        "description": "GPU 设备号 (空=自动选择)",
+        "options": ["", "0", "1", "0,1", "cpu"],
+        "description": "训练设备：支持自动、单显卡、双显卡和 CPU",
         "required": False,
     },
 ]
@@ -143,12 +147,33 @@ def _run_training(payload: dict, context) -> dict:
     if not samples:
         return {"ok": False, "error_code": "NO_SAMPLES", "message": "数据集无样本"}
 
-    # 从样本 labels 提取 bbox，跳过无 bbox 的样本
+    # 检测数据允许显式的无目标负样本，但普通无标签图片不能混入训练。
     valid_samples = []
     for s in samples:
         labels = _parse_labels(s.get("labels", []))
-        bboxes = [l for l in labels if len(l.get("bbox", [])) >= 4]
-        if bboxes:
+        bboxes = []
+        for label in labels:
+            bbox = label.get("bbox", [])
+            if len(bbox) < 4:
+                continue
+            normalized_bbox = sanitize_normalized_bbox(bbox)
+            if normalized_bbox is None:
+                return {
+                    "ok": False,
+                    "error_code": "INVALID_BBOX",
+                    "message": f"样本 {s.get('name', '')} 包含无效或未归一化的 bbox: {bbox}",
+                }
+            bboxes.append({
+                **label,
+                "class_name": _label_class_name(label),
+                "bbox": normalized_bbox,
+                "bbox_format": "cxcywh_normalized",
+            })
+        metadata = s.get("metadata", {}) or {}
+        is_detection_sample = any(label.get("type") == "detection" for label in labels) or bool(
+            metadata.get("annotation_format")
+        )
+        if bboxes or is_detection_sample:
             valid_samples.append({**s, "_bboxes": bboxes})
     if not valid_samples:
         return {"ok": False, "error_code": "NO_BBOX",
@@ -156,7 +181,12 @@ def _run_training(payload: dict, context) -> dict:
 
     context.set_progress(1.0, f"有效样本: {len(valid_samples)}/{len(samples)}")
 
-    # 按类别随机划分训练/验证/测试集
+    class_names = _collect_class_names(valid_samples)
+    if not class_names:
+        return {"ok": False, "error_code": "NO_CLASS", "message": "检测标注中没有有效类别名称"}
+    class_to_id = {class_name: index for index, class_name in enumerate(class_names)}
+
+    # 优先保留来源数据划分；否则执行确定性的多标签分层划分。
     train_samples, val_samples, test_samples = _split_train_val_test(valid_samples, train_ratio, val_ratio)
     context.set_progress(2.0, f"train={len(train_samples)} val={len(val_samples)} test={len(test_samples)}")
 
@@ -165,22 +195,28 @@ def _run_training(payload: dict, context) -> dict:
     test_paths_file.write_text(json.dumps([s.get("file_path", s.get("path", "")) for s in test_samples]),
                                encoding="utf-8")
 
-    # 收集类别
-    class_names = _collect_class_names(valid_samples)
     context.set_progress(3.0, f"类别: {class_names}")
 
     # 生成 YOLO 数据目录
     yolo_dir = out_dir / "yolo_data"
+    if yolo_dir.is_dir():
+        shutil.rmtree(yolo_dir)
     yolo_dir.mkdir(parents=True, exist_ok=True)
-    _write_yolo_split(train_samples, yolo_dir / "train" / "images", yolo_dir / "train" / "labels")
-    _write_yolo_split(val_samples, yolo_dir / "val" / "images", yolo_dir / "val" / "labels")
+    _write_yolo_split(
+        train_samples, yolo_dir / "train" / "images", yolo_dir / "train" / "labels", class_to_id
+    )
+    _write_yolo_split(
+        val_samples, yolo_dir / "val" / "images", yolo_dir / "val" / "labels", class_to_id
+    )
     if test_samples:
-        _write_yolo_split(test_samples, yolo_dir / "test" / "images", yolo_dir / "test" / "labels")
+        _write_yolo_split(
+            test_samples, yolo_dir / "test" / "images", yolo_dir / "test" / "labels", class_to_id
+        )
 
     # 生成 data.yaml
     data_yaml = out_dir / "data.yaml"
     yaml_data = {
-        "path": str(yolo_dir),
+        "path": yolo_dir.resolve().as_posix(),
         "train": "train/images",
         "val": "val/images",
         "nc": len(class_names),
@@ -189,7 +225,21 @@ def _run_training(payload: dict, context) -> dict:
     if test_samples:
         yaml_data["test"] = "test/images"
     with open(data_yaml, "w", encoding="utf-8") as f:
-        yaml.dump(yaml_data, f)
+        yaml.safe_dump(yaml_data, f, allow_unicode=True, sort_keys=False)
+
+    conversion_report = _build_conversion_report(
+        valid_samples,
+        class_to_id,
+        train_samples,
+        val_samples,
+        test_samples,
+        train_ratio,
+        val_ratio,
+    )
+    conversion_report_path = out_dir / "conversion_report.json"
+    conversion_report_path.write_text(
+        json.dumps(conversion_report, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
     # 权重和模型配置路径
     weights_arg = _resolve_weights_path(weights)
@@ -199,8 +249,16 @@ def _run_training(payload: dict, context) -> dict:
             "error_code": "OFFLINE_WEIGHT_MISSING",
             "message": f"离线权重不存在: {weights}。请选择内置 yolov5n.pt 或从头训练。",
         }
+    incompatible_message = _yolov5_weights_incompatibility(weights_arg)
+    if incompatible_message:
+        return {
+            "ok": False,
+            "error_code": "INCOMPATIBLE_MODEL",
+            "message": incompatible_message,
+        }
     model_cfg_path = _YOLOV5_ROOT / model_cfg
-    model_cfg_arg = str(model_cfg_path) if model_cfg_path.is_file() else ""
+    # 预训练 checkpoint 自带网络结构；model_yaml 只用于空权重的从头训练。
+    model_cfg_arg = "" if weights else (str(model_cfg_path) if model_cfg_path.is_file() else "")
 
     # 导入 YOLOv5
     if str(_YOLOV5_ROOT) not in sys.path:
@@ -226,8 +284,12 @@ def _run_training(payload: dict, context) -> dict:
         context.set_progress(pct, f"Epoch {tracker.current}/{epochs}")
     callbacks.register_action("on_fit_epoch_end", callback=_report_progress)
 
-    context.set_progress(4.0, f"YOLOv5 训练启动: epochs={epochs} batch={batch_size} imgsz={img_size}")
-    device_str = device or ("0" if torch.cuda.is_available() else "cpu")
+    device_str, device_warning = resolve_yolo_device(device, torch)
+    context.set_progress(
+        4.0,
+        f"{device_warning} YOLOv5 训练启动: epochs={epochs} batch={batch_size} "
+        f"imgsz={img_size} device={device_str}".strip(),
+    )
 
     try:
         opt = yolo_train.run(
@@ -249,6 +311,16 @@ def _run_training(payload: dict, context) -> dict:
         )
     except Exception as exc:
         import traceback
+        if isinstance(exc, KeyError) and exc.args == ("anchors",):
+            return {
+                "ok": False,
+                "error_code": "INCOMPATIBLE_MODEL",
+                "message": (
+                    f"{Path(weights_arg).name} 不包含传统 YOLOv5 所需的 anchors 配置，"
+                    "不能由当前训练引擎加载。请改用 yolov5n.pt、yolov5s.pt 等传统 "
+                    "YOLOv5 权重；YOLOv5u 权重需要独立的 Ultralytics 训练插件。"
+                ),
+            }
         return {"ok": False, "error_code": "TRAINING_FAILED",
                 "message": f"YOLOv5 训练失败: {exc}\n{traceback.format_exc()}"}
 
@@ -276,12 +348,17 @@ def _run_training(payload: dict, context) -> dict:
                 "epochs": epochs,
                 "img_size": img_size,
                 "class_names": class_names,
+                "class_to_id": class_to_id,
+                "device": device_str,
+                "device_warning": device_warning,
                 "train_count": len(train_samples),
                 "val_count": len(val_samples),
                 "test_count": len(test_samples),
+                "data_yaml": data_yaml.resolve().as_posix(),
+                "conversion_report": conversion_report_path.resolve().as_posix(),
             },
         }],
-        "logs": [f"YOLOv5 complete: {best_pt}"],
+        "logs": ([device_warning] if device_warning else []) + [f"YOLOv5 complete: {best_pt}"],
     }
 
 
@@ -317,43 +394,256 @@ def _resolve_weights_path(weights: str) -> str:
     return weights
 
 
-def _split_train_val_test(samples, train_ratio, val_ratio):
-    """按类别随机划分训练/验证/测试集。"""
-    import random
-    by_class = {}
-    for s in samples:
-        bboxes = s.get("_bboxes", [])
-        cn = bboxes[0].get("class_name", "unknown") if bboxes else "unknown"
-        by_class.setdefault(cn, []).append(s)
+def _yolov5_weights_incompatibility(weights: str) -> str:
+    """在启动训练前拦截官方 anchor-free YOLOv5u 权重。"""
+    filename = Path(str(weights or "")).name
+    if re.fullmatch(
+        r"yolov5(?:n|s|m|l|x)(?:6)?u(?:_\d+)?\.pt",
+        filename.casefold(),
+    ):
+        return (
+            f"{filename} 是 anchor-free YOLOv5u 模型，不能由当前传统 YOLOv5训练引擎加载。"
+            "请改用 yolov5n.pt、yolov5s.pt 等传统 YOLOv5 权重，"
+            "或使用独立的 Ultralytics 训练插件。"
+        )
+    return ""
 
-    train, val, test = [], [], []
-    for items in by_class.values():
-        random.shuffle(items)
-        n = len(items)
-        nt = max(1, int(n * train_ratio))
-        nv = max(1, int(n * val_ratio))
-        if nt + nv >= n:
-            nt = max(1, n - 2)
-            nv = max(1, n - nt - 1)
-        train.extend(items[:nt])
-        val.extend(items[nt:nt + nv])
-        test.extend(items[nt + nv:])
-    return train, val, test
+
+def _split_train_val_test(samples, train_ratio, val_ratio):
+    """按每个类别的目标框数量联合分层，来源目录划分不覆盖训练比例参数。"""
+    return _greedy_multilabel_split(samples, train_ratio, val_ratio)
+
+
+def _greedy_multilabel_split(samples, train_ratio, val_ratio):
+    if not samples:
+        return [], [], []
+
+    split_names = ("train", "val", "test")
+    target_sizes = dict(zip(split_names, _target_split_sizes(len(samples), train_ratio, val_ratio)))
+    ratios = _normalized_split_ratios(train_ratio, val_ratio)
+    class_counts = {}
+    sample_class_counts = {}
+    for sample in samples:
+        counts = _sample_class_box_counts(sample)
+        sample_class_counts[id(sample)] = counts
+        for class_name, count in counts.items():
+            class_counts[class_name] = class_counts.get(class_name, 0) + count
+
+    target_class_counts = {
+        class_name: dict(zip(split_names, _allocate_integer_targets(total, ratios)))
+        for class_name, total in class_counts.items()
+    }
+
+    ordered = sorted(
+        samples,
+        key=lambda sample: (
+            min(
+                (class_counts[name] for name in sample_class_counts[id(sample)]),
+                default=sum(class_counts.values()) + 1,
+            ),
+            -sum(sample_class_counts[id(sample)].values()),
+            -len(sample_class_counts[id(sample)]),
+            _sample_key(sample),
+        ),
+    )
+    assigned = {name: [] for name in split_names}
+    assigned_class_counts = {name: {} for name in split_names}
+
+    for sample in ordered:
+        counts = sample_class_counts[id(sample)]
+        candidates = [name for name in split_names if len(assigned[name]) < target_sizes[name]]
+        if not candidates:
+            candidates = ["train"]
+
+        def score(split_name):
+            error_reduction = 0.0
+            remaining_need = 0.0
+            for class_name, added_count in counts.items():
+                target = target_class_counts[class_name][split_name]
+                current = assigned_class_counts[split_name].get(class_name, 0)
+                before_error = abs(target - current) / class_counts[class_name]
+                after_error = abs(target - current - added_count) / class_counts[class_name]
+                error_reduction += before_error - after_error
+                remaining_need += max(target - current, 0) * added_count / class_counts[class_name]
+            size_target = max(target_sizes[split_name], 1)
+            size_deficit = (target_sizes[split_name] - len(assigned[split_name])) / size_target
+            return error_reduction, remaining_need, size_deficit, -split_names.index(split_name)
+
+        selected = max(candidates, key=score)
+        assigned[selected].append(sample)
+        for class_name, added_count in counts.items():
+            current = assigned_class_counts[selected].get(class_name, 0)
+            assigned_class_counts[selected][class_name] = current + added_count
+
+    _improve_multilabel_assignment(
+        assigned,
+        assigned_class_counts,
+        sample_class_counts,
+        target_class_counts,
+        class_counts,
+    )
+    return assigned["train"], assigned["val"], assigned["test"]
+
+
+def _improve_multilabel_assignment(
+    assigned,
+    assigned_class_counts,
+    sample_class_counts,
+    target_class_counts,
+    class_counts,
+):
+    """在不改变各集合图片数的前提下交换图片，继续降低各类别比例误差。"""
+    split_names = ("train", "val", "test")
+    max_iterations = min(sum(len(items) for items in assigned.values()) * 2, 1000)
+    for _ in range(max_iterations):
+        signature_groups = {}
+        for split_name in split_names:
+            groups = {}
+            for index, sample in enumerate(assigned[split_name]):
+                signature = tuple(sorted(sample_class_counts[id(sample)].items()))
+                groups.setdefault(signature, (index, sample))
+            signature_groups[split_name] = groups
+
+        best_swap = None
+        best_improvement = 1e-12
+        for left_index, left_name in enumerate(split_names):
+            for right_name in split_names[left_index + 1:]:
+                left_groups = signature_groups[left_name]
+                right_groups = signature_groups[right_name]
+                for left_signature in sorted(left_groups):
+                    for right_signature in sorted(right_groups):
+                        if left_signature == right_signature:
+                            continue
+                        improvement = _swap_error_improvement(
+                            left_name,
+                            right_name,
+                            dict(left_signature),
+                            dict(right_signature),
+                            assigned_class_counts,
+                            target_class_counts,
+                            class_counts,
+                        )
+                        if improvement > best_improvement:
+                            best_improvement = improvement
+                            best_swap = (
+                                left_name,
+                                right_name,
+                                left_groups[left_signature],
+                                right_groups[right_signature],
+                            )
+
+        if best_swap is None:
+            break
+
+        left_name, right_name, (left_pos, left_sample), (right_pos, right_sample) = best_swap
+        left_counts = sample_class_counts[id(left_sample)]
+        right_counts = sample_class_counts[id(right_sample)]
+        assigned[left_name][left_pos], assigned[right_name][right_pos] = right_sample, left_sample
+        for class_name in set(left_counts) | set(right_counts):
+            assigned_class_counts[left_name][class_name] = (
+                assigned_class_counts[left_name].get(class_name, 0)
+                - left_counts.get(class_name, 0)
+                + right_counts.get(class_name, 0)
+            )
+            assigned_class_counts[right_name][class_name] = (
+                assigned_class_counts[right_name].get(class_name, 0)
+                - right_counts.get(class_name, 0)
+                + left_counts.get(class_name, 0)
+            )
+
+
+def _swap_error_improvement(
+    left_name,
+    right_name,
+    left_counts,
+    right_counts,
+    assigned_class_counts,
+    target_class_counts,
+    class_counts,
+):
+    improvement = 0.0
+    for class_name in set(left_counts) | set(right_counts):
+        total = class_counts[class_name]
+        left_current = assigned_class_counts[left_name].get(class_name, 0)
+        right_current = assigned_class_counts[right_name].get(class_name, 0)
+        left_target = target_class_counts[class_name][left_name]
+        right_target = target_class_counts[class_name][right_name]
+        before = (
+            abs(left_target - left_current) + abs(right_target - right_current)
+        ) / total
+        left_after = left_current - left_counts.get(class_name, 0) + right_counts.get(class_name, 0)
+        right_after = right_current - right_counts.get(class_name, 0) + left_counts.get(class_name, 0)
+        after = (
+            abs(left_target - left_after) + abs(right_target - right_after)
+        ) / total
+        improvement += before - after
+    return improvement
+
+
+def _target_split_sizes(sample_count, train_ratio, val_ratio):
+    train_ratio, val_ratio, test_ratio = _normalized_split_ratios(train_ratio, val_ratio)
+
+    train_count = max(1, int(round(sample_count * train_ratio)))
+    val_count = int(round(sample_count * val_ratio))
+    if sample_count >= 2 and val_ratio > 0:
+        val_count = max(1, val_count)
+    if train_count + val_count > sample_count:
+        train_count = max(1, sample_count - val_count)
+    test_count = sample_count - train_count - val_count
+    if sample_count >= 3 and test_ratio > 0 and test_count == 0 and train_count > 1:
+        train_count -= 1
+        test_count = 1
+    return train_count, val_count, test_count
+
+
+def _normalized_split_ratios(train_ratio, val_ratio):
+    train_ratio = min(max(float(train_ratio), 0.0), 1.0)
+    val_ratio = min(max(float(val_ratio), 0.0), 1.0 - train_ratio)
+    return train_ratio, val_ratio, max(0.0, 1.0 - train_ratio - val_ratio)
+
+
+def _allocate_integer_targets(total, ratios):
+    raw_targets = [total * ratio for ratio in ratios]
+    targets = [int(value) for value in raw_targets]
+    remaining = total - sum(targets)
+    order = sorted(
+        range(len(ratios)),
+        key=lambda index: (
+            round(raw_targets[index] - targets[index], 12),
+            round(ratios[index], 12),
+            -index,
+        ),
+        reverse=True,
+    )
+    for index in order[:remaining]:
+        targets[index] += 1
+    return targets
+
+
+def _sample_class_box_counts(sample):
+    counts = {}
+    for label in sample.get("_bboxes", []):
+        class_name = _label_class_name(label)
+        counts[class_name] = counts.get(class_name, 0) + 1
+    return counts
 
 
 def _collect_class_names(samples):
-    names = []
-    for s in samples:
-        for lbl in s.get("_bboxes", []):
-            cn = lbl.get("class_name", "")
-            if cn and cn not in names:
-                names.append(str(cn))
-    return names if names else ["ship"]
+    return sorted(
+        {
+            _label_class_name(label)
+            for sample in samples
+            for label in sample.get("_bboxes", [])
+            if _label_class_name(label)
+        },
+        key=str.casefold,
+    )
 
 
-def _write_yolo_split(samples, img_dir, lbl_dir):
+def _write_yolo_split(samples, img_dir, lbl_dir, class_to_id):
     img_dir.mkdir(parents=True, exist_ok=True)
     lbl_dir.mkdir(parents=True, exist_ok=True)
+    used_names = set()
 
     for s in samples:
         src = s.get("path", s.get("file_path", ""))
@@ -361,10 +651,7 @@ def _write_yolo_split(samples, img_dir, lbl_dir):
             continue
 
         bboxes = s.get("_bboxes", [])
-        if not bboxes:
-            continue
-
-        name = s.get("name", os.path.basename(src))
+        name = _sample_output_name(s, src, used_names)
         stem = os.path.splitext(name)[0]
         dst_img = img_dir / name
         if not dst_img.exists():
@@ -373,15 +660,133 @@ def _write_yolo_split(samples, img_dir, lbl_dir):
             except OSError:
                 shutil.copy2(src, dst_img)
 
-        cls_to_id = {}
         lines = []
         for lbl in bboxes:
-            cn = lbl.get("class_name", "ship")
-            if cn not in cls_to_id:
-                cls_to_id[cn] = len(cls_to_id)
-            cid = cls_to_id[cn]
+            cn = _label_class_name(lbl)
+            if cn not in class_to_id:
+                raise ValueError(f"标注类别不在全局类别映射中: {cn}")
+            cid = class_to_id[cn]
             bbox = lbl.get("bbox", [])
             lines.append(f"{cid} {bbox[0]:.6f} {bbox[1]:.6f} {bbox[2]:.6f} {bbox[3]:.6f}\n")
 
         with open(lbl_dir / f"{stem}.txt", "w", encoding="utf-8") as f:
             f.writelines(lines)
+
+
+def _label_class_name(label):
+    class_name = str(label.get("class_name") or label.get("name") or "").strip()
+    if class_name:
+        return class_name
+    class_id = label.get("class_id")
+    if class_id is not None:
+        return f"class_{class_id}"
+    return "ship"
+
+
+def _sample_output_name(sample, source_path, used_names):
+    relative = str(sample.get("relative_path") or sample.get("name") or os.path.basename(source_path))
+    relative = relative.replace("\\", "/").strip("/")
+    name = "__".join(part for part in relative.split("/") if part) or os.path.basename(source_path)
+    if not os.path.splitext(name)[1]:
+        name += os.path.splitext(source_path)[1]
+    candidate = name
+    index = 2
+    while candidate.casefold() in used_names:
+        stem, suffix = os.path.splitext(name)
+        candidate = f"{stem}__{index}{suffix}"
+        index += 1
+    used_names.add(candidate.casefold())
+    return candidate
+
+
+def _sample_key(sample):
+    return str(
+        sample.get("relative_path")
+        or sample.get("file_path")
+        or sample.get("path")
+        or sample.get("name")
+        or ""
+    ).casefold()
+
+
+def _build_conversion_report(
+    samples,
+    class_to_id,
+    train_samples,
+    val_samples,
+    test_samples,
+    train_ratio,
+    val_ratio,
+):
+    source_formats = {}
+    class_box_counts = {class_name: 0 for class_name in class_to_id}
+    negative_count = 0
+    for sample in samples:
+        metadata = sample.get("metadata", {}) or {}
+        source_format = str(metadata.get("annotation_format") or "internal")
+        source_formats[source_format] = source_formats.get(source_format, 0) + 1
+        bboxes = sample.get("_bboxes", [])
+        if not bboxes:
+            negative_count += 1
+        for label in bboxes:
+            class_name = _label_class_name(label)
+            class_box_counts[class_name] = class_box_counts.get(class_name, 0) + 1
+    split_names = ("train", "val", "test")
+    split_samples = (train_samples, val_samples, test_samples)
+    ratios = _normalized_split_ratios(train_ratio, val_ratio)
+    actual_class_counts = {
+        class_name: {
+            split_name: sum(
+                _sample_class_box_counts(sample).get(class_name, 0)
+                for sample in samples_in_split
+            )
+            for split_name, samples_in_split in zip(split_names, split_samples)
+        }
+        for class_name in class_to_id
+    }
+    label_split_distribution = {}
+    max_ratio_error = 0.0
+    max_count_deviation = 0
+    for class_name, total in class_box_counts.items():
+        target_counts = dict(zip(split_names, _allocate_integer_targets(total, ratios)))
+        actual_counts = actual_class_counts[class_name]
+        actual_ratios = {
+            split_name: (actual_counts[split_name] / total if total else 0.0)
+            for split_name in split_names
+        }
+        ratio_errors = {
+            split_name: abs(actual_ratios[split_name] - ratios[index])
+            for index, split_name in enumerate(split_names)
+        }
+        count_deviations = {
+            split_name: abs(actual_counts[split_name] - target_counts[split_name])
+            for split_name in split_names
+        }
+        max_ratio_error = max(max_ratio_error, *ratio_errors.values())
+        max_count_deviation = max(max_count_deviation, *count_deviations.values())
+        label_split_distribution[class_name] = {
+            "total_boxes": total,
+            "target_counts": target_counts,
+            "actual_counts": actual_counts,
+            "target_ratios": dict(zip(split_names, ratios)),
+            "actual_ratios": actual_ratios,
+            "ratio_errors": ratio_errors,
+            "count_deviations": count_deviations,
+        }
+
+    return {
+        "source_formats": source_formats,
+        "image_count": len(samples),
+        "box_count": sum(class_box_counts.values()),
+        "negative_image_count": negative_count,
+        "class_to_id": class_to_id,
+        "class_box_counts": class_box_counts,
+        "label_split_distribution": label_split_distribution,
+        "max_label_ratio_error": max_ratio_error,
+        "max_label_count_deviation": max_count_deviation,
+        "split_counts": {
+            "train": len(train_samples),
+            "val": len(val_samples),
+            "test": len(test_samples),
+        },
+    }

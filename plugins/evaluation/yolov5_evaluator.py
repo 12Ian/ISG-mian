@@ -8,6 +8,10 @@ from __future__ import annotations
 from pathlib import Path
 import os, sys, json, shutil, yaml
 
+import utils as _shared_utils  # 预加载合并后的项目/YOLOv5 utils，避免同名模块抢占。
+from core.data_management.detection_annotations import sanitize_normalized_bbox
+from core.hardware_adapter import resolve_yolo_device
+
 
 _YOLOV5_ROOT = Path(__file__).resolve().parent.parent / "detection" / "yolov5_core"
 os.environ.setdefault("NO_ALBUMENTATIONS_UPDATE", "1")
@@ -65,8 +69,8 @@ PARAMETERS = [
         "default": "",
         "min": None,
         "max": None,
-        "options": ["", "0", "1", "cpu"],
-        "description": "GPU 设备号 (空=自动选择)",
+        "options": ["", "0", "1", "0,1", "cpu"],
+        "description": "评估设备：支持自动、单显卡、双显卡和 CPU",
         "required": False,
     },
 ]
@@ -124,15 +128,24 @@ def _run_evaluation(payload: dict, context) -> dict:
             return {"ok": False, "error_code": "NO_TEST_SAMPLES",
                     "message": f"测试集中无有效样本 (test_split 有 {len(test_paths)} 个路径)"}
 
+    class_names = _load_training_class_names(checkpoint_path)
+    if not class_names:
+        class_names = _collect_class_names(val_samples)
+    if not class_names:
+        return {"ok": False, "error_code": "NO_CLASS", "message": "评估数据中没有有效类别名称"}
+    class_to_id = {class_name: index for index, class_name in enumerate(class_names)}
+
     # 生成 YOLO 验证目录
     yolo_dir = out_dir / "yolo_val_data"
+    if yolo_dir.is_dir():
+        shutil.rmtree(yolo_dir)
     val_img_dir = yolo_dir / "images"
     val_lbl_dir = yolo_dir / "labels"
     val_img_dir.mkdir(parents=True, exist_ok=True)
     val_lbl_dir.mkdir(parents=True, exist_ok=True)
 
-    class_names = []
     valid_count = 0
+    used_names = set()
     for s in val_samples:
         labels = _parse_labels(s.get("labels", []))
         src = s.get("path", s.get("file_path", ""))
@@ -141,17 +154,35 @@ def _run_evaluation(payload: dict, context) -> dict:
 
         bbox_lines = []
         for lbl in labels:
-            cn = lbl.get("class_name", "")
-            if cn and cn not in class_names:
-                class_names.append(cn)
             bbox = lbl.get("bbox", [])
             if len(bbox) >= 4:
-                cls_id = lbl.get("class_id", len(class_names) - 1)
-                bbox_lines.append(f"{cls_id} {bbox[0]:.6f} {bbox[1]:.6f} {bbox[2]:.6f} {bbox[3]:.6f}\n")
-        if not bbox_lines:
+                normalized_bbox = sanitize_normalized_bbox(bbox)
+                if normalized_bbox is None:
+                    return {
+                        "ok": False,
+                        "error_code": "INVALID_BBOX",
+                        "message": f"评估样本 {s.get('name', '')} 包含无效 bbox: {bbox}",
+                    }
+                class_name = _label_class_name(lbl)
+                if class_name not in class_to_id:
+                    return {
+                        "ok": False,
+                        "error_code": "UNKNOWN_CLASS",
+                        "message": f"评估数据包含模型未训练的类别：{class_name}",
+                    }
+                cls_id = class_to_id[class_name]
+                bbox_lines.append(
+                    f"{cls_id} {normalized_bbox[0]:.6f} {normalized_bbox[1]:.6f} "
+                    f"{normalized_bbox[2]:.6f} {normalized_bbox[3]:.6f}\n"
+                )
+        metadata = s.get("metadata", {}) or {}
+        is_detection_sample = any(label.get("type") == "detection" for label in labels) or bool(
+            metadata.get("annotation_format")
+        )
+        if not bbox_lines and not is_detection_sample:
             continue
 
-        name = s.get("name", os.path.basename(src))
+        name = _sample_output_name(s, src, used_names)
         stem = os.path.splitext(name)[0]
         dst = val_img_dir / name
         if not dst.exists():
@@ -163,18 +194,15 @@ def _run_evaluation(payload: dict, context) -> dict:
             f.writelines(bbox_lines)
         valid_count += 1
 
-    if not class_names:
-        class_names = ["ship"]
-
     data_yaml_path = out_dir / "val_data.yaml"
     with open(data_yaml_path, "w", encoding="utf-8") as f:
-        yaml.dump({
-            "path": str(yolo_dir),
+        yaml.safe_dump({
+            "path": yolo_dir.resolve().as_posix(),
             "train": "images",
             "val": "images",
             "nc": len(class_names),
             "names": class_names,
-        }, f)
+        }, f, allow_unicode=True, sort_keys=False)
 
     context.set_progress(10.0, f"验证样本: {valid_count}, {len(class_names)} 类")
 
@@ -184,8 +212,8 @@ def _run_evaluation(payload: dict, context) -> dict:
     import torch
     import val as yolo_val
 
-    device_str = device or ("0" if torch.cuda.is_available() else "cpu")
-    context.set_progress(15.0, f"YOLOv5 评估启动: {checkpoint_path}")
+    device_str, device_warning = resolve_yolo_device(device, torch)
+    context.set_progress(15.0, f"{device_warning} YOLOv5 评估启动: {checkpoint_path}".strip())
 
     try:
         result = yolo_val.run(
@@ -285,3 +313,63 @@ def _parse_labels(raw_labels):
     if not isinstance(raw_labels, list):
         return []
     return [l for l in raw_labels if isinstance(l, dict)]
+
+
+def _load_training_class_names(checkpoint_path):
+    checkpoint = Path(checkpoint_path).resolve()
+    for parent in list(checkpoint.parents)[:6]:
+        for name in ("data.yaml", "data.yml"):
+            data_yaml = parent / name
+            if not data_yaml.is_file():
+                continue
+            try:
+                payload = yaml.safe_load(data_yaml.read_text(encoding="utf-8-sig")) or {}
+            except (OSError, UnicodeError, yaml.YAMLError):
+                continue
+            names = payload.get("names")
+            if isinstance(names, list):
+                return [str(value) for value in names]
+            if isinstance(names, dict):
+                try:
+                    return [str(value) for _, value in sorted(names.items(), key=lambda item: int(item[0]))]
+                except (TypeError, ValueError):
+                    continue
+    return []
+
+
+def _collect_class_names(samples):
+    return sorted(
+        {
+            _label_class_name(label)
+            for sample in samples
+            for label in _parse_labels(sample.get("labels", []))
+            if len(label.get("bbox", [])) >= 4
+        },
+        key=str.casefold,
+    )
+
+
+def _label_class_name(label):
+    class_name = str(label.get("class_name") or label.get("name") or "").strip()
+    if class_name:
+        return class_name
+    class_id = label.get("class_id")
+    if class_id is not None:
+        return f"class_{class_id}"
+    return "ship"
+
+
+def _sample_output_name(sample, source_path, used_names):
+    relative = str(sample.get("relative_path") or sample.get("name") or os.path.basename(source_path))
+    relative = relative.replace("\\", "/").strip("/")
+    name = "__".join(part for part in relative.split("/") if part) or os.path.basename(source_path)
+    if not os.path.splitext(name)[1]:
+        name += os.path.splitext(source_path)[1]
+    candidate = name
+    index = 2
+    while candidate.casefold() in used_names:
+        stem, suffix = os.path.splitext(name)
+        candidate = f"{stem}__{index}{suffix}"
+        index += 1
+    used_names.add(candidate.casefold())
+    return candidate

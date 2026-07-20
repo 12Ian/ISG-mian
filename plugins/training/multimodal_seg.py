@@ -8,8 +8,30 @@ from pathlib import Path
 import os, sys, json, logging, random
 import numpy as np
 
+from core.data_management.multimodal_association import sample_group_id, sample_role
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+
+def _collect_associated_pairs(samples: list[dict]) -> list[dict]:
+    groups = {}
+    for sample in samples:
+        path = sample.get("file_path") or sample.get("path") or ""
+        if not path or not os.path.isfile(path):
+            continue
+        group = groups.setdefault(sample_group_id(sample), {})
+        group.setdefault(sample_role(sample), []).append(path)
+
+    paired = []
+    for roles in groups.values():
+        images = roles.get("image") or []
+        masks = roles.get("mask") or []
+        if not images or not masks:
+            continue
+        radar = (roles.get("radar") or [None])[0]
+        paired.append({"img": images[0], "seg": masks[0], "radar": radar})
+    return paired
 
 
 def _resolve_device(torch):
@@ -57,9 +79,10 @@ def _run_training(payload: dict, context) -> dict:
     train_ratio = float(params.get("train_ratio", 0.7))
     val_ratio = float(params.get("val_ratio", 0.15))
 
-    # 找数据集目录
+    # 优先使用导入/生成阶段建立的多模态组关联。
     samples = inp.get("samples", [])
     dataset_root = inp.get("dataset_path", "")
+    paired = _collect_associated_pairs(samples)
     image_dir, seg_dir, radar_dir = None, None, None
 
     for s in samples:
@@ -77,28 +100,27 @@ def _run_training(payload: dict, context) -> dict:
         seg_dir = os.path.join(dataset_root, "semantic", "SegmentationClass", "SegmentationClass")
         radar_dir = os.path.join(dataset_root, "radar", "VOCradar320")
 
-    if not image_dir or not os.path.isdir(image_dir):
-        return {"ok": False, "error_code": "NO_IMAGES", "message": "未找到图片目录"}
-    if not seg_dir or not os.path.isdir(seg_dir):
-        return {"ok": False, "error_code": "NO_SEG", "message": "未找到分割标注目录"}
+    if not paired:
+        if not image_dir or not os.path.isdir(image_dir):
+            return {"ok": False, "error_code": "NO_IMAGES", "message": "未找到图片目录"}
+        if not seg_dir or not os.path.isdir(seg_dir):
+            return {"ok": False, "error_code": "NO_SEG", "message": "未找到分割标注目录"}
 
-    image_files = sorted([f for f in os.listdir(image_dir) if f.lower().endswith(('.jpg', '.png'))])
-    context.set_progress(1.0, f"图片: {len(image_files)}")
+        image_files = sorted([f for f in os.listdir(image_dir) if f.lower().endswith(('.jpg', '.png'))])
+        for img_name in image_files:
+            stem = os.path.splitext(img_name)[0]
+            img_path = os.path.join(image_dir, img_name)
+            seg_path = os.path.join(seg_dir, stem + ".png")
+            if not os.path.isfile(seg_path):
+                continue
+            radar_path = None
+            if radar_dir:
+                rp = os.path.join(radar_dir, stem + ".npz")
+                if os.path.isfile(rp):
+                    radar_path = rp
+            paired.append({"img": img_path, "seg": seg_path, "radar": radar_path})
 
-    # 收集配对
-    paired = []
-    for img_name in image_files:
-        stem = os.path.splitext(img_name)[0]
-        img_path = os.path.join(image_dir, img_name)
-        seg_path = os.path.join(seg_dir, stem + ".png")
-        if not os.path.isfile(seg_path):
-            continue
-        radar_path = None
-        if radar_dir:
-            rp = os.path.join(radar_dir, stem + ".npz")
-            if os.path.isfile(rp):
-                radar_path = rp
-        paired.append({"img": img_path, "seg": seg_path, "radar": radar_path})
+    context.set_progress(1.0, f"有效多模态配对: {len(paired)}")
 
     if len(paired) < 10:
         return {"ok": False, "error_code": "INSUFFICIENT_DATA", "message": f"有效配对不足: {len(paired)}"}
