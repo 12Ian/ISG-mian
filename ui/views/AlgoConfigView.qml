@@ -33,12 +33,17 @@ Item {
         anchors.topMargin: -16
         anchors.rightMargin: -16
         title: "算法配置帮助"
-        body: "本页用于查看、注册、修改和卸载算法插件，是生成、清洗、训练和评估算法的统一配置入口。\n\n1. 左侧按算法大类和数据模态分组展示插件，可通过顶部下拉框筛选全部、清洗、生成、评估或训练算法；点击分组可展开或折叠。\n2. 点击某个算法后，右侧会显示算法名称、所属类别、脚本或模块挂载路径、接口简述、使用说明和参数快照。\n3. “插件规范”按钮会弹出本项目的算法插件开发规范窗口，可下拉查看 run(payload, context) 入口、PARAMETERS 参数声明和输出格式。\n4. “注册新插件环境”用于接入新的 Python 插件。选择脚本后系统会自动反射 PARAMETERS，生成参数配置表；填写名称、类别、模态和说明后确认注册。\n5. “调参修改”用于修改已有算法的参数定义、名称、类别、模态、脚本路径或模块路径。内置模块算法会保留 module_path，脚本插件会复制并保存 script_path。\n6. 参数表支持新增、删除和编辑参数名、显示标签、类型、默认值、数值范围和下拉选项。保存后，数据生成/清洗/评估页面会按这些参数渲染动态配置控件。\n7. “卸载环境”会删除算法注册记录。删除前请确认没有正在运行的任务依赖该算法。\n8. 调整完成后建议回到对应业务页面刷新算法列表，确认新参数和新插件已经生效。"
+        body: "本页用于查看、注册、修改和卸载算法插件，是生成、清洗、训练和评估算法的统一配置入口。\n\n1. 左侧按算法大类和数据模态分组展示插件，可通过顶部下拉框筛选全部、清洗、生成、评估或训练算法；点击分组可展开或折叠。\n2. 点击某个算法后，右侧会显示算法名称、所属类别、脚本或模块挂载路径、接口简述、使用说明和参数快照。\n3. “插件规范”按钮会弹出本项目的算法插件开发规范窗口，可下拉查看 run(payload, context) 入口、PARAMETERS 参数声明和输出格式。\n4. “模型管理”可在打包后导入、筛选和删除 YOLOv5、YOLOv8、YOLO11 或自定义模型；同系列模型会自动加入训练参数。\n5. “注册新插件环境”用于接入新的 Python 插件。选择脚本后系统会自动反射 PARAMETERS，生成参数配置表；填写名称、类别、模态和说明后确认注册。\n6. “调参修改”用于修改已有算法的参数定义、名称、类别、模态、脚本路径或模块路径。内置模块算法会保留 module_path，脚本插件会复制并保存 script_path。\n7. 参数表支持新增、删除和编辑参数名、显示标签、类型、默认值、数值范围和下拉选项。保存后，业务页面会按这些参数渲染动态配置控件。\n8. “卸载环境”会删除算法注册记录。删除前请确认没有正在运行的任务依赖该算法。\n9. 调整完成后建议回到对应业务页面刷新算法列表，确认新参数、模型和插件已经生效。"
     }
 
     // 状态控制
     property int pendingEditIndex: -1
     property int pendingDeleteIndex: -1
+    property var pendingDatasetRequirements: ({})
+    property bool pendingCustomDatasetValidator: false
+    property string pendingModelDeleteId: ""
+    property string pendingModelDeleteName: ""
+    property string modelLibraryRoot: ""
 
     // 分类折叠面板状态
     property int selectedAlgoId: -1
@@ -54,13 +59,14 @@ Item {
     property string algoCategoryFilter: "全部算法"
     property string pluginSpecText: "<html><body style='font-family:Segoe UI,Microsoft YaHei,sans-serif;font-size:14px;color:" + root.textColor + ";background:transparent;padding:24px 30px;line-height:1.7'>" +
         "<h1 style='font-size:22px;color:" + root.primaryColor + ";margin:0 0 4px 0;font-weight:700'>ISG 算法插件开发规范</h1>" +
-        "<p style='color:" + root.textMuted + ";margin:0 0 28px 0;font-size:13px'>Version 1.0 · Python 插件标准接口</p>" +
+        "<p style='color:" + root.textMuted + ";margin:0 0 28px 0;font-size:13px'>Version 2.0 · 普通插件与训练插件标准接口</p>" +
 
         "<h2 style='font-size:15px;color:" + root.primaryColor + ";margin:24px 0 8px 0'>概述</h2>" +
         "<p style='margin:0 0 12px 0'>ISG 算法插件是标准 Python <code style='background:" + root.tableHoverBg + ";padding:1px 6px;border-radius:3px'>.py</code> 文件，实现 <code style='background:" + root.tableHoverBg + ";padding:1px 6px;border-radius:3px'>run(payload, context)</code> 入口函数，声明模块级 <code style='background:" + root.tableHoverBg + ";padding:1px 6px;border-radius:3px'>PARAMETERS</code> 列表。</p>" +
+        "<p style='margin:0'>普通生成/清洗/评估插件使用 <code>plugins/user/_TEMPLATE.py</code>；训练插件必须使用独立的 <code>plugins/user/_TRAINING_TEMPLATE.py</code>，并额外声明数据集要求、模型资产策略和真实 checkpoint 输出。</p>" +
 
         "<h2 style='font-size:15px;color:" + root.primaryColor + ";margin:24px 0 8px 0'>文件结构</h2>" +
-        "<pre style='background:" + root.panelBg + ";color:" + root.textColor + ";border:1px solid " + root.borderColor + ";border-radius:6px;padding:14px 16px;font-family:Consolas,Courier New,monospace;font-size:12.5px;line-height:1.55;margin:0'># -*- coding: utf-8 -*-\n\"\"\"插件简要说明。\"\"\"\nfrom pathlib import Path\n\nPARAMETERS: list[dict[str, Any]] = [\n    {\n        \"name\": \"threshold\",\n        \"type\": \"float\",\n        \"label\": \"阈值\",\n        \"default\": 0.5,\n        \"min\": 0.0, \"max\": 1.0,\n        \"options\": [],\n        \"description\": \"判定阈值\",\n        \"required\": False,\n    },\n]\n\ndef run(payload: dict[str, Any], context: Any) -> dict[str, Any]:\n    \"\"\"算法入口。payload: parameters/input/output\n    成功: {\"ok\": True, \"outputs\": [...]}\n    失败: {\"ok\": False, \"error_code\": \"...\", \"message\": \"...\"}\"\"\"\n    ...</pre>" +
+        "<pre style='background:" + root.panelBg + ";color:" + root.textColor + ";border:1px solid " + root.borderColor + ";border-radius:6px;padding:14px 16px;font-family:Consolas,Courier New,monospace;font-size:12.5px;line-height:1.55;margin:0'># -*- coding: utf-8 -*-\n\"\"\"插件简要说明。\"\"\"\nfrom pathlib import Path\n\nPARAMETERS: list[dict[str, Any]] = [\n    {\n        \"name\": \"threshold\",\n        \"type\": \"float\",\n        \"label\": \"阈值\",\n        \"default\": 0.5,\n        \"min\": 0.0, \"max\": 1.0,\n        \"options\": [],\n        \"description\": \"判定阈值\",\n        \"required\": False,\n    },\n]\n\nDATASET_REQUIREMENTS = {\n    \"modalities\": [\"image\"],\n    \"label_types\": [\"detection\"],\n    \"min_samples\": 10,\n    \"min_classes\": 2,\n    \"bbox_required\": True,\n}\n\ndef run(payload: dict[str, Any], context: Any) -> dict[str, Any]:\n    \"\"\"算法入口。payload: parameters/input/output\n    成功: {\"ok\": True, \"outputs\": [...]}\n    失败: {\"ok\": False, \"error_code\": \"...\", \"message\": \"...\"}\"\"\"\n    ...</pre>" +
 
         "<h2 style='font-size:15px;color:" + root.primaryColor + ";margin:24px 0 8px 0'>PARAMETERS 字段</h2>" +
         "<table style='border-collapse:collapse;width:100%;font-size:13px'>" +
@@ -84,6 +90,17 @@ Item {
         "<tr style='border-bottom:1px solid " + root.borderColor + "'><td style='padding:5px 10px'>bool</td><td style='padding:5px 10px'><code>True / False</code></td><td style='padding:5px 10px'>布尔</td></tr>" +
         "<tr><td style='padding:5px 10px'>select</td><td style='padding:5px 10px'><code>\"A\"</code></td><td style='padding:5px 10px'>枚举，options 必填</td></tr>" +
         "</table>" +
+
+        "<h2 style='font-size:15px;color:" + root.primaryColor + ";margin:24px 0 8px 0'>DATASET_REQUIREMENTS 字段</h2>" +
+        "<p style='margin:0'>训练插件可声明 modalities、label_types、min_samples、min_classes、min_samples_per_class、required_extensions、required_columns、required_companion_roles、min_complete_groups、allow_unlabeled 和 bbox_required。注册时会自动反射并用于数据集筛选；复杂规则可额外实现 validate_dataset(summary)。</p>" +
+
+        "<h2 style='font-size:15px;color:" + root.primaryColor + ";margin:24px 0 8px 0'>训练插件强制要求</h2>" +
+        "<p style='margin:0 0 3px 0'>· 必须从 <code>input.samples[*].labels</code> 读取数据库标签，多类别、多框使用全局类别映射。</p>" +
+        "<p style='margin:0 0 3px 0'>· 模型需要 YOLO/COCO/VOC 等专用结构时，必须在 <code>output.output_dir</code> 内生成真实训练文件和 YAML，禁止占位路径。</p>" +
+        "<p style='margin:0 0 3px 0'>· 模型权重缺失时必须明确选择自动下载或返回错误；注册插件只复制 <code>.py</code>，不会复制 <code>.pt/.pth/.onnx</code>。</p>" +
+        "<p style='margin:0 0 3px 0'>· 本地桌面训练默认关闭 Comet、WandB、ClearML 等在线日志，除非用户显式配置。</p>" +
+        "<p style='margin:0 0 3px 0'>· 长任务必须上报进度、响应取消，并在成功时返回真实存在的 <code>artifact_path</code>。</p>" +
+        "<p style='margin:0'>· 禁止把示例文字、占位文件名或不存在的 checkpoint 作为成功结果返回。</p>" +
 
         "<h2 style='font-size:15px;color:" + root.primaryColor + ";margin:24px 0 8px 0'>run() 函数</h2>" +
         "<p style='margin:0'>签名: <code style='background:" + root.tableHoverBg + ";padding:1px 6px;border-radius:3px'>def run(payload: dict, context: Any) -> dict</code></p>" +
@@ -114,7 +131,7 @@ Item {
         "<p style='margin:0 0 2px 0'>· 耗时操作周期性检查 <code>context.is_cancel_requested()</code></p>" +
         "<p style='margin:0'>· 插件放 <code>plugins/user/</code> 或用 <code>module_path</code></p>" +
 
-        "<p style='color:" + root.textMuted + ";font-size:12px;margin-top:30px'>📄 完整示例见 plugins/user/_TEMPLATE.py</p>" +
+        "<p style='color:" + root.textMuted + ";font-size:12px;margin-top:30px'>📄 普通插件模板：plugins/user/_TEMPLATE.py　训练插件模板：plugins/user/_TRAINING_TEMPLATE.py。完整规范请下载 PDF。</p>" +
         "</body></html>"
 
     property url pluginSpecPdfSource: ""
@@ -198,6 +215,7 @@ Item {
     }
 
     ListModel { id: bindingEvalModel }
+    ListModel { id: modelAssetListModel }
 
     function refreshBindingEvalCombo() {
         bindingEvalModel.clear()
@@ -583,6 +601,90 @@ Item {
         return path.toLowerCase().indexOf(".py") !== -1 || path.indexOf("/") !== -1 || path.indexOf("\\") !== -1
     }
 
+    function requirementListText(value) {
+        return Array.isArray(value) ? value.join(", ") : ""
+    }
+
+    function parseRequirementList(value) {
+        return String(value || "").split(/[,，]/).map(function(item) {
+            return item.trim()
+        }).filter(function(item) {
+            return item !== ""
+        })
+    }
+
+    function setDatasetRequirementsForm(requirements) {
+        var rules = requirements || {}
+        reqModalities.text = root.requirementListText(rules.modalities)
+        reqLabelTypes.text = root.requirementListText(rules.label_types)
+        reqMinSamples.text = rules.min_samples === undefined ? "" : String(rules.min_samples)
+        reqMinClasses.text = rules.min_classes === undefined ? "" : String(rules.min_classes)
+        reqMinSamplesPerClass.text = rules.min_samples_per_class === undefined ? "" : String(rules.min_samples_per_class)
+        reqExtensions.text = root.requirementListText(rules.required_extensions)
+        reqColumns.text = root.requirementListText(rules.required_columns)
+        reqCompanionRoles.text = root.requirementListText(rules.required_companion_roles)
+        reqMinCompleteGroups.text = rules.min_complete_groups === undefined ? "" : String(rules.min_complete_groups)
+        reqAllowUnlabeled.currentIndex = rules.allow_unlabeled === undefined ? 0 : (rules.allow_unlabeled ? 1 : 2)
+        reqBboxRequired.currentIndex = rules.bbox_required === undefined ? 0 : (rules.bbox_required ? 1 : 2)
+    }
+
+    function datasetRequirementsFromForm() {
+        var rules = {}
+        var listFields = [
+            ["modalities", reqModalities.text],
+            ["label_types", reqLabelTypes.text],
+            ["required_extensions", reqExtensions.text],
+            ["required_columns", reqColumns.text],
+            ["required_companion_roles", reqCompanionRoles.text]
+        ]
+        for (var i = 0; i < listFields.length; i++) {
+            var values = root.parseRequirementList(listFields[i][1])
+            if (values.length > 0) rules[listFields[i][0]] = values
+        }
+        var numberFields = [
+            ["min_samples", reqMinSamples.text],
+            ["min_classes", reqMinClasses.text],
+            ["min_samples_per_class", reqMinSamplesPerClass.text],
+            ["min_complete_groups", reqMinCompleteGroups.text]
+        ]
+        for (var j = 0; j < numberFields.length; j++) {
+            var textValue = String(numberFields[j][1] || "").trim()
+            if (textValue !== "") rules[numberFields[j][0]] = parseInt(textValue)
+        }
+        if (reqAllowUnlabeled.currentIndex !== 0) rules.allow_unlabeled = reqAllowUnlabeled.currentIndex === 1
+        if (reqBboxRequired.currentIndex !== 0) rules.bbox_required = reqBboxRequired.currentIndex === 1
+        return rules
+    }
+
+    function validateDatasetRequirementsForm() {
+        var integerFields = [
+            ["最低样本数", reqMinSamples.text],
+            ["最低类别数", reqMinClasses.text],
+            ["每类最低样本数", reqMinSamplesPerClass.text],
+            ["最低完整组数", reqMinCompleteGroups.text]
+        ]
+        for (var i = 0; i < integerFields.length; i++) {
+            var value = String(integerFields[i][1] || "").trim()
+            if (value !== "" && !/^\d+$/.test(value)) return integerFields[i][0] + "必须是非负整数"
+        }
+        var allowedModalities = ["image", "text", "audio", "tabular", "multimodal", "other"]
+        var modalities = root.parseRequirementList(reqModalities.text)
+        for (var j = 0; j < modalities.length; j++) {
+            if (allowedModalities.indexOf(modalities[j]) === -1) return "不支持的数据模态: " + modalities[j]
+        }
+        var allowedLabelTypes = ["classification", "detection", "segmentation", "none"]
+        var labelTypes = root.parseRequirementList(reqLabelTypes.text)
+        for (var k = 0; k < labelTypes.length; k++) {
+            if (allowedLabelTypes.indexOf(labelTypes[k]) === -1) return "不支持的标签类型: " + labelTypes[k]
+        }
+        var allowedRoles = ["image", "mask", "radar", "annotation", "auxiliary"]
+        var roles = root.parseRequirementList(reqCompanionRoles.text)
+        for (var n = 0; n < roles.length; n++) {
+            if (allowedRoles.indexOf(roles[n]) === -1) return "不支持的伴随角色: " + roles[n]
+        }
+        return ""
+    }
+
     function compareAlgorithms(a, b) {
         var ac = root.categoryOrder(a.category)
         var bc = root.categoryOrder(b.category)
@@ -660,6 +762,17 @@ Item {
             }
             params.push(paramDef)
         }
+        var validationRules = category === "training"
+                ? {scenario_key: root.scenarioKeyFromName(subCatStr)} : {}
+        if (category === "training" && Object.keys(root.pendingDatasetRequirements || {}).length > 0) {
+            validationRules.dataset_requirements = root.pendingDatasetRequirements
+        }
+        if (category === "training" && root.pendingCustomDatasetValidator) {
+            validationRules.custom_dataset_validator = true
+        }
+        var declaredModalities = root.pendingDatasetRequirements
+                ? (root.pendingDatasetRequirements.modalities || []) : []
+        var trainingModality = declaredModalities.length === 1 ? declaredModalities[0] : "multimodal"
         return {
             key: inputAlgoName.text.trim().replace(/\s+/g, "_").toLowerCase(),
             name: inputAlgoName.text.trim(),
@@ -673,9 +786,9 @@ Item {
                           : category === "training" ? {"produces": ["model_checkpoint"], "artifact_types": ["checkpoint"]}
                           : category === "evaluation" ? {"produces": ["metrics", "artifacts"], "artifact_types": ["report"]}
                           : {"produces": ["outputs"], "artifact_types": []},
-            validation_rules: category === "training" ? {scenario_key: root.scenarioKeyFromName(subCatStr)} : {},
+            validation_rules: validationRules,
             parameters: params,
-            modality: category === "training" ? "multimodal" : modality
+            modality: category === "training" ? trainingModality : modality
         }
     }
 
@@ -685,6 +798,25 @@ Item {
 
     Connections {
         target: backendService
+        function onModelAssetsUpdated(result) {
+            if (!result || !result.ok) {
+                if (result && result.message) root.showToast("⚠️ " + result.message)
+                return
+            }
+            var data = result.data || {}
+            root.modelLibraryRoot = data.root_dir || ""
+            modelAssetListModel.clear()
+            var items = data.items || []
+            for (var i = 0; i < items.length; i++) modelAssetListModel.append(items[i])
+        }
+        function onModelAssetOperationFinished(result) {
+            if (result && result.ok) {
+                root.showToast("✅ 模型已导入: " + ((result.data || {}).name || ""))
+                backendService.getModelAssets(modelFamilyFilter.currentValue || "")
+            } else {
+                root.showToast("⚠️ 模型导入失败: " + ((result && result.message) ? result.message : "未知错误"))
+            }
+        }
         function onAlgorithmsUpdated(items) {
             if (!root.visible) return  // 只在当前页面可见时处理
             algoListModel.clear()
@@ -736,6 +868,8 @@ Item {
                     enabled: item.status === "enabled",
                     isHeader: false,
                     scenarioKey: (item.category === "training" ? ((item.validation_rules || {}).scenario_key || "") : ""),
+                    datasetRequirementsJson: JSON.stringify((item.validation_rules || {}).dataset_requirements || {}),
+                    customDatasetValidator: (item.validation_rules || {}).custom_dataset_validator === true,
                     boundEvalKey: item.bound_evaluation_key || "",
                     boundEvalName: item.bound_evaluation_name || ""
                 }
@@ -784,8 +918,13 @@ Item {
             var path = selectedFile.toString()
             var cleanPath = decodeURIComponent(path.replace(/^(file:\/{2,3})/, ""))
             inputScriptPath.text = cleanPath
+            root.pendingDatasetRequirements = ({})
+            root.pendingCustomDatasetValidator = false
             var result = backendService.reflectParameters(cleanPath)
             if (result && result.ok) {
+                root.pendingDatasetRequirements = result.dataset_requirements || ({})
+                root.pendingCustomDatasetValidator = result.custom_dataset_validator === true
+                root.setDatasetRequirementsForm(root.pendingDatasetRequirements)
                 editingParamsModel.clear()
                 var params = result.parameters || []
                 for (var i = 0; i < params.length; i++) {
@@ -801,7 +940,8 @@ Item {
                         "desc": p.description || ""
                     })
                 }
-                root.showToast("✅ 已自动加载 " + params.length + " 个参数")
+                var requirementCount = Object.keys(root.pendingDatasetRequirements || {}).length
+                root.showToast("✅ 已加载 " + params.length + " 个参数、" + requirementCount + " 项数据集要求")
             } else {
                 root.showToast("⚠️ 参数反射失败: " + ((result && (result.error || result.message)) ? (result.error || result.message) : "未知错误"))
             }
@@ -956,7 +1096,22 @@ Item {
                     Layout.fillHeight: true
                     spacing: 15
 
-                    Text { text: "📝 基础映射信息"; color: root.textColor; font.pixelSize: 14; font.bold: true }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Text { text: "📝 基础映射信息"; color: root.textColor; font.pixelSize: 14; font.bold: true }
+                        Item { Layout.fillWidth: true }
+                        Button {
+                            visible: inputCategory.currentIndex === 2
+                            text: "数据集要求 (" + Object.keys(root.pendingDatasetRequirements || {}).length + ")"
+                            Layout.preferredHeight: 28
+                            background: Rectangle { color: root.tableHoverBg; border.color: root.devAccentMuted; border.width: 1; radius: 4 }
+                            contentItem: Text { text: parent.text; color: root.devAccentColor; font.pixelSize: 11; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                            onClicked: {
+                                root.setDatasetRequirementsForm(root.pendingDatasetRequirements)
+                                datasetRequirementsPopup.open()
+                            }
+                        }
+                    }
 
                     ColumnLayout {
                         spacing: 6; Layout.fillWidth: true
@@ -1392,6 +1547,449 @@ Item {
         }
     }
 
+    // 训练插件的数据集兼容性规则。留空表示不限制。
+    Popup {
+        id: datasetRequirementsPopup
+        width: 680
+        height: 580
+        modal: true
+        focus: true
+        x: Math.round((root.width - width) / 2)
+        y: Math.round((root.height - height) / 2)
+        closePolicy: Popup.CloseOnEscape | Popup.NoAutoClose
+        background: Rectangle {
+            color: root.panelBg
+            radius: 8
+            border.color: root.devAccentMuted
+            border.width: 1
+        }
+
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 22
+            spacing: 12
+
+            RowLayout {
+                Layout.fillWidth: true
+                Text { text: "训练数据集要求"; color: root.devAccentColor; font.pixelSize: 18; font.bold: true }
+                Item { Layout.fillWidth: true }
+                Text {
+                    visible: root.pendingCustomDatasetValidator
+                    text: "含插件自定义校验"
+                    color: root.dangerColor
+                    font.pixelSize: 11
+                }
+            }
+            Text {
+                Layout.fillWidth: true
+                text: "以下条件用于挂载数据集时的自动筛选和训练前复检。多个值用逗号分隔，留空表示不限制。"
+                color: root.textMuted
+                font.pixelSize: 12
+                wrapMode: Text.WordWrap
+            }
+            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.borderColor }
+
+            ScrollView {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+
+                GridLayout {
+                    width: parent.width
+                    columns: 2
+                    columnSpacing: 14
+                    rowSpacing: 10
+
+                    Text { text: "适用模态"; color: root.textMuted; font.pixelSize: 12 }
+                    TextField {
+                        id: reqModalities
+                        Layout.fillWidth: true
+                        placeholderText: "image, text, audio, tabular, multimodal"
+                        color: root.textColor; placeholderTextColor: root.textMuted
+                        background: Rectangle { color: root.bgDark; border.color: root.borderColor; radius: 4 }
+                    }
+
+                    Text { text: "标签类型"; color: root.textMuted; font.pixelSize: 12 }
+                    TextField {
+                        id: reqLabelTypes
+                        Layout.fillWidth: true
+                        placeholderText: "classification, detection, segmentation, none"
+                        color: root.textColor; placeholderTextColor: root.textMuted
+                        background: Rectangle { color: root.bgDark; border.color: root.borderColor; radius: 4 }
+                    }
+
+                    Text { text: "最低样本数"; color: root.textMuted; font.pixelSize: 12 }
+                    TextField {
+                        id: reqMinSamples
+                        Layout.fillWidth: true
+                        placeholderText: "例如 100"
+                        inputMethodHints: Qt.ImhDigitsOnly
+                        color: root.textColor; placeholderTextColor: root.textMuted
+                        background: Rectangle { color: root.bgDark; border.color: root.borderColor; radius: 4 }
+                    }
+
+                    Text { text: "最低类别数"; color: root.textMuted; font.pixelSize: 12 }
+                    TextField {
+                        id: reqMinClasses
+                        Layout.fillWidth: true
+                        placeholderText: "例如 2"
+                        inputMethodHints: Qt.ImhDigitsOnly
+                        color: root.textColor; placeholderTextColor: root.textMuted
+                        background: Rectangle { color: root.bgDark; border.color: root.borderColor; radius: 4 }
+                    }
+
+                    Text { text: "每类最低样本数"; color: root.textMuted; font.pixelSize: 12 }
+                    TextField {
+                        id: reqMinSamplesPerClass
+                        Layout.fillWidth: true
+                        placeholderText: "例如 10"
+                        inputMethodHints: Qt.ImhDigitsOnly
+                        color: root.textColor; placeholderTextColor: root.textMuted
+                        background: Rectangle { color: root.bgDark; border.color: root.borderColor; radius: 4 }
+                    }
+
+                    Text { text: "必需扩展名"; color: root.textMuted; font.pixelSize: 12 }
+                    TextField {
+                        id: reqExtensions
+                        Layout.fillWidth: true
+                        placeholderText: ".jpg, .png, .json"
+                        color: root.textColor; placeholderTextColor: root.textMuted
+                        background: Rectangle { color: root.bgDark; border.color: root.borderColor; radius: 4 }
+                    }
+
+                    Text { text: "CSV 必需列"; color: root.textMuted; font.pixelSize: 12 }
+                    TextField {
+                        id: reqColumns
+                        Layout.fillWidth: true
+                        placeholderText: "timestamp, value, label"
+                        color: root.textColor; placeholderTextColor: root.textMuted
+                        background: Rectangle { color: root.bgDark; border.color: root.borderColor; radius: 4 }
+                    }
+
+                    Text { text: "多模态伴随角色"; color: root.textMuted; font.pixelSize: 12 }
+                    TextField {
+                        id: reqCompanionRoles
+                        Layout.fillWidth: true
+                        placeholderText: "image, mask, radar, annotation, auxiliary"
+                        color: root.textColor; placeholderTextColor: root.textMuted
+                        background: Rectangle { color: root.bgDark; border.color: root.borderColor; radius: 4 }
+                    }
+
+                    Text { text: "最低完整组数"; color: root.textMuted; font.pixelSize: 12 }
+                    TextField {
+                        id: reqMinCompleteGroups
+                        Layout.fillWidth: true
+                        placeholderText: "例如 20"
+                        inputMethodHints: Qt.ImhDigitsOnly
+                        color: root.textColor; placeholderTextColor: root.textMuted
+                        background: Rectangle { color: root.bgDark; border.color: root.borderColor; radius: 4 }
+                    }
+
+                    Text { text: "无标签样本"; color: root.textMuted; font.pixelSize: 12 }
+                    ComboBox {
+                        id: reqAllowUnlabeled
+                        Layout.fillWidth: true
+                        model: ["不限制", "允许", "不允许"]
+                        background: Rectangle { color: root.bgDark; border.color: root.borderColor; radius: 4 }
+                        contentItem: Text { text: reqAllowUnlabeled.currentText; color: root.textColor; leftPadding: 10; verticalAlignment: Text.AlignVCenter }
+                    }
+
+                    Text { text: "检测框要求"; color: root.textMuted; font.pixelSize: 12 }
+                    ComboBox {
+                        id: reqBboxRequired
+                        Layout.fillWidth: true
+                        model: ["不限制", "必须有检测框", "不要求检测框"]
+                        background: Rectangle { color: root.bgDark; border.color: root.borderColor; radius: 4 }
+                        contentItem: Text { text: reqBboxRequired.currentText; color: root.textColor; leftPadding: 10; verticalAlignment: Text.AlignVCenter }
+                    }
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 12
+                Button {
+                    text: "清空规则"
+                    Layout.preferredHeight: 34
+                    background: Rectangle { color: "transparent"; border.color: root.borderColor; radius: 4 }
+                    contentItem: Text { text: "清空规则"; color: root.textMuted; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    onClicked: root.setDatasetRequirementsForm({})
+                }
+                Item { Layout.fillWidth: true }
+                Button {
+                    text: "取消"
+                    Layout.preferredWidth: 80; Layout.preferredHeight: 34
+                    background: Rectangle { color: "transparent"; border.color: root.borderColor; radius: 4 }
+                    contentItem: Text { text: "取消"; color: root.textMuted; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    onClicked: datasetRequirementsPopup.close()
+                }
+                Button {
+                    text: "应用"
+                    Layout.preferredWidth: 100; Layout.preferredHeight: 34
+                    background: Rectangle { color: root.devAccentColor; radius: 4 }
+                    contentItem: Text { text: "应用"; color: root.bgDark; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    onClicked: {
+                        var error = root.validateDatasetRequirementsForm()
+                        if (error !== "") {
+                            root.showToast("⚠️ " + error)
+                            return
+                        }
+                        root.pendingDatasetRequirements = root.datasetRequirementsFromForm()
+                        datasetRequirementsPopup.close()
+                    }
+                }
+            }
+        }
+    }
+
+    FileDialog {
+        id: modelAssetFileDialog
+        title: "导入模型文件"
+        fileMode: FileDialog.OpenFile
+        nameFilters: [
+            "模型文件 (*.pt *.pth *.onnx *.engine *.yaml *.yml)",
+            "全部文件 (*)"
+        ]
+        onAccepted: {
+            var path = selectedFile.toString()
+            var cleanPath = decodeURIComponent(path.replace(/^(file:\/{2,3})/, ""))
+            var result = backendService.importModelAsset(cleanPath, modelImportFamily.currentValue || "custom")
+            if (!result || result.status !== "started") {
+                root.showToast("⚠️ 模型导入启动失败")
+            } else {
+                root.showToast("⏳ 正在复制模型文件...")
+            }
+        }
+    }
+
+    Popup {
+        id: modelManagerPopup
+        width: 780
+        height: 570
+        modal: true
+        focus: true
+        x: Math.round((root.width - width) / 2)
+        y: Math.round((root.height - height) / 2)
+        closePolicy: Popup.CloseOnEscape | Popup.NoAutoClose
+        onOpened: backendService.getModelAssets(modelFamilyFilter.currentValue || "")
+        background: Rectangle {
+            color: root.panelBg
+            radius: 8
+            border.color: root.devAccentMuted
+            border.width: 1
+        }
+
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 22
+            spacing: 12
+
+            RowLayout {
+                Layout.fillWidth: true
+                Text { text: "统一模型管理"; color: root.devAccentColor; font.pixelSize: 18; font.bold: true }
+                Item { Layout.fillWidth: true }
+                Button {
+                    text: "关闭"
+                    Layout.preferredWidth: 70; Layout.preferredHeight: 30
+                    background: Rectangle { color: "transparent"; border.color: root.borderColor; radius: 4 }
+                    contentItem: Text { text: "关闭"; color: root.textMuted; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    onClicked: modelManagerPopup.close()
+                }
+            }
+
+            Text {
+                Layout.fillWidth: true
+                text: "模型保存在用户目录，软件升级或重新打包后仍可使用。训练参数会自动加入同系列模型。"
+                color: root.textMuted
+                font.pixelSize: 12
+                wrapMode: Text.WordWrap
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 76
+                color: root.bgDark
+                border.color: root.borderColor
+                radius: 6
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.margins: 12
+                    spacing: 10
+                    Text { text: "导入到"; color: root.textMuted; font.pixelSize: 12 }
+                    ComboBox {
+                        id: modelImportFamily
+                        Layout.preferredWidth: 130
+                        model: [
+                            {text: "YOLOv5", value: "yolov5"},
+                            {text: "YOLOv8", value: "yolov8"},
+                            {text: "YOLO11", value: "yolo11"},
+                            {text: "自定义", value: "custom"}
+                        ]
+                        textRole: "text"
+                        valueRole: "value"
+                        background: Rectangle { color: root.panelBg; border.color: root.borderColor; radius: 4 }
+                    }
+                    Button {
+                        text: "+ 导入模型文件"
+                        Layout.preferredWidth: 130; Layout.preferredHeight: 34
+                        background: Rectangle { color: root.devAccentColor; radius: 4 }
+                        contentItem: Text { text: "+ 导入模型文件"; color: root.bgDark; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                        onClicked: modelAssetFileDialog.open()
+                    }
+                    Item { Layout.fillWidth: true }
+                    Text { text: "筛选"; color: root.textMuted; font.pixelSize: 12 }
+                    ComboBox {
+                        id: modelFamilyFilter
+                        Layout.preferredWidth: 125
+                        model: [
+                            {text: "全部", value: ""},
+                            {text: "YOLOv5", value: "yolov5"},
+                            {text: "YOLOv8", value: "yolov8"},
+                            {text: "YOLO11", value: "yolo11"},
+                            {text: "自定义", value: "custom"}
+                        ]
+                        textRole: "text"
+                        valueRole: "value"
+                        background: Rectangle { color: root.panelBg; border.color: root.borderColor; radius: 4 }
+                        onActivated: backendService.getModelAssets(modelFamilyFilter.currentValue || "")
+                    }
+                }
+            }
+
+            Text {
+                Layout.fillWidth: true
+                text: "模型目录: " + (root.modelLibraryRoot || "加载中...")
+                color: root.textMuted
+                font.pixelSize: 11
+                elide: Text.ElideMiddle
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                color: root.bgDark
+                border.color: root.borderColor
+                radius: 6
+                clip: true
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    spacing: 0
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 36
+                        color: Theme.rowAlt
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: 12
+                            anchors.rightMargin: 12
+                            spacing: 10
+                            Text { text: "模型文件"; color: root.textMuted; font.pixelSize: 11; font.bold: true; Layout.fillWidth: true }
+                            Text { text: "系列"; color: root.textMuted; font.pixelSize: 11; font.bold: true; Layout.preferredWidth: 85 }
+                            Text { text: "格式"; color: root.textMuted; font.pixelSize: 11; font.bold: true; Layout.preferredWidth: 55 }
+                            Text { text: "大小"; color: root.textMuted; font.pixelSize: 11; font.bold: true; Layout.preferredWidth: 80 }
+                            Text { text: "操作"; color: root.textMuted; font.pixelSize: 11; font.bold: true; Layout.preferredWidth: 60; horizontalAlignment: Text.AlignHCenter }
+                        }
+                    }
+                    ListView {
+                        id: modelAssetListView
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        clip: true
+                        model: modelAssetListModel
+                        delegate: Rectangle {
+                            id: modelAssetDelegate
+                            required property int index
+                            required property var model
+                            width: modelAssetListView.width
+                            height: 54
+                            color: modelAssetDelegate.index % 2 === 0 ? "transparent" : root.tableHoverBg
+                            RowLayout {
+                                anchors.fill: parent
+                                anchors.leftMargin: 12
+                                anchors.rightMargin: 12
+                                spacing: 10
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 1
+                                    Text { text: modelAssetDelegate.model.name || ""; color: root.textColor; font.pixelSize: 12; elide: Text.ElideRight; Layout.fillWidth: true }
+                                    Text { text: modelAssetDelegate.model.path || ""; color: root.textMuted; font.pixelSize: 9; elide: Text.ElideMiddle; Layout.fillWidth: true }
+                                }
+                                Text { text: String(modelAssetDelegate.model.family || "").toUpperCase(); color: root.devAccentColor; font.pixelSize: 11; Layout.preferredWidth: 85 }
+                                Text { text: String(modelAssetDelegate.model.format || "").toUpperCase(); color: root.textMuted; font.pixelSize: 11; Layout.preferredWidth: 55 }
+                                Text { text: modelAssetDelegate.model.size_text || ""; color: root.textMuted; font.pixelSize: 11; Layout.preferredWidth: 80 }
+                                Button {
+                                    text: "删除"
+                                    Layout.preferredWidth: 60; Layout.preferredHeight: 28
+                                    background: Rectangle { color: "transparent"; border.color: root.dangerColor; radius: 4 }
+                                    contentItem: Text { text: "删除"; color: root.dangerColor; font.pixelSize: 11; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                    onClicked: {
+                                        root.pendingModelDeleteId = modelAssetDelegate.model.id || ""
+                                        root.pendingModelDeleteName = modelAssetDelegate.model.name || ""
+                                        modelDeleteConfirmPopup.open()
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Text {
+                    visible: modelAssetListModel.count === 0
+                    anchors.centerIn: parent
+                    text: "暂无已导入模型"
+                    color: root.textMuted
+                    font.pixelSize: 13
+                }
+            }
+        }
+    }
+
+    Popup {
+        id: modelDeleteConfirmPopup
+        width: 360
+        height: 180
+        modal: true
+        focus: true
+        x: Math.round((root.width - width) / 2)
+        y: Math.round((root.height - height) / 2)
+        closePolicy: Popup.CloseOnEscape | Popup.NoAutoClose
+        background: Rectangle { color: root.panelBg; border.color: root.dangerColor; radius: 8 }
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 20
+            spacing: 12
+            Text { text: "确认删除模型？"; color: root.dangerColor; font.pixelSize: 16; font.bold: true }
+            Text { text: root.pendingModelDeleteName; color: root.textColor; font.pixelSize: 13; Layout.fillWidth: true; elide: Text.ElideMiddle }
+            Text { text: "删除后，已保存但尚未执行的训练任务可能无法启动。"; color: root.textMuted; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+            Item { Layout.fillHeight: true }
+            RowLayout {
+                Layout.fillWidth: true
+                Item { Layout.fillWidth: true }
+                Button {
+                    text: "取消"; Layout.preferredWidth: 75; Layout.preferredHeight: 30
+                    background: Rectangle { color: "transparent"; border.color: root.borderColor; radius: 4 }
+                    contentItem: Text { text: "取消"; color: root.textMuted; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    onClicked: modelDeleteConfirmPopup.close()
+                }
+                Button {
+                    text: "确认删除"; Layout.preferredWidth: 90; Layout.preferredHeight: 30
+                    background: Rectangle { color: root.dangerColor; radius: 4 }
+                    contentItem: Text { text: "确认删除"; color: "white"; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    onClicked: {
+                        var result = backendService.deleteModelAsset(root.pendingModelDeleteId)
+                        if (result && result.ok) {
+                            root.showToast("✅ 模型已删除")
+                            backendService.getModelAssets(modelFamilyFilter.currentValue || "")
+                        } else {
+                            root.showToast("⚠️ 删除失败: " + ((result && result.message) ? result.message : "未知错误"))
+                        }
+                        modelDeleteConfirmPopup.close()
+                    }
+                }
+            }
+        }
+    }
+
 
     // ========================================================================
     // ======================== 全新界面主体：Master-Detail 控制台 ================
@@ -1445,6 +2043,25 @@ Item {
             }
 
             Button {
+                text: "模型管理"
+                font.bold: true
+                font.pixelSize: 14
+                background: Rectangle {
+                    color: parent.pressed ? "#1A00838F" : parent.hovered ? "#1A00E5FF" : "transparent"
+                    border.color: root.devAccentColor
+                    border.width: 1
+                    radius: 4
+                }
+                contentItem: Text {
+                    text: "模型管理"
+                    color: root.devAccentColor
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                }
+                onClicked: modelManagerPopup.open()
+            }
+
+            Button {
                 text: "+ 注册新插件环境"
                 font.bold: true
                 font.pixelSize: 14
@@ -1467,6 +2084,9 @@ Item {
                     inputSubCategory.editText = ""
                     inputScriptPath.text = ""
                     inputDesc.text = ""
+                    root.pendingDatasetRequirements = ({})
+                    root.pendingCustomDatasetValidator = false
+                    root.setDatasetRequirementsForm({})
                     editingParamsModel.clear()
                     algoConfigPopup.open()
                 }
@@ -1500,13 +2120,16 @@ Item {
                 Flickable {
                     id: algoListFlickable
                     anchors.fill: parent
-                    contentHeight: Math.max(sectionColumn.implicitHeight, 96 + root.totalAlgoCount * 68 + 200)
+                    contentWidth: width
+                    contentHeight: sectionColumn.implicitHeight
+                    flickableDirection: Flickable.VerticalFlick
                     clip: true
                     boundsBehavior: Flickable.StopAtBounds
                     visible: algoListModel.count > 0
+                    onContentHeightChanged: returnToBounds()
 
                     ScrollBar.vertical: ScrollBar {
-                        policy: ScrollBar.AlwaysOn
+                        policy: ScrollBar.AsNeeded
                         interactive: true
                     }
 
@@ -1822,6 +2445,10 @@ Item {
 
                                     inputScriptPath.text = modelData.script;
                                     inputDesc.text = modelData.desc;
+                                    root.pendingDatasetRequirements = modelData.datasetRequirementsJson
+                                            ? JSON.parse(modelData.datasetRequirementsJson) : ({});
+                                    root.pendingCustomDatasetValidator = modelData.customDatasetValidator === true;
+                                    root.setDatasetRequirementsForm(root.pendingDatasetRequirements);
 
                                     editingParamsModel.clear();
                                     if (modelData.paramsJson && modelData.paramsJson !== "") {

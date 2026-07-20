@@ -1013,13 +1013,21 @@ Item {
     }
 
     onVisibleChanged: {
-        if (visible) root.refreshCleaningHistoryState()
+        if (visible) {
+            backendService.getDatasets(1, 100, "")
+            root.refreshCleaningHistoryState()
+        }
     }
 
     function refreshCleaningHistoryState() {
         backendService.getCleaningTasks(0, "")
         var detailTaskId = root.currentHistoryItem ? Number(root.currentHistoryItem.taskId || 0) : root.currentTaskId
         if (detailTaskId > 0) backendService.getCleaningSuggestions(detailTaskId, "", 1, 200)
+    }
+
+    function refreshPage() {
+        backendService.getDatasets(1, 100, "")
+        root.refreshCleaningHistoryState()
     }
 
     function getCurrentTime() {

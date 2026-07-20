@@ -68,6 +68,9 @@ Item {
     property var scenarioAlgoMap: ({})
     // 所有训练算法的完整列表 (用于场景过滤)
     property var allTrainingAlgos: []
+    property var trainingCompatibilityMap: ({})
+    property int compatibilityDatasetId: 0
+    property int pendingCompatibilityDatasetId: 0
 
     ListModel { id: scenarioModel }
     ListModel { id: datasetModel }
@@ -109,14 +112,41 @@ Item {
         var scIdx = scenarioCombo.currentIndex
         var scKey = scIdx >= 0 ? (scenarioModel.get(scIdx).key || "") : ""
         var allowedKeys = root.scenarioAlgoMap[scKey] || []
+        var dsIdx = datasetCombo.currentIndex
+        var datasetId = dsIdx >= 0 ? Number(datasetModel.get(dsIdx).id || 0) : 0
+        var compatibilityReady = datasetId > 0 && root.compatibilityDatasetId === datasetId
         for (var i = 0; i < root.allTrainingAlgos.length; i++) {
             var algo = root.allTrainingAlgos[i]
             // 无场景映射时显示所有算法，有映射则只显示匹配的
-            if (allowedKeys.length === 0 || allowedKeys.indexOf(algo.key) >= 0) {
+            var scenarioMatched = allowedKeys.length === 0 || allowedKeys.indexOf(algo.key) >= 0
+            var compatible = !compatibilityReady || root.trainingCompatibilityMap[String(algo.id)] === true
+            if (scenarioMatched && compatible) {
                 algoModel.append(algo)
             }
         }
         if (algoModel.count > 0) algoCombo.currentIndex = 0
+    }
+
+    function requestTrainingCompatibility() {
+        var dsIdx = datasetCombo.currentIndex
+        if (dsIdx < 0 || dsIdx >= datasetModel.count) return
+        var datasetId = Number(datasetModel.get(dsIdx).id || 0)
+        if (datasetId <= 0) return
+        root.compatibilityDatasetId = 0
+        root.trainingCompatibilityMap = ({})
+        root.pendingCompatibilityDatasetId = datasetId
+        trainingCompatibilityDebounce.restart()
+    }
+
+    Timer {
+        id: trainingCompatibilityDebounce
+        interval: 150
+        repeat: false
+        onTriggered: {
+            if (root.pendingCompatibilityDatasetId > 0) {
+                backendService.getTrainingCompatibility(root.pendingCompatibilityDatasetId)
+            }
+        }
     }
 
     function getCurrentTime() {
@@ -217,6 +247,30 @@ Item {
         if (value === undefined || value === null || value === "") return "未设置"
         if (typeof value === "object") return JSON.stringify(value)
         return String(value)
+    }
+
+    function algorithmParamOptionLabel(paramName, value) {
+        var raw = String(value === undefined || value === null ? "" : value)
+        var modelParamNames = ["weights", "weight", "weights_path", "model", "model_path", "model_yaml", "model_cfg", "cfg", "checkpoint", "pretrained", "pretrained_weights"]
+        if (modelParamNames.indexOf(String(paramName || "").toLowerCase()) !== -1 && (raw.indexOf("/") !== -1 || raw.indexOf("\\") !== -1)) {
+            var parts = raw.replace(/\\/g, "/").split("/")
+            return parts[parts.length - 1]
+        }
+        if (paramName !== "device") return raw
+        if (raw === "") return "自动"
+        if (raw.toLowerCase() === "cpu") return "cpu"
+        if (raw === "0") return "显卡1"
+        if (raw === "1") return "显卡2"
+        if (raw === "0,1") return "双显卡"
+        return raw
+    }
+
+    function algorithmParamOptionLabels(paramName, options) {
+        var labels = []
+        for (var i = 0; i < options.length; i++) {
+            labels.push(root.algorithmParamOptionLabel(paramName, options[i]))
+        }
+        return labels
     }
 
     function buildTrainingParamSummary(params, algoId) {
@@ -407,6 +461,35 @@ Item {
         evalHistoryModel.remove(index)
         root.checkStates()
         root.saveToAppState()
+        return true
+    }
+
+    function deleteTrainingQueueItem(index) {
+        if (index < 0 || index >= taskQueueModel.count) return false
+        var item = taskQueueModel.get(index)
+        if (item.trainStatus === 1) {
+            root.showToast("⚠️ 训练进行中，请先停止任务")
+            return false
+        }
+
+        var taskId = Number(item.taskId || 0)
+        if (taskId > 0) {
+            var result = backendService.deleteTask(taskId)
+            if (!result || result.status !== "success") {
+                root.showToast("⚠️ " + (result && result.message ? result.message : "删除训练任务失败"))
+                return false
+            }
+
+            var historyIndex = root.historyIndexForTask(taskId)
+            if (historyIndex >= 0) evalHistoryModel.remove(historyIndex)
+            var weightIndex = root.weightOptionIndex(taskId)
+            if (weightIndex >= 0) weightOptionModel.remove(weightIndex)
+        }
+
+        taskQueueModel.remove(index)
+        root.checkStates()
+        root.saveToAppState()
+        root.showToast("🗑️ 训练任务已删除")
         return true
     }
 
@@ -615,6 +698,22 @@ Item {
                 }
             }
             if (datasetModel.count === 0) datasetModel.append({id: 0, name: "无可用数据集 (请先导入)", modality: "", parentId: 0, status: ""})
+            Qt.callLater(function() { root.requestTrainingCompatibility() })
+        }
+
+        function onTrainingCompatibilityUpdated(data) {
+            var currentIndex = datasetCombo.currentIndex
+            var currentDatasetId = currentIndex >= 0 && currentIndex < datasetModel.count
+                    ? Number(datasetModel.get(currentIndex).id || 0) : 0
+            if (Number(data && data.dataset_id ? data.dataset_id : 0) !== currentDatasetId) return
+            var items = data && data.items ? data.items : []
+            var compatibility = {}
+            for (var i = 0; i < items.length; i++) {
+                compatibility[String(items[i].algorithm_id || 0)] = items[i].compatible === true
+            }
+            root.compatibilityDatasetId = Number(data && data.dataset_id ? data.dataset_id : 0)
+            root.trainingCompatibilityMap = compatibility
+            root.filterAlgorithmsByScenario()
         }
 
         function onAlgorithmsUpdated(algorithms) {
@@ -683,7 +782,8 @@ Item {
         function onTrainingStatusUpdated(message, success, progressVal) {
             root.showToast(success ? "✅ " + message : "⚠️ " + message)
             if (!success) root.isTraining = false
-            if (success) backendService.getTrainingTasks(0, "")  // 训练完成立即刷新状态
+            // 成功、失败和主动取消都必须刷新，确保终止任务显示删除按钮。
+            backendService.getTrainingTasks(0, "")
         }
 
         function onEvaluationStatusUpdated(message, success) {
@@ -806,7 +906,14 @@ Item {
         root.refreshEvaluationHistoryState()
     }
     onVisibleChanged: {
-        if (visible) root.refreshEvaluationHistoryState()
+        if (visible) {
+            backendService.getDatasets(1, 100, "")
+            root.refreshEvaluationHistoryState()
+        }
+    }
+    function refreshPage() {
+        backendService.getDatasets(1, 100, "")
+        root.refreshEvaluationHistoryState()
     }
     Component.onDestruction: {
         root.saveToAppState()
@@ -1706,6 +1813,7 @@ Item {
                     StableComboBox { id: datasetCombo; model: datasetModel; textRole: "name"; Layout.preferredWidth: 160
                         background: Rectangle { color: root.bgDark; border.color: root.borderColor; radius: 4 }
                         contentItem: Text { text: parent.currentText; color: root.textColor; verticalAlignment: Text.AlignVCenter; padding: 10; elide: Text.ElideRight }
+                        onCurrentIndexChanged: root.requestTrainingCompatibility()
                     }
                 }
                 Text { text: "➡"; color: root.borderColor; font.pixelSize: 16 }
@@ -1924,7 +2032,7 @@ Item {
                                         property bool btnHov: delBtnMa.containsMouse
                                         Text { text: "删除"; color: root.dangerColor; font.pixelSize: 11; anchors.centerIn: parent }
                                         MouseArea { id: delBtnMa; anchors.fill: parent; cursorShape: Qt.PointingHandCursor; hoverEnabled: true
-                                            onClicked: { taskQueueModel.remove(index); root.checkStates(); root.saveToAppState() }
+                                            onClicked: root.deleteTrainingQueueItem(index)
                                         }
                                     }
                                 }
@@ -2491,6 +2599,7 @@ Item {
                         width: paramEditList.width; height: 40
                         color: index % 2 === 0 ? "transparent" : root.tableHoverBg
                         property var _opts: { try { return JSON.parse(model.optionsJson || "[]") } catch(e) { return [] } }
+                        property var _optionLabels: root.algorithmParamOptionLabels(model.name, _opts)
                         RowLayout {
                             anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12; spacing: 10
                             Text {
@@ -2501,7 +2610,7 @@ Item {
                             StableComboBox {
                                 visible: _opts.length > 0
                                 Layout.preferredWidth: 200
-                                model: _opts
+                                model: _optionLabels
                                 currentIndex: {
                                     var cv = model.value !== undefined ? String(model.value) : ""
                                     for (var oi = 0; oi < _opts.length; oi++) { if (String(_opts[oi]) === cv) return oi }

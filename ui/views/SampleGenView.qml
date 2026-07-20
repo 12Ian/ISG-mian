@@ -846,7 +846,15 @@ Item {
             var expectedModality = source ? (source.modality || "") : ""
             algorithms = (algorithms || []).filter(function(algo) {
                 var modality = algo.modality || ""
-                return modality === expectedModality || modality === "multimodal"
+                var unsafeSpatial = [
+                    "generation.image.crop",
+                    "generation.image.geometric_transform",
+                    "generation.image.deformation_distortion"
+                ].indexOf(algo.key || "") >= 0
+                if (expectedModality === "multimodal" && unsafeSpatial) return false
+                return modality === expectedModality
+                    || modality === "multimodal"
+                    || (expectedModality === "multimodal" && modality === "image")
             })
             var map = {}
             var labelMap = {}
@@ -1380,13 +1388,21 @@ Item {
     }
 
     onVisibleChanged: {
-        if (visible) root.refreshGenerationHistoryState()
+        if (visible) {
+            backendService.getAllDatasets("")
+            root.refreshGenerationHistoryState()
+        }
     }
 
     function refreshGenerationHistoryState() {
         backendService.getEnhancementTasks(0, "")
         var detailTaskId = root.currentHistoryItem ? Number(root.currentHistoryItem.taskId || 0) : root.currentTaskId
         if (detailTaskId > 0) backendService.getGenerationOutputs(detailTaskId, "", 1, 200)
+    }
+
+    function refreshPage() {
+        backendService.getAllDatasets("")
+        root.refreshGenerationHistoryState()
     }
 
     function getCurrentTime() {
@@ -1566,6 +1582,7 @@ Item {
                         if (result && result.status === "success") {
                             root.currentTargetDatasetName = newDatasetName
                             backendService.getAllDatasets("")
+                            backendService.getDatasets(1, 100, "")
                             backendService.getEnhancementTasks(0, "")
                             root.showToast("✅ 生成结果已保存")
                         } else {

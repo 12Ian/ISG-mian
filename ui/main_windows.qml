@@ -236,18 +236,31 @@ Component {
             else if (idx===3) page3Loaded=true; else if (idx===4) page4Loaded=true
             else if (idx===5) page5Loaded=true
         }
+        function refreshPage(idx) {
+            var loader = idx === 0 ? dataManageLoader
+                       : idx === 1 ? sampleGenLoader
+                       : idx === 2 ? dataCleanLoader
+                       : idx === 3 ? evaluateLoader
+                       : null
+            if (loader && loader.item && typeof loader.item.refreshPage === "function") {
+                loader.item.refreshPage()
+            }
+        }
 
         StackLayout {
             id: viewStack
             anchors.fill: parent
             anchors.margins: 20
             currentIndex: 0
-            onCurrentIndexChanged: mainContentArea.markLoaded(currentIndex)
+            onCurrentIndexChanged: {
+                mainContentArea.markLoaded(currentIndex)
+                Qt.callLater(function() { mainContentArea.refreshPage(viewStack.currentIndex) })
+            }
 
-            Loader { source: "views/DataManageView.qml";  active: true;                 asynchronous: true }
-            Loader { source: "views/SampleGenView.qml";    active: mainContentArea.page1Loaded;          asynchronous: true }
-            Loader { source: "views/DataCleanView.qml";    active: mainContentArea.page2Loaded;          asynchronous: true }
-            Loader { source: "views/EvaluateView.qml";     active: true;          asynchronous: true }
+            Loader { id: dataManageLoader; source: "views/DataManageView.qml"; active: true; asynchronous: true }
+            Loader { id: sampleGenLoader; source: "views/SampleGenView.qml"; active: mainContentArea.page1Loaded; asynchronous: true }
+            Loader { id: dataCleanLoader; source: "views/DataCleanView.qml"; active: mainContentArea.page2Loaded; asynchronous: true }
+            Loader { id: evaluateLoader; source: "views/EvaluateView.qml"; active: true; asynchronous: true }
             Loader { source: "views/AlgoConfigView.qml";   active: mainContentArea.page4Loaded;          asynchronous: true }
             Loader { source: "views/SystemSettingsView.qml"; active: mainContentArea.page5Loaded;        asynchronous: true }
         }

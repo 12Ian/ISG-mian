@@ -43,7 +43,7 @@ Item {
     property var allDatasets: []
     property var displayedDatasets: []
     property string currentCategory: "全部"
-    property string currentStage: "raw"
+    property string currentStage: "all"
     property string searchQuery: ""
     property int pendingDeleteId: -1
     property bool importing: false
@@ -55,6 +55,7 @@ Item {
     property string previewText: ""
     property string previewSource: ""
     property string previewTitle: ""
+    property var previewLabels: []
     property string toastMessage: ""
     property string lastSuggestedImportName: ""
     property bool importNameManuallyEdited: false
@@ -113,6 +114,7 @@ Item {
             root.previewText = payload.text_content || payload.error || ""
             root.previewTitle = payload.name || payload.relative_path || "样本预览"
             root.previewSource = payload.file_path ? root.localFileUrl(payload.file_path) : ""
+            root.previewLabels = root.detectionLabels(payload.labels || payload.labels_json || [])
             if (root.previewKind === "audio" && root.previewSource !== "") {
                 previewPlayer.source = root.previewSource
             }
@@ -132,8 +134,16 @@ Item {
         loadData()
     }
 
+    onVisibleChanged: {
+        if (visible) loadData()
+    }
+
     function loadData() {
         backendService.getDatasets(1, 100, "")
+    }
+
+    function refreshPage() {
+        loadData()
     }
 
     function showToast(message) {
@@ -185,6 +195,16 @@ Item {
     function isImageExtension(path) {
         var ext = String(path).toLowerCase().split('.').pop()
         return ["jpg","jpeg","png","bmp","gif","webp","tif","tiff"].indexOf(ext) >= 0
+    }
+
+    function detectionLabels(labels) {
+        var result = []
+        var values = labels || []
+        for (var i = 0; i < values.length; i++) {
+            var label = values[i]
+            if (label && label.bbox && label.bbox.length >= 4) result.push(label)
+        }
+        return result
     }
 
     function sampleToFileRow(sample) {
@@ -317,6 +337,7 @@ Item {
             root.previewTitle = file && file.name ? file.name : "样本预览"
             root.previewText = "该文件没有后端样本记录，无法读取真实文件内容。"
             root.previewSource = ""
+            root.previewLabels = []
             root.samplePreviewVisible = true
             fileDetailPopup.forceActiveFocus()
         }
@@ -326,6 +347,7 @@ Item {
         root.samplePreviewVisible = false
         root.pendingPreviewKey = ""
         root.currentPreviewImageIndex = -1
+        root.previewLabels = []
         previewPlayer.stop()
     }
 
@@ -453,7 +475,7 @@ Item {
             StableComboBox {
                 id: stageCombo
                 model: ["全部", "原始数据集", "清洗数据集", "生成数据集"]
-                currentIndex: 1
+                currentIndex: 0
                 Layout.preferredWidth: 130
                 background: Rectangle {
                     color: Theme.control
@@ -1138,6 +1160,13 @@ Item {
                             elide: Text.ElideRight
                         }
 
+                        Label {
+                            visible: root.previewKind === "image" && root.previewLabels.length > 0
+                            text: "检测框 " + root.previewLabels.length
+                            color: "#4DD0E1"
+                            font.pixelSize: 12
+                        }
+
                         Button {
                             text: "返回列表"
                             Layout.preferredWidth: 88
@@ -1157,12 +1186,60 @@ Item {
                         clip: true
 
                         Image {
+                            id: previewImage
                             anchors.fill: parent
                             anchors.margins: 12
                             visible: root.previewKind === "image" && root.previewSource !== "" && root.isImageExtension(root.previewSource)
                             source: (root.previewKind === "image" && root.isImageExtension(root.previewSource)) ? root.previewSource : ""
                             fillMode: Image.PreserveAspectFit
                             asynchronous: true
+                        }
+
+                        // labels_json 使用归一化中心点格式，按图片实际绘制区域叠加检测框。
+                        Item {
+                            anchors.fill: previewImage
+                            visible: previewImage.visible && previewImage.status === Image.Ready
+                            z: 2
+
+                            Repeater {
+                                model: root.previewLabels
+
+                                delegate: Rectangle {
+                                    required property var modelData
+                                    property var bbox: modelData && modelData.bbox ? modelData.bbox : []
+                                    property bool validBox: bbox.length >= 4
+                                        && Number(bbox[2]) > 0 && Number(bbox[3]) > 0
+                                    property real imageLeft: (previewImage.width - previewImage.paintedWidth) / 2
+                                    property real imageTop: (previewImage.height - previewImage.paintedHeight) / 2
+
+                                    visible: validBox
+                                    x: imageLeft + (Number(bbox[0]) - Number(bbox[2]) / 2) * previewImage.paintedWidth
+                                    y: imageTop + (Number(bbox[1]) - Number(bbox[3]) / 2) * previewImage.paintedHeight
+                                    width: Number(bbox[2]) * previewImage.paintedWidth
+                                    height: Number(bbox[3]) * previewImage.paintedHeight
+                                    color: "transparent"
+                                    border.color: "#22D3EE"
+                                    border.width: 2
+
+                                    Rectangle {
+                                        anchors.left: parent.left
+                                        anchors.top: parent.top
+                                        height: 22
+                                        width: Math.max(44, classLabel.implicitWidth + 12)
+                                        color: "#CC0891B2"
+                                        radius: 3
+
+                                        Text {
+                                            id: classLabel
+                                            anchors.centerIn: parent
+                                            text: modelData && modelData.class_name ? String(modelData.class_name) : "目标"
+                                            color: "white"
+                                            font.pixelSize: 12
+                                            font.bold: true
+                                        }
+                                    }
+                                }
+                            }
                         }
 
                         Button {
