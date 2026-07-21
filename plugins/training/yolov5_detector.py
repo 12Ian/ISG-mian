@@ -14,6 +14,7 @@ from core.hardware_adapter import resolve_yolo_device
 
 
 _YOLOV5_ROOT = Path(__file__).resolve().parent.parent / "detection" / "yolov5_core"
+os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 os.environ.setdefault("NO_ALBUMENTATIONS_UPDATE", "1")
 os.environ.setdefault("YOLO_OFFLINE", "true")
 

@@ -47,6 +47,7 @@ Item {
     property real evalTableContentX: 0
     property real evalProgressValue: 0.0
     property string evalProgressMessage: ""
+    property int expectedEvalResultCount: 0
 
     property var algorithmNameMap: ({})
     property var evalAlgorithmMap: ({})
@@ -583,6 +584,43 @@ Item {
         return 0
     }
 
+    function hasEvalResult(resultId, evalTaskId, targetDatasetId, modelName) {
+        var rid = Number(resultId || 0)
+        var tid = Number(evalTaskId || 0)
+        var did = Number(targetDatasetId || 0)
+        var name = String(modelName || "")
+        for (var i = 0; i < evalResultModel.count; i++) {
+            var item = evalResultModel.get(i)
+            if (rid > 0 && Number(item.resultId || 0) === rid) return true
+            if (rid <= 0
+                    && Number(item.taskId || 0) === tid
+                    && Number(item.targetDatasetId || 0) === did
+                    && String(item.modelName || "") === name) {
+                return true
+            }
+        }
+        return false
+    }
+
+    function hasEvalResultForTask(evalTaskId) {
+        var taskId = Number(evalTaskId || 0)
+        if (taskId <= 0) return false
+        for (var i = 0; i < evalResultModel.count; i++) {
+            if (Number(evalResultModel.get(i).taskId || 0) === taskId) return true
+        }
+        return false
+    }
+
+    function fetchCompletedEvaluationResults() {
+        for (var i = 0; i < activeEvalSourceModel.count; i++) {
+            var item = activeEvalSourceModel.get(i)
+            var taskId = Number(item.evalTaskId || 0)
+            if (taskId > 0 && item.evalStatus === "completed") {
+                backendService.getEvaluationResults(taskId)
+            }
+        }
+    }
+
     function evalSourceIndexForTask(evalTaskId) {
         var id = Number(evalTaskId || 0)
         if (id <= 0) return -1
@@ -717,6 +755,8 @@ Item {
                 var r = state.evalResults || []
                 for (var ri = 0; ri < r.length; ri++) evalResultModel.append(r[ri])
                 var activeSources = state.activeEvalSources || []
+                root.expectedEvalResultCount = Number(state.expectedEvalResultCount || activeSources.length || 0)
+                var restoredPendingIds = []
                 for (var ai = 0; ai < activeSources.length; ai++) {
                     var src = activeSources[ai]
                     activeEvalSourceModel.append({
@@ -731,8 +771,17 @@ Item {
                         evalProgressMessage: src.evalProgressMessage || "",
                         evalStatus: src.evalStatus || ""
                     })
+                    var restoredTaskId = Number(src.evalTaskId || 0)
+                    if (restoredTaskId > 0 && !root.hasEvalResultForTask(restoredTaskId)) {
+                        restoredPendingIds.push(restoredTaskId)
+                    }
                 }
+                root.pendingEvalTaskIds = restoredPendingIds
+                root.isEvaluating = restoredPendingIds.length > 0
                 root.refreshEvaluationProgressState()
+                if (restoredPendingIds.length > 0) {
+                    backendService.getEvaluationTasks("")
+                }
                 backendService.getTrainingTasks(0, "")
             } catch(e) {}
         }
@@ -858,8 +907,7 @@ Item {
         function onEvaluationStatusUpdated(message, success) {
             root.showToast(success ? "✅ " + message : "⚠️ " + message)
             if (!success) {
-                root.pendingEvalTaskIds = []
-                root.isEvaluating = false
+                backendService.getEvaluationTasks("")
             }
             // success时由 evalPollTimer 轮询拉取结果
         }
@@ -879,17 +927,22 @@ Item {
                     if (idx >= 0) {
                         if (it.status === "completed") {
                             backendService.getEvaluationResults(taskId)
-                            var newIds = root.pendingEvalTaskIds.slice()
-                            newIds.splice(idx, 1)
-                            root.pendingEvalTaskIds = newIds
                         } else if (it.status === "failed") {
-                            root.isEvaluating = false
-                            root.pendingEvalTaskIds = []
+                            var failedIds = root.pendingEvalTaskIds.slice()
+                            failedIds.splice(idx, 1)
+                            root.pendingEvalTaskIds = failedIds
+                            root.expectedEvalResultCount = Math.max(0, root.expectedEvalResultCount - 1)
                             root.showToast("⚠️ 评估失败: " + (it.error_message || it.progress_message || "未知错误"))
                         }
                     }
                 }
-                if (root.pendingEvalTaskIds.length === 0) root.isEvaluating = false
+                if (root.pendingEvalTaskIds.length === 0) {
+                    root.fetchCompletedEvaluationResults()
+                    if (root.expectedEvalResultCount <= 0 || evalResultModel.count >= root.expectedEvalResultCount) {
+                        root.isEvaluating = false
+                    }
+                    root.refreshEvaluationProgressState()
+                }
             }
         }
 
@@ -930,6 +983,15 @@ Item {
                 var r = items[i]
                 var m = r.metrics || {}
                 var evalTaskId = r.task_id || 0
+                var resultId = r.id || 0
+                var targetDatasetId = r.target_dataset_id || 0
+                var modelName = r.model_name || ""
+                if (root.hasEvalResult(resultId, evalTaskId, targetDatasetId, modelName)) {
+                    if (evalTaskId > 0 && completedTaskIds.indexOf(evalTaskId) < 0) {
+                        completedTaskIds.push(evalTaskId)
+                    }
+                    continue
+                }
                 var trainingTaskId = root.trainingTaskIdForEvalTask(evalTaskId)
                 var vals = []
                 for (var k = 0; k < allKeys.length; k++) {
@@ -942,9 +1004,12 @@ Item {
                     }
                 }
                 evalResultModel.append({
+                    resultId: resultId,
                     taskId: evalTaskId,
                     trainingTaskId: trainingTaskId,
-                    modelName: r.model_name || "",
+                    targetDatasetId: targetDatasetId,
+                    baselineDatasetId: r.baseline_dataset_id || 0,
+                    modelName: modelName,
                     displayName: (trainingTaskId > 0 ? ("#" + trainingTaskId + " ") : "") + (r.model_name || r.method || "评估算法"),
                     evalMethod: r.model_name || r.method || "评估算法",
                     metricValues: vals,
@@ -963,8 +1028,10 @@ Item {
             }
             root.pendingEvalTaskIds = remainingIds
             root.saveToAppState()
-            if (root.pendingEvalTaskIds.length === 0) {
+            if (root.pendingEvalTaskIds.length === 0
+                    && (root.expectedEvalResultCount <= 0 || evalResultModel.count >= root.expectedEvalResultCount)) {
                 root.isEvaluating = false
+                root.refreshEvaluationProgressState()
                 root.showToast("✅ 评估比对完成，共 " + evalResultModel.count + " 条结果")
             }
         }
@@ -1027,7 +1094,9 @@ Item {
         var resArr = []
         for (var ri = 0; ri < evalResultModel.count; ri++) {
             var r = evalResultModel.get(ri)
-            resArr.push({taskId: r.taskId, trainingTaskId: r.trainingTaskId, modelName: r.modelName, displayName: r.displayName, evalMethod: r.evalMethod,
+            resArr.push({resultId: r.resultId || 0, taskId: r.taskId, trainingTaskId: r.trainingTaskId,
+                         targetDatasetId: r.targetDatasetId || 0, baselineDatasetId: r.baselineDatasetId || 0,
+                         modelName: r.modelName, displayName: r.displayName, evalMethod: r.evalMethod,
                          metricValues: r.metricValues, metricValuesJson: r.metricValuesJson, summary: r.summary})
         }
 
@@ -1041,6 +1110,7 @@ Item {
             taskQueue: queueArr,
             evalResults: resArr,
             activeEvalSources: activeEvalSources,
+            expectedEvalResultCount: root.expectedEvalResultCount,
             metricHeaders: root.evalMetricHeaders,
             isTraining: root.isTraining,
             taskCounter: root.taskCounter
@@ -2580,6 +2650,7 @@ Item {
         root.pendingEvalTaskIds = []
         activeEvalSourceModel.clear()
         root.evalProgressValue = 0.0
+        root.expectedEvalResultCount = 0
         root.evalProgressMessage = "评估任务准备中..."
 
         var totalWeights = weightOptionModel.count
@@ -2618,8 +2689,8 @@ Item {
 
             var evalResult = backendService.createEvaluationTask(scId, t.datasetId || 0, t.datasetId || 0, evalAlgoId, evalParams)
             if (evalResult && evalResult.status === "success") {
-                backendService.startEvaluationTask(evalResult.id)
                 root.pendingEvalTaskIds = root.pendingEvalTaskIds.concat([evalResult.id || 0])
+                root.expectedEvalResultCount = root.expectedEvalResultCount + 1
                 activeEvalSourceModel.append({
                     evalTaskId: evalResult.id || 0,
                     trainingTaskId: t.taskId || 0,
@@ -2633,6 +2704,7 @@ Item {
                     evalStatus: "pending"
                 })
                 root.refreshEvaluationProgressState()
+                backendService.startEvaluationTask(evalResult.id)
                 startedCount++
             } else {
                 root.showToast("⚠️ 创建评估任务失败: " + (evalResult ? (evalResult.message || "未知") : "无响应"))
