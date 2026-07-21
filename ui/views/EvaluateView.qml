@@ -45,6 +45,8 @@ Item {
     property bool trainingWorkbenchExpanded: true
     property bool evaluationWorkbenchExpanded: false
     property real evalTableContentX: 0
+    property real evalProgressValue: 0.0
+    property string evalProgressMessage: ""
 
     property var algorithmNameMap: ({})
     property var evalAlgorithmMap: ({})
@@ -102,7 +104,7 @@ Item {
     function workbenchMainHeight() {
         var total = 0
         if (root.trainingWorkbenchExpanded) total += 309
-        total += (root.workMode === "eval" && root.evaluationWorkbenchExpanded) ? 640 : 0
+        total += (root.workMode === "eval" && root.evaluationWorkbenchExpanded) ? 800 : 0
         if (root.trainingWorkbenchExpanded) total += 15
         return total
     }
@@ -581,6 +583,58 @@ Item {
         return 0
     }
 
+    function evalSourceIndexForTask(evalTaskId) {
+        var id = Number(evalTaskId || 0)
+        if (id <= 0) return -1
+        for (var i = 0; i < activeEvalSourceModel.count; i++) {
+            if (Number(activeEvalSourceModel.get(i).evalTaskId || 0) === id) return i
+        }
+        return -1
+    }
+
+    function syncActiveEvalSourceTask(task) {
+        if (!task) return
+        var sourceIndex = root.evalSourceIndexForTask(task.id || 0)
+        if (sourceIndex < 0) return
+
+        var status = task.status || ""
+        var pct = Number(task.progress || 0)
+        if (status === "completed") pct = 100
+        if (pct < 0) pct = 0
+        if (pct > 100) pct = 100
+
+        activeEvalSourceModel.setProperty(sourceIndex, "evalProgress", pct / 100.0)
+        activeEvalSourceModel.setProperty(sourceIndex, "evalProgressMessage", task.progress_message || "")
+        activeEvalSourceModel.setProperty(sourceIndex, "evalStatus", status)
+        root.refreshEvaluationProgressState()
+    }
+
+    function currentEvaluationProgress() {
+        if (activeEvalSourceModel.count <= 0) return root.isEvaluating ? 0.0 : 1.0
+        var total = 0.0
+        for (var i = 0; i < activeEvalSourceModel.count; i++) {
+            total += Number(activeEvalSourceModel.get(i).evalProgress || 0)
+        }
+        return Math.max(0.0, Math.min(1.0, total / activeEvalSourceModel.count))
+    }
+
+    function currentEvaluationMessage() {
+        if (activeEvalSourceModel.count <= 0) return root.isEvaluating ? "评估任务准备中..." : ""
+        for (var i = 0; i < activeEvalSourceModel.count; i++) {
+            var item = activeEvalSourceModel.get(i)
+            var status = item.evalStatus || ""
+            if (status === "running") {
+                return item.evalProgressMessage || ("评估任务 #" + (item.evalTaskId || 0) + " 运行中")
+            }
+        }
+        return root.isEvaluating ? "评估结果汇总中..." : "评估完成"
+    }
+
+    function refreshEvaluationProgressState() {
+        root.evalProgressValue = root.currentEvaluationProgress()
+        root.evalProgressMessage = root.currentEvaluationMessage()
+    }
+
     function upsertWeightOption(task) {
         if (!task) return
         var taskId = Number(task.id || 0)
@@ -663,7 +717,22 @@ Item {
                 var r = state.evalResults || []
                 for (var ri = 0; ri < r.length; ri++) evalResultModel.append(r[ri])
                 var activeSources = state.activeEvalSources || []
-                for (var ai = 0; ai < activeSources.length; ai++) activeEvalSourceModel.append(activeSources[ai])
+                for (var ai = 0; ai < activeSources.length; ai++) {
+                    var src = activeSources[ai]
+                    activeEvalSourceModel.append({
+                        evalTaskId: src.evalTaskId || 0,
+                        trainingTaskId: src.trainingTaskId || 0,
+                        scenario: src.scenario || "",
+                        dataset: src.dataset || "",
+                        algo: src.algo || "",
+                        checkpointName: src.checkpointName || "",
+                        checkpointPath: src.checkpointPath || "",
+                        evalProgress: Number(src.evalProgress || 0),
+                        evalProgressMessage: src.evalProgressMessage || "",
+                        evalStatus: src.evalStatus || ""
+                    })
+                }
+                root.refreshEvaluationProgressState()
                 backendService.getTrainingTasks(0, "")
             } catch(e) {}
         }
@@ -797,7 +866,10 @@ Item {
 
         function onEvaluationTasksUpdated(data) {
             var allItems = data && data.items ? data.items : []
-            for (var ai = 0; ai < allItems.length; ai++) root.syncHistoryFromEvaluationTask(allItems[ai])
+            for (var ai = 0; ai < allItems.length; ai++) {
+                root.syncHistoryFromEvaluationTask(allItems[ai])
+                root.syncActiveEvalSourceTask(allItems[ai])
+            }
             if (root.isEvaluating && root.pendingEvalTaskIds.length > 0) {
                 var items = allItems
                 for (var ti = 0; ti < items.length; ti++) {
@@ -918,6 +990,7 @@ Item {
     Component.onDestruction: {
         root.saveToAppState()
         toastCloseTimer.stop()
+        trainingPollTimer.stop()
         evalPollTimer.stop()
     }
 
@@ -1130,6 +1203,7 @@ Item {
                         saveProjectPopup.close()
                         root.showToast("✅ 评估工程已归档")
                         taskQueueModel.clear(); evalResultModel.clear(); activeEvalSourceModel.clear()
+                        root.evalProgressValue = 0.0; root.evalProgressMessage = ""
                         root.taskCounter = 1; root.viewMode = "history"
                         root.saveToAppState()
                     }
@@ -2016,6 +2090,7 @@ Item {
                                             }
                                             Text { text: Math.floor(trainProgress * 100) + "%"; color: root.primaryColor; font.pixelSize: 11; font.bold: true; font.family: "Courier" }
                                         }
+                                        Text { Layout.fillWidth: true; text: progressMessage || ""; color: root.textMuted; font.pixelSize: 9; elide: Text.ElideRight; visible: text !== "" }
                                     }
                                     Rectangle { anchors.verticalCenter: parent.verticalCenter; height: 22; width: 64; radius: 3; color: Qt.rgba(0,180,42,0.1); border.color: root.successColor; border.width: 1; visible: trainStatus === 2
                                         Text { text: "✓ 已完成"; color: root.successColor; font.pixelSize: 11; font.bold: true; anchors.centerIn: parent }
@@ -2047,8 +2122,8 @@ Item {
                 Layout.fillWidth: true
                 visible: root.workMode === "eval"
                 Layout.fillHeight: root.evaluationWorkbenchExpanded
-                Layout.minimumHeight: root.evaluationWorkbenchExpanded ? 640 : 46
-                Layout.preferredHeight: root.evaluationWorkbenchExpanded ? 640 : 46
+                Layout.minimumHeight: root.evaluationWorkbenchExpanded ? 800 : 46
+                Layout.preferredHeight: root.evaluationWorkbenchExpanded ? 800 : 46
                 color: root.panelBg; radius: 8; border.color: root.borderColor; border.width: 1
                 ColumnLayout { anchors.fill: parent; anchors.margins: root.evaluationWorkbenchExpanded ? 15 : 0; spacing: 10
                 Rectangle {
@@ -2189,6 +2264,41 @@ Item {
                         anchors.fill: parent
                         spacing: 10
 
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 44
+                            color: Qt.rgba(77, 208, 225, 0.06)
+                            radius: 6
+                            border.color: Qt.rgba(77, 208, 225, 0.28)
+                            border.width: 1
+                            visible: root.isEvaluating || activeEvalSourceModel.count > 0
+
+                            ColumnLayout {
+                                anchors.fill: parent
+                                anchors.leftMargin: 12
+                                anchors.rightMargin: 12
+                                anchors.topMargin: 7
+                                anchors.bottomMargin: 7
+                                spacing: 5
+
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 8
+                                    Text { text: root.isEvaluating ? "评估执行中" : "评估进度"; color: root.textColor; font.pixelSize: 12; font.bold: true }
+                                    Text { text: root.evalProgressMessage; color: root.textMuted; font.pixelSize: 11; elide: Text.ElideRight; Layout.fillWidth: true }
+                                    Text { text: Math.floor(root.evalProgressValue * 100) + "%"; color: root.primaryColor; font.pixelSize: 12; font.bold: true; font.family: "Courier" }
+                                }
+
+                                Rectangle {
+                                    Layout.fillWidth: true
+                                    Layout.preferredHeight: 6
+                                    radius: 3
+                                    color: root.bgDark
+                                    Rectangle { width: parent.width * root.evalProgressValue; height: parent.height; radius: 3; color: root.primaryColor }
+                                }
+                            }
+                        }
+
                         RowLayout {
                             Layout.fillWidth: true
                             Text { text: "评估结果"; color: root.textColor; font.pixelSize: 14; font.bold: true }
@@ -2288,7 +2398,7 @@ Item {
                             Text { text: "清空评估面板"; color: root.dangerColor; font.pixelSize: 12; font.bold: true }
                         }
                         MouseArea { anchors.fill: parent; cursorShape: evalResultModel.count > 0 ? Qt.PointingHandCursor : Qt.ForbiddenCursor; enabled: evalResultModel.count > 0
-                            onClicked: { taskQueueModel.clear(); evalResultModel.clear(); activeEvalSourceModel.clear(); root.pendingEvalTaskIds = []; root.isEvaluating = false; root.saveToAppState() }
+                            onClicked: { taskQueueModel.clear(); evalResultModel.clear(); activeEvalSourceModel.clear(); root.pendingEvalTaskIds = []; root.isEvaluating = false; root.evalProgressValue = 0.0; root.evalProgressMessage = ""; root.saveToAppState() }
                         }
                     }
                     Rectangle { width: 160; height: 36; radius: 4
@@ -2318,15 +2428,18 @@ Item {
 
     // 评估结果轮询定时器 (后台任务完成后自动拉取结果)
     Timer {
+        id: trainingPollTimer
+        interval: 1000
+        repeat: true
+        running: root.isTraining
+        onTriggered: backendService.getTrainingTasks(0, "")
+    }
+
+    Timer {
         id: evalPollTimer
         interval: 1500; repeat: true
         running: root.pendingEvalTaskIds.length > 0
-        onTriggered: {
-            var ids = root.pendingEvalTaskIds.slice()
-            for (var ei = 0; ei < ids.length; ei++) {
-                backendService.getEvaluationResults(ids[ei])
-            }
-        }
+        onTriggered: backendService.getEvaluationTasks("")
     }
 
     // ================= 状态判断函数 =================
@@ -2466,6 +2579,8 @@ Item {
         evalResultModel.clear()
         root.pendingEvalTaskIds = []
         activeEvalSourceModel.clear()
+        root.evalProgressValue = 0.0
+        root.evalProgressMessage = "评估任务准备中..."
 
         var totalWeights = weightOptionModel.count
         var selectedWeights = 0
@@ -2512,8 +2627,12 @@ Item {
                     dataset: t.dataset || "",
                     algo: t.algo || "",
                     checkpointName: t.checkpointName || "",
-                    checkpointPath: checkpointPath
+                    checkpointPath: checkpointPath,
+                    evalProgress: 0.0,
+                    evalProgressMessage: "评估任务已提交",
+                    evalStatus: "pending"
                 })
+                root.refreshEvaluationProgressState()
                 startedCount++
             } else {
                 root.showToast("⚠️ 创建评估任务失败: " + (evalResult ? (evalResult.message || "未知") : "无响应"))

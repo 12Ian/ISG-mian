@@ -38,6 +38,7 @@ Item {
     property int currentTaskId: 0
     property int currentTargetDatasetId: 0
     property int lastFailureTaskId: 0
+    property string progressMessage: ""
     property string generationErrorMessage: ""
     property string generationMode: "independent"
     property int contextVariantEstimate: -1
@@ -819,6 +820,7 @@ Item {
                 if (root.isGenerating && (task.id || 0) === root.currentTaskId) {
                     var pct = task.progress || 0
                     root.progress = pct / 100.0
+                    root.progressMessage = task.progress_message || ""
                     root.currentCount = task.status === "completed" && hasGeneratedCount
                             ? generatedCount
                             : Math.round(root.progress * root.totalCount)
@@ -1570,7 +1572,7 @@ Item {
                     contentItem: Text { text: parent.text; color: "black"; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                     onClicked: {
                         var newDatasetName = saveDatasetNameInput.text.trim()
-                        if (root.currentTaskId <= 0 || root.currentTargetDatasetId <= 0) {
+                        if (root.currentTaskId <= 0) {
                             root.showToast("⚠️ 没有可保存的生成任务")
                             return
                         }
@@ -1578,8 +1580,10 @@ Item {
                             root.showToast("⚠️ 请输入生成数据集名称")
                             return
                         }
-                        var result = backendService.updateDataset(root.currentTargetDatasetId, newDatasetName, "")
+                        var result = backendService.storeGenerationTaskResult(root.currentTaskId, newDatasetName)
                         if (result && result.status === "success") {
+                            var storedDataset = (result.data && result.data.dataset) ? result.data.dataset : ({})
+                            root.currentTargetDatasetId = storedDataset.id || root.currentTargetDatasetId
                             root.currentTargetDatasetName = newDatasetName
                             backendService.getAllDatasets("")
                             backendService.getDatasets(1, 100, "")
@@ -2103,6 +2107,7 @@ Item {
                                         root.currentTargetDatasetName = taskResult.target_dataset_name || ""
                                         root.currentCount = 0
                                         root.progress = 0
+                                        root.progressMessage = ""
                                         root.isCompleted = false
                                         previewModel.clear()
                                         backendService.startEnhancementTask(root.currentTaskId)
@@ -2122,7 +2127,9 @@ Item {
                         RowLayout {
                             Layout.fillWidth: true
                             Text {
-                                text: root.isGenerating ? "生成引擎运行中" : (root.isCompleted ? "✅ 数据扩增已完成" : "请在下方勾选所需生成策略并启动")
+                                text: root.isGenerating
+                                      ? (root.progressMessage || "生成引擎运行中")
+                                      : (root.isCompleted ? "✅ 数据扩增已完成" : "请在下方勾选所需生成策略并启动")
                                 color: root.isCompleted ? root.successColor : root.primaryColor
                                 font.pixelSize: 12; font.bold: true
                             }
@@ -2582,7 +2589,7 @@ Item {
                                     cursorShape: root.isCompleted ? Qt.PointingHandCursor : Qt.ForbiddenCursor
                                     enabled: root.isCompleted
                                     onClicked: {
-                                        saveDatasetNameInput.text = root.currentTargetDatasetName || (sourceDataCombo.currentText + "_扩增版")
+                                        saveDatasetNameInput.text = sourceDataCombo.currentText + "_扩增版"
                                         savePopup.open()
                                     }
                                 }

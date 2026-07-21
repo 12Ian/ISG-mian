@@ -356,6 +356,15 @@ class BackendService(QObject):
             return {"status": "error", "message": result.get("message", "未知错误")}
         return {"status": "success", "id": result["data"]["task_id"], "task_status": result["data"]["status"], "target_dataset_id": result["data"].get("target_dataset_id", 0), "target_dataset_name": result["data"].get("target_dataset_name", "")}
 
+    @Slot(int, str, result=dict)
+    def storeGenerationTaskResult(self, taskId: int, datasetName: str) -> dict:
+        result = self._bridge.store_generation_task_result(taskId, datasetName)
+        return {
+            "status": "success" if result.get("ok") else "error",
+            "data": result.get("data", {}),
+            "message": result.get("message", ""),
+        }
+
     @Slot(int, dict, result=dict)
     def estimateContextEmbeddingVariants(self, datasetId: int, parameters: dict) -> dict:
         result = self._bridge.estimate_context_embedding_variants(datasetId, parameters or {})
