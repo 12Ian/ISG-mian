@@ -203,6 +203,8 @@ class EvaluationService(ServiceBase):
                     "output_dir": self.task_manager.get_output_dir(task_id),
                 },
             }
+            plugin_context.set_progress(5.0, "评估数据准备完成")
+            plugin_context.set_progress(8.0, "评估算法执行中")
             result = self.plugin_runner.run(
                 payload,
                 plugin_context,
@@ -216,6 +218,7 @@ class EvaluationService(ServiceBase):
                 self.task_manager.fail(task_id, error_code=error_code, error_message=error_message)
                 return {"ok": False, "error_code": error_code, "message": error_message}
 
+            plugin_context.set_progress(96.0, "正在保存评估结果")
             persisted_results = self._persist_results(
                 task_id=task_id,
                 scenario_id=scenario.id,

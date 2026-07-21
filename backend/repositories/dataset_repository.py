@@ -24,7 +24,7 @@ class DatasetRepository(RepositoryBase):
     def list_datasets(self, session, *, page: int, page_size: int | None, status: str = "", include_deleted: bool = False):
         query = session.query(Dataset)
         if not include_deleted:
-            query = query.filter(Dataset.is_deleted.is_(False))
+            query = query.filter(Dataset.is_deleted.is_(False), Dataset.status != "staging")
         if status:
             query = query.filter(Dataset.status == status)
         total = query.count()
@@ -39,6 +39,12 @@ class DatasetRepository(RepositoryBase):
         session.add(sample)
         session.flush()
         return sample
+
+    def create_samples(self, session, values_list: list[dict]) -> list[Sample]:
+        samples = [Sample(**values) for values in values_list]
+        session.add_all(samples)
+        session.flush()
+        return samples
 
     def list_samples(self, session, *, dataset_id: int, page: int, page_size: int, status: str = ""):
         query = session.query(Sample).filter(Sample.dataset_id == dataset_id)
@@ -73,7 +79,11 @@ class DatasetRepository(RepositoryBase):
         rows = (
             session.query(Sample.modality, func.count(Sample.id))
             .join(Dataset, Dataset.id == Sample.dataset_id)
-            .filter(Dataset.is_deleted.is_(False), Sample.status != "deleted")
+            .filter(
+                Dataset.is_deleted.is_(False),
+                Dataset.status != "staging",
+                Sample.status != "deleted",
+            )
             .group_by(Sample.modality)
             .all()
         )
@@ -105,13 +115,22 @@ class DatasetRepository(RepositoryBase):
         return {modality: count for modality, count in rows}
 
     def count_active_datasets(self, session) -> int:
-        return session.query(func.count(Dataset.id)).filter(Dataset.is_deleted.is_(False)).scalar() or 0
+        return (
+            session.query(func.count(Dataset.id))
+            .filter(Dataset.is_deleted.is_(False), Dataset.status != "staging")
+            .scalar()
+            or 0
+        )
 
     def count_active_samples(self, session) -> int:
         return (
             session.query(func.count(Sample.id))
             .join(Dataset, Dataset.id == Sample.dataset_id)
-            .filter(Dataset.is_deleted.is_(False), Sample.status != "deleted")
+            .filter(
+                Dataset.is_deleted.is_(False),
+                Dataset.status != "staging",
+                Sample.status != "deleted",
+            )
             .scalar()
             or 0
         )

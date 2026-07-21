@@ -371,6 +371,12 @@ class BackendBridge:
         except Exception as exc:
             return _normalize_error(exc)
 
+    def store_generation_task_result(self, task_id: int, dataset_name: str) -> dict:
+        try:
+            return self.facade.generation_service.store_generated_dataset(task_id, dataset_name)
+        except Exception as exc:
+            return _normalize_error(exc)
+
     def run_generation_task(self, task_id: int) -> dict:
         try:
             self.facade.task_manager.start(task_id)

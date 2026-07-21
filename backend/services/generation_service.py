@@ -20,6 +20,9 @@ from .base import ServiceBase
 from .sample_ordering import interleave_by_top_folder
 
 
+SOURCE_OUTPUT_BATCH_SIZE = 500
+
+
 @slots_dataclass
 class GenerationService(ServiceBase):
     task_manager: object
@@ -502,6 +505,72 @@ class GenerationService(ServiceBase):
     def get_generation_outputs(self, task_id: int, status: str | None, page: int, page_size: int) -> dict:
         return self.list_outputs(task_id, status, page, page_size)
 
+    def store_generated_dataset(self, task_id: int, dataset_name: str) -> dict:
+        clean_name = (dataset_name or "").strip()
+        if not clean_name:
+            raise ValidationError("Generated dataset name is required.")
+
+        with self.session_factory() as session:
+            task = self.task_repository.get_task_model(session, task_id)
+            if task is None:
+                raise NotFoundError(f"Task {task_id} not found.")
+            if task.task_type != "generation":
+                raise ValidationError("Only generation tasks can be stored as generated datasets.")
+            if task.status != "completed":
+                raise ValidationError("Only completed generation tasks can be stored.")
+
+            target_dataset = session.query(Dataset).filter(Dataset.id == task.target_dataset_id).first()
+            if target_dataset is None:
+                raise NotFoundError(f"Dataset {task.target_dataset_id} not found.")
+            if target_dataset.is_deleted or target_dataset.status == "deleted":
+                raise ValidationError("Generation target dataset is not active.")
+            result_json = dict(task.result_json or {})
+            is_legacy_unstored = (
+                target_dataset.status == "generated" and not result_json.get("stored_dataset_id")
+            )
+            if target_dataset.status != "staging" and not is_legacy_unstored:
+                raise ValidationError("Generation result has already been stored.")
+
+            target_dataset.name = clean_name
+            target_dataset.status = "generated"
+            target_dataset.tags_json = [
+                tag for tag in (target_dataset.tags_json or []) if tag != "generation_staging"
+            ]
+            if "generated" not in target_dataset.tags_json:
+                target_dataset.tags_json.append("generated")
+            extra = dict(target_dataset.extra_json or {})
+            extra["dataset_stage"] = "generated"
+            extra["stored_from_task_id"] = task_id
+            target_dataset.extra_json = extra
+
+            result_json.update(
+                {
+                    "stored_dataset_id": target_dataset.id,
+                    "stored_dataset_name": target_dataset.name,
+                }
+            )
+            task.result_json = result_json
+            self.task_repository.add_task_log(
+                session,
+                task_id=task_id,
+                level="info",
+                message="Generation result stored as dataset",
+                payload_json={"target_dataset_id": target_dataset.id, "dataset_name": target_dataset.name},
+            )
+            session.commit()
+            return {
+                "ok": True,
+                "data": {
+                    "task_id": task_id,
+                    "dataset": {
+                        "id": target_dataset.id,
+                        "name": target_dataset.name,
+                        "status": target_dataset.status,
+                        "storage_path": target_dataset.storage_path,
+                    },
+                },
+            }
+
     def _resolve_target_dataset(self, session, source_dataset: Dataset, target_dataset_id: int) -> Dataset:
         if target_dataset_id:
             target_dataset = session.query(Dataset).filter(Dataset.id == target_dataset_id).first()
@@ -518,11 +587,11 @@ class GenerationService(ServiceBase):
             name=f"Generated from {source_dataset.name}",
             modality=source_dataset.modality,
             description=f"Auto-created target dataset for source dataset {source_dataset.id}",
-            status="generated",
+            status="staging",
             parent_dataset_id=source_dataset.id,
             storage_path="",
-            tags_json=["generated"],
-            extra_json={"source_dataset_id": source_dataset.id, "dataset_stage": "generated"},
+            tags_json=["generation_staging"],
+            extra_json={"source_dataset_id": source_dataset.id, "dataset_stage": "staging"},
         )
         target_dataset.storage_path = str(self._allocate_dataset_dir(target_dataset.id, target_dataset.name))
         return target_dataset
@@ -687,6 +756,8 @@ class GenerationService(ServiceBase):
         if not source_samples:
             return 0
 
+        total_samples = len(source_samples)
+        self.task_manager.set_progress(task_id, 99.0, f"正在合并原始样本 0/{total_samples}")
         copied_count = 0
         with self.session_factory() as session:
             target_dataset = session.query(Dataset).filter(Dataset.id == target_dataset_id).first()
@@ -694,6 +765,37 @@ class GenerationService(ServiceBase):
                 raise NotFoundError(f"Dataset {target_dataset_id} not found.")
 
             generated_root = Path(target_dataset.storage_path) / "generated"
+            pending_samples: list[dict] = []
+            pending_outputs: list[dict] = []
+
+            def persist_batch() -> None:
+                nonlocal copied_count
+                if not pending_samples:
+                    return
+
+                output_samples = self.dataset_repository.create_samples(session, pending_samples)
+                session.add_all(
+                    [
+                        GenerationOutput(
+                            task_id=task_id,
+                            source_sample_id=source_data["source_sample_id"],
+                            output_sample_id=output_sample.id,
+                            algorithm_id=None,
+                            status="source",
+                            metadata_json=source_data["metadata"],
+                        )
+                        for output_sample, source_data in zip(output_samples, pending_outputs)
+                    ]
+                )
+                copied_count += len(output_samples)
+                task = self.task_repository.get_task_model(session, task_id)
+                if task is not None:
+                    task.progress = 99.0 + 0.9 * copied_count / total_samples
+                    task.progress_message = f"正在合并原始样本 {copied_count}/{total_samples}"
+                session.commit()
+                pending_samples.clear()
+                pending_outputs.clear()
+
             for source_sample in source_samples:
                 source_path = Path(source_sample.file_path or "")
                 if not source_path.is_file():
@@ -710,34 +812,29 @@ class GenerationService(ServiceBase):
                 )
                 requested_relative_path = Path("source") / (source_sample.relative_path or source_path.name)
                 copied = self.file_indexer.copy_into_dataset(source_path, generated_root, requested_relative_path.as_posix())
-                final_relative_path = copied.relative_to(generated_root).as_posix()
-                output_sample = self.dataset_repository.create_sample(
-                    session,
-                    dataset_id=target_dataset.id,
-                    source_sample_id=source_sample.id,
-                    name=copied.name,
-                    modality=target_dataset.modality,
-                    file_path=str(copied),
-                    relative_path=final_relative_path,
-                    sha256=self.file_indexer.compute_sha256(copied),
-                    mime_type=self.file_indexer.detect_mime_type(copied),
-                    extension=copied.suffix.lower(),
-                    size_bytes=copied.stat().st_size,
-                    status="generated",
-                    metadata_json=metadata,
-                    labels_json=labels,
+                pending_samples.append(
+                    {
+                        "dataset_id": target_dataset.id,
+                        "source_sample_id": source_sample.id,
+                        "name": copied.name,
+                        "modality": target_dataset.modality,
+                        "file_path": str(copied),
+                        "relative_path": copied.relative_to(generated_root).as_posix(),
+                        # copy2 保持文件内容不变，复用源指纹可避免再次完整读取大文件。
+                        "sha256": source_sample.sha256,
+                        "mime_type": source_sample.mime_type or self.file_indexer.detect_mime_type(copied),
+                        "extension": source_sample.extension or copied.suffix.lower(),
+                        "size_bytes": source_sample.size_bytes or copied.stat().st_size,
+                        "status": "generated",
+                        "metadata_json": metadata,
+                        "labels_json": labels,
+                    }
                 )
-                session.add(
-                    GenerationOutput(
-                        task_id=task_id,
-                        source_sample_id=source_sample.id,
-                        output_sample_id=output_sample.id,
-                        algorithm_id=None,
-                        status="source",
-                        metadata_json=metadata,
-                    )
-                )
-                copied_count += 1
+                pending_outputs.append({"source_sample_id": source_sample.id, "metadata": metadata})
+                if len(pending_samples) >= SOURCE_OUTPUT_BATCH_SIZE:
+                    persist_batch()
+
+            persist_batch()
 
             self._refresh_dataset_stats(session, target_dataset)
             self.task_repository.add_task_log(

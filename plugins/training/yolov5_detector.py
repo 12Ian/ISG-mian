@@ -279,7 +279,8 @@ def _run_training(payload: dict, context) -> dict:
     tracker = _EpochTracker()
 
     def _report_progress(*args):
-        tracker.current = args[1] if len(args) > 1 else tracker.current + 1
+        # YOLOv5 回调传入的 epoch 从 0 开始，界面和百分比使用已完成轮数。
+        tracker.current = int(args[1]) + 1 if len(args) > 1 else tracker.current + 1
         pct = min(5.0 + tracker.current / epochs * 93.0, 98.0)
         context.set_progress(pct, f"Epoch {tracker.current}/{epochs}")
     callbacks.register_action("on_fit_epoch_end", callback=_report_progress)
