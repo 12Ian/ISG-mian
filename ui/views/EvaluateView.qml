@@ -799,6 +799,8 @@ Item {
         function onDatasetsUpdated(data) {
             var items = []
             if (data && data.items) items = data.items
+            var previousDatasetId = datasetCombo.currentIndex >= 0 && datasetCombo.currentIndex < datasetModel.count
+                    ? Number(datasetModel.get(datasetCombo.currentIndex).id || 0) : 0
             datasetModel.clear()
             for (var j = 0; j < items.length; j++) {
                 var item = items[j]
@@ -816,6 +818,14 @@ Item {
                 }
             }
             if (datasetModel.count === 0) datasetModel.append({id: 0, name: "无可用数据集 (请先导入)", modality: "", parentId: 0, status: ""})
+            var restoredDatasetIndex = 0
+            for (var datasetIndex = 0; datasetIndex < datasetModel.count; datasetIndex++) {
+                if (Number(datasetModel.get(datasetIndex).id || 0) === previousDatasetId) {
+                    restoredDatasetIndex = datasetIndex
+                    break
+                }
+            }
+            datasetCombo.currentIndex = datasetModel.count > 0 ? restoredDatasetIndex : -1
             Qt.callLater(function() { root.requestTrainingCompatibility() })
         }
 
@@ -836,6 +846,15 @@ Item {
 
         function onAlgorithmsUpdated(algorithms) {
             if (!algorithms || !algorithms.length) return
+            var hasTrainingOrEvaluation = false
+            for (var categoryIndex = 0; categoryIndex < algorithms.length; categoryIndex++) {
+                var category = algorithms[categoryIndex].category || ""
+                if (category === "training" || category === "evaluation") {
+                    hasTrainingOrEvaluation = true
+                    break
+                }
+            }
+            if (!hasTrainingOrEvaluation) return
             var map = {}
             var old = root.algorithmNameMap
             if (old) { var oks = Object.keys(old); for (var kk = 0; kk < oks.length; kk++) map[oks[kk]] = old[oks[kk]] }
@@ -1047,11 +1066,13 @@ Item {
     onVisibleChanged: {
         if (visible) {
             backendService.getDatasets(1, 100, "")
+            backendService.getAlgorithms("", "")
             root.refreshEvaluationHistoryState()
         }
     }
     function refreshPage() {
         backendService.getDatasets(1, 100, "")
+        backendService.getAlgorithms("", "")
         root.refreshEvaluationHistoryState()
     }
     Component.onDestruction: {
