@@ -503,6 +503,8 @@ Item {
                 placeholderTextColor: Theme.muted
                 color: Theme.text
                 Layout.preferredWidth: 220
+                Layout.preferredHeight: 40
+                verticalAlignment: TextInput.AlignVCenter
                 background: Rectangle {
                     color: Theme.control
                     border.color: Theme.border
