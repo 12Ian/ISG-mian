@@ -48,6 +48,7 @@ class TaskManager:
             if task.status == "pending":
                 task.status = "cancelled"
                 task.finished_at = datetime.now(timezone.utc)
+                self.task_repository.discard_generation_staging_dataset(session, task)
                 self.task_repository.add_task_log(session, task_id=task_id, level="info", message="Task cancelled before execution")
                 session.commit()
                 return {"ok": True, "data": {"task_id": task_id, "status": "cancelled"}}

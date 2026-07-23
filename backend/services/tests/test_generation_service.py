@@ -104,7 +104,7 @@ class GenerationServicePersistenceTests(unittest.TestCase):
             )
 
         self.assertEqual(copied_count, 3)
-        self.assertEqual([(item[0], item[1]) for item in self.progress.updates], [(task_id, 99.0)])
+        self.assertEqual(self.progress.updates, [])
         with self.session_factory() as session:
             copied_samples = (
                 session.query(Sample)

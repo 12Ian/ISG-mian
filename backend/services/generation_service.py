@@ -4,6 +4,8 @@ from dataclasses import field
 from .._compat import slots_dataclass
 from pathlib import Path
 
+from sqlalchemy.orm import aliased
+
 from core.sample_generation.detection_label_transform import has_detection_labels
 from core.data_management.multimodal_association import (
     sample_group_id,
@@ -25,6 +27,10 @@ from .sample_ordering import interleave_by_top_folder
 
 
 SOURCE_OUTPUT_BATCH_SIZE = 500
+
+
+class _GenerationCancelled(Exception):
+    pass
 
 
 @slots_dataclass
@@ -114,6 +120,8 @@ class GenerationService(ServiceBase):
                 for algorithm in algorithms:
                     if not self._supports_pipeline(algorithm, source_dataset.modality):
                         raise ValidationError(f"Algorithm {algorithm.name} does not support pipeline generation.")
+            elif target_count < len(algorithms):
+                raise ValidationError("独立生成模式的生成数量不能少于所选算法数量。")
 
             resolved_parameters = self._normalize_task_parameters(session, algorithms, parameters)
             resolved_parameters["algorithm_ids"] = resolved_algorithm_ids
@@ -299,7 +307,7 @@ class GenerationService(ServiceBase):
                 if not result.get("ok", False):
                     error_code = result.get("error_code", "ALGORITHM_RUNTIME_ERROR")
                     error_message = "生成任务已取消。" if error_code == "CANCELLED" else result.get("message", "Generation plugin failed.")
-                    self.task_manager.fail(task_id, error_code=error_code, error_message=error_message)
+                    self._fail_and_discard_staging(task_id, error_code, error_message)
                     return {"ok": False, "error_code": error_code, "message": error_message}
 
                 outputs = list(result.get("outputs", []))[:algorithm_target_count]
@@ -309,25 +317,19 @@ class GenerationService(ServiceBase):
                 self.task_manager.set_progress(task_id, progress_pct, f"Produced {produced_count}/{target_count}")
 
             if produced_count < target_count:
-                import logging
-                logging.getLogger("isg").warning(
-                    f"Generation task {task_id}: produced {produced_count}/{target_count}, "
-                    f"{target_count - produced_count} samples skipped. Continuing with available outputs."
-                )
+                error_message = f"生成数量不足：期望 {target_count} 条，实际生成 {produced_count} 条。"
+                self._fail_and_discard_staging(task_id, "INSUFFICIENT_OUTPUTS", error_message)
+                return {"ok": False, "error_code": "INSUFFICIENT_OUTPUTS", "message": error_message}
 
-            for algorithm_id, outputs in pending_outputs:
-                self._persist_generation_outputs(
-                    task_id=task_id,
-                    target_dataset_id=target_dataset.id,
-                    algorithm_id=algorithm_id,
-                    outputs=outputs,
-                )
-
-            source_copied_count = self._persist_source_outputs(
+            source_copied_count = self._persist_task_outputs(
                 task_id=task_id,
                 target_dataset_id=target_dataset.id,
+                outputs_by_algorithm=pending_outputs,
                 source_samples=source_samples,
+                plugin_context=plugin_context,
             )
+
+            self._raise_if_cancelled(plugin_context)
 
             total_count = produced_count + source_copied_count
             self.task_manager.complete(
@@ -349,8 +351,12 @@ class GenerationService(ServiceBase):
                     "target_dataset_id": target_dataset.id,
                 },
             }
+        except _GenerationCancelled:
+            error_message = "生成任务已取消。"
+            self._fail_and_discard_staging(task_id, "CANCELLED", error_message)
+            return {"ok": False, "error_code": "CANCELLED", "message": error_message}
         except Exception as exc:
-            self.task_manager.fail(task_id, error_code="ALGORITHM_RUNTIME_ERROR", error_message=str(exc))
+            self._fail_and_discard_staging(task_id, "ALGORITHM_RUNTIME_ERROR", str(exc))
             raise
 
     def _run_plugin_with_parameter_sampling(
@@ -406,6 +412,7 @@ class GenerationService(ServiceBase):
             count: int,
             destination: Path,
             context,
+            output_index: int = 0,
         ) -> dict:
             payload = {
                 "task_id": task_id,
@@ -414,6 +421,7 @@ class GenerationService(ServiceBase):
                 "modality": modality,
                 "parameters": run_parameters,
                 "target_count": count,
+                "output_index": output_index,
                 "input": {
                     "dataset_id": dataset_id,
                     "dataset_path": dataset_path,
@@ -444,7 +452,14 @@ class GenerationService(ServiceBase):
             rotated_samples = samples[source_index:] + samples[:source_index]
             destination = output_dir / f"parameter_samples_{algorithm.id}" / f"{output_index:06d}"
             sampled_context = _SampledPluginContext(plugin_context, output_index, target_count)
-            result = run_once(resolved_parameters, rotated_samples, 1, destination, sampled_context)
+            result = run_once(
+                resolved_parameters,
+                rotated_samples,
+                1,
+                destination,
+                sampled_context,
+                output_index,
+            )
             if not result.get("ok", False):
                 return result
             outputs = list(result.get("outputs", []))[:1]
@@ -501,7 +516,7 @@ class GenerationService(ServiceBase):
                 if not result.get("ok", False):
                     error_code = result.get("error_code", "ALGORITHM_RUNTIME_ERROR")
                     error_message = "生成任务已取消。" if error_code == "CANCELLED" else result.get("message", "Generation plugin failed.")
-                    self.task_manager.fail(task_id, error_code=error_code, error_message=error_message)
+                    self._fail_and_discard_staging(task_id, error_code, error_message)
                     return {"ok": False, "error_code": error_code, "message": error_message}
 
                 outputs = list(result.get("outputs", []))[:stage_target_count]
@@ -524,24 +539,18 @@ class GenerationService(ServiceBase):
 
             produced_count = len(final_outputs)
             if produced_count < target_count:
-                import logging
-                logging.getLogger("isg").warning(
-                    f"Generation pipeline task {task_id}: produced {produced_count}/{target_count}, "
-                    f"{target_count - produced_count} samples skipped. Continuing with available outputs."
-                )
+                error_message = f"流水线生成数量不足：期望 {target_count} 条，实际生成 {produced_count} 条。"
+                self._fail_and_discard_staging(task_id, "INSUFFICIENT_OUTPUTS", error_message)
+                return {"ok": False, "error_code": "INSUFFICIENT_OUTPUTS", "message": error_message}
 
-            self._persist_generation_outputs(
+            source_copied_count = self._persist_task_outputs(
                 task_id=task_id,
                 target_dataset_id=target_dataset.id,
-                algorithm_id=final_algorithm_id,
-                outputs=final_outputs,
-            )
-
-            source_copied_count = self._persist_source_outputs(
-                task_id=task_id,
-                target_dataset_id=target_dataset.id,
+                outputs_by_algorithm=[(final_algorithm_id, final_outputs)],
                 source_samples=source_samples,
+                plugin_context=plugin_context,
             )
+            self._raise_if_cancelled(plugin_context)
             total_count = produced_count + source_copied_count
             self.task_manager.complete(
                 task_id,
@@ -565,8 +574,12 @@ class GenerationService(ServiceBase):
                     "generation_mode": "pipeline",
                 },
             }
+        except _GenerationCancelled:
+            error_message = "生成任务已取消。"
+            self._fail_and_discard_staging(task_id, "CANCELLED", error_message)
+            return {"ok": False, "error_code": "CANCELLED", "message": error_message}
         except Exception as exc:
-            self.task_manager.fail(task_id, error_code="ALGORITHM_RUNTIME_ERROR", error_message=str(exc))
+            self._fail_and_discard_staging(task_id, "ALGORITHM_RUNTIME_ERROR", str(exc))
             raise
 
     def _outputs_as_pipeline_samples(self, outputs: list[dict], input_samples: list[dict], algorithm: Algorithm) -> list[dict]:
@@ -590,10 +603,18 @@ class GenerationService(ServiceBase):
                 or (source_sample or {}).get("source_sample_id")
                 or source_sample_id
             )
-            metadata = dict(output.get("metadata", {}) or {})
+            previous_metadata = dict((source_sample or {}).get("metadata", {}) or {})
+            metadata = dict(previous_metadata)
+            metadata.update(dict(output.get("metadata", {}) or {}))
             previous_chain = list((source_sample or {}).get("pipeline_algorithms", []))
             pipeline_algorithms = previous_chain + [algorithm.key]
             metadata["pipeline_algorithms"] = pipeline_algorithms
+            pipeline_parameters = dict(previous_metadata.get("pipeline_sampled_parameters", {}) or {})
+            sampled_parameters = dict(metadata.get("sampled_parameters", {}) or {})
+            if sampled_parameters:
+                pipeline_parameters[algorithm.key] = sampled_parameters
+            if pipeline_parameters:
+                metadata["pipeline_sampled_parameters"] = pipeline_parameters
             labels, label_policy = self._resolve_output_labels(
                 output,
                 (source_sample or {}).get("labels", []),
@@ -620,6 +641,8 @@ class GenerationService(ServiceBase):
         return result
 
     def list_outputs(self, task_id: int, status: str | None, page: int, page_size: int) -> dict:
+        resolved_page = max(int(page), 1)
+        resolved_page_size = max(1, min(int(page_size), 500))
         with self.session_factory() as session:
             task = self.task_repository.get_task_model(session, task_id)
             if task is None:
@@ -627,21 +650,40 @@ class GenerationService(ServiceBase):
             query = session.query(GenerationOutput).filter(GenerationOutput.task_id == task_id)
             if status:
                 query = query.filter(GenerationOutput.status == status)
+            else:
+                query = query.filter(GenerationOutput.status != "source")
             total = query.count()
+            source_sample_model = aliased(Sample)
+            output_sample_model = aliased(Sample)
             items = (
-                query.order_by(GenerationOutput.created_at.asc(), GenerationOutput.id.asc())
-                .offset(max(page - 1, 0) * page_size)
-                .limit(page_size)
+                session.query(GenerationOutput, source_sample_model, output_sample_model)
+                .outerjoin(source_sample_model, source_sample_model.id == GenerationOutput.source_sample_id)
+                .outerjoin(output_sample_model, output_sample_model.id == GenerationOutput.output_sample_id)
+                .filter(GenerationOutput.task_id == task_id)
+                .filter(GenerationOutput.status == status if status else GenerationOutput.status != "source")
+                .order_by(GenerationOutput.created_at.asc(), GenerationOutput.id.asc())
+                .offset((resolved_page - 1) * resolved_page_size)
+                .limit(resolved_page_size)
                 .all()
             )
             parameters = dict(task.parameters_json or {})
             parameters.pop("algorithm_ids", None)
             return {
                 "total": total,
-                "items": [self._serialize_generation_output(session, item) for item in items],
+                "items": [
+                    self._serialize_generation_output(
+                        session,
+                        row,
+                        source_sample=source_sample,
+                        output_sample=output_sample,
+                        samples_loaded=True,
+                    )
+                    for row, source_sample, output_sample in items
+                ],
                 "parameters": parameters,
-                "page": max(page, 1),
-                "page_size": max(page_size, 1),
+                "task_id": task_id,
+                "page": resolved_page,
+                "page_size": resolved_page_size,
             }
 
     def get_generation_outputs(self, task_id: int, status: str | None, page: int, page_size: int) -> dict:
@@ -739,100 +781,187 @@ class GenerationService(ServiceBase):
         return target_dataset
 
     def _persist_generation_outputs(self, *, task_id: int, target_dataset_id: int, algorithm_id: int, outputs: list[dict]) -> list[dict]:
-        if not outputs:
-            return []
+        persisted_items, _ = self._persist_task_outputs_transaction(
+            task_id=task_id,
+            target_dataset_id=target_dataset_id,
+            outputs_by_algorithm=[(algorithm_id, outputs)],
+            source_samples=[],
+            plugin_context=None,
+        )
+        return persisted_items
 
+    def _persist_task_outputs(
+        self,
+        *,
+        task_id: int,
+        target_dataset_id: int,
+        outputs_by_algorithm: list[tuple[int, list[dict]]],
+        source_samples: list[Sample],
+        plugin_context,
+    ) -> int:
+        _, source_count = self._persist_task_outputs_transaction(
+            task_id=task_id,
+            target_dataset_id=target_dataset_id,
+            outputs_by_algorithm=outputs_by_algorithm,
+            source_samples=source_samples,
+            plugin_context=plugin_context,
+        )
+        return source_count
+
+    def _persist_task_outputs_transaction(
+        self,
+        *,
+        task_id: int,
+        target_dataset_id: int,
+        outputs_by_algorithm: list[tuple[int, list[dict]]],
+        source_samples: list[Sample],
+        plugin_context,
+    ) -> tuple[list[dict], int]:
+        copied_paths: list[Path] = []
         persisted_items: list[dict] = []
-        multimodal_indexes: dict[int, dict[str, list[Sample]]] = {}
-        with self.session_factory() as session:
-            target_dataset = session.query(Dataset).filter(Dataset.id == target_dataset_id).first()
-            if target_dataset is None:
-                raise NotFoundError(f"Dataset {target_dataset_id} not found.")
-
-            for output in outputs:
-                output_path = Path(output["output_path"])
-                if not output_path.is_file():
-                    raise ValidationError(f"Generated output file does not exist: {output_path}")
-
-                source_sample = None
-                if output.get("source_sample_id"):
-                    source_sample = session.query(Sample).filter(Sample.id == output.get("source_sample_id")).first()
-                source_labels = list(source_sample.labels_json or []) if source_sample is not None else []
-                inherited_labels, label_policy = self._resolve_output_labels(output, source_labels)
-                inherited_metadata = dict(output.get("metadata", {}) or {})
-                inherited_metadata["label_policy"] = label_policy
-                if label_policy == "inherit" and inherited_labels:
-                    inherited_metadata.setdefault("labels_inherited", True)
-                    inherited_metadata.setdefault("source_labels", inherited_labels)
-                elif label_policy == "transformed":
-                    inherited_metadata.setdefault("labels_transformed", True)
-                elif label_policy == "drop":
-                    inherited_metadata.setdefault("labels_dropped", True)
-
-                generated_group_id = ""
-                if target_dataset.modality == "multimodal" and source_sample is not None and sample_role(source_sample) == "image":
-                    source_group_id = sample_group_id(source_sample)
-                    generated_group_id = f"{source_group_id}__generated_{task_id}_{len(persisted_items):06d}"
-                    inherited_metadata.update(
-                        {
-                            "multimodal_group_id": generated_group_id,
-                            "multimodal_role": "image",
-                            "source_multimodal_group_id": source_group_id,
-                        }
+        source_count = 0
+        try:
+            with self.session_factory() as session:
+                target_dataset = session.query(Dataset).filter(Dataset.id == target_dataset_id).first()
+                if target_dataset is None:
+                    raise NotFoundError(f"Dataset {target_dataset_id} not found.")
+                multimodal_indexes: dict[int, dict[str, list[Sample]]] = {}
+                for algorithm_id, outputs in outputs_by_algorithm:
+                    persisted_items.extend(
+                        self._persist_generation_output_rows(
+                            session=session,
+                            task_id=task_id,
+                            target_dataset=target_dataset,
+                            algorithm_id=algorithm_id,
+                            outputs=outputs,
+                            plugin_context=plugin_context,
+                            copied_paths=copied_paths,
+                            multimodal_indexes=multimodal_indexes,
+                        )
                     )
-
-                requested_relative_path = output.get("relative_path") or output_path.name
-                if generated_group_id:
-                    requested_relative_path = (Path("groups") / generated_group_id / "image" / Path(requested_relative_path).name).as_posix()
-                generated_root = Path(target_dataset.storage_path) / "generated"
-                copied = self.file_indexer.copy_into_dataset(output_path, generated_root, requested_relative_path)
-                final_relative_path = copied.relative_to(generated_root).as_posix()
-                output_sample = self.dataset_repository.create_sample(
-                    session,
-                    dataset_id=target_dataset.id,
-                    source_sample_id=output.get("source_sample_id"),
-                    name=copied.name,
-                    modality=target_dataset.modality,
-                    file_path=str(copied),
-                    relative_path=final_relative_path,
-                    sha256=self.file_indexer.compute_sha256(copied),
-                    mime_type=self.file_indexer.detect_mime_type(copied),
-                    extension=copied.suffix.lower(),
-                    size_bytes=copied.stat().st_size,
-                    status="generated",
-                    metadata_json=inherited_metadata,
-                    labels_json=inherited_labels or [],
-                )
-                row = GenerationOutput(
-                    task_id=task_id,
-                    source_sample_id=output.get("source_sample_id"),
-                    output_sample_id=output_sample.id,
-                    algorithm_id=algorithm_id,
-                    status=output.get("status", "created"),
-                    metadata_json=inherited_metadata,
-                )
-                session.add(row)
-                session.flush()
-                if generated_group_id and source_sample is not None:
-                    self._copy_multimodal_companions(
+                if source_samples:
+                    source_count = self._persist_source_output_rows(
                         session=session,
-                        source_sample=source_sample,
+                        task_id=task_id,
                         target_dataset=target_dataset,
-                        generated_root=generated_root,
-                        generated_group_id=generated_group_id,
-                        indexes=multimodal_indexes,
+                        source_samples=source_samples,
+                        plugin_context=plugin_context,
+                        copied_paths=copied_paths,
                     )
-                persisted_items.append(self._serialize_generation_output(session, row))
+                self._raise_if_cancelled(plugin_context)
+                self._refresh_dataset_stats(session, target_dataset)
+                self.task_repository.add_task_log(
+                    session,
+                    task_id=task_id,
+                    level="info",
+                    message="Generation outputs persisted",
+                    payload_json={
+                        "generated_count": len(persisted_items),
+                        "source_copied_count": source_count,
+                        "target_dataset_id": target_dataset.id,
+                    },
+                )
+                session.commit()
+        except Exception:
+            for copied_path in reversed(copied_paths):
+                try:
+                    copied_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            raise
+        return persisted_items, source_count
 
-            self._refresh_dataset_stats(session, target_dataset)
-            self.task_repository.add_task_log(
+    def _persist_generation_output_rows(
+        self,
+        *,
+        session,
+        task_id: int,
+        target_dataset: Dataset,
+        algorithm_id: int,
+        outputs: list[dict],
+        plugin_context,
+        copied_paths: list[Path],
+        multimodal_indexes: dict[int, dict[str, list[Sample]]],
+    ) -> list[dict]:
+        persisted_items: list[dict] = []
+        for output in outputs:
+            self._raise_if_cancelled(plugin_context)
+            output_path = Path(output["output_path"])
+            if not output_path.is_file():
+                raise ValidationError(f"Generated output file does not exist: {output_path}")
+
+            source_sample = None
+            if output.get("source_sample_id"):
+                source_sample = session.query(Sample).filter(Sample.id == output.get("source_sample_id")).first()
+            source_labels = list(source_sample.labels_json or []) if source_sample is not None else []
+            inherited_labels, label_policy = self._resolve_output_labels(output, source_labels)
+            inherited_metadata = dict(output.get("metadata", {}) or {})
+            inherited_metadata["label_policy"] = label_policy
+            if label_policy == "inherit" and inherited_labels:
+                inherited_metadata.setdefault("labels_inherited", True)
+                inherited_metadata.setdefault("source_labels", inherited_labels)
+            elif label_policy == "transformed":
+                inherited_metadata.setdefault("labels_transformed", True)
+            elif label_policy == "drop":
+                inherited_metadata.setdefault("labels_dropped", True)
+
+            generated_group_id = ""
+            if target_dataset.modality == "multimodal" and source_sample is not None and sample_role(source_sample) == "image":
+                source_group_id = sample_group_id(source_sample)
+                generated_group_id = f"{source_group_id}__generated_{task_id}_{len(persisted_items):06d}"
+                inherited_metadata.update(
+                    {
+                        "multimodal_group_id": generated_group_id,
+                        "multimodal_role": "image",
+                        "source_multimodal_group_id": source_group_id,
+                    }
+                )
+
+            requested_relative_path = output.get("relative_path") or output_path.name
+            if generated_group_id:
+                requested_relative_path = (Path("groups") / generated_group_id / "image" / Path(requested_relative_path).name).as_posix()
+            generated_root = Path(target_dataset.storage_path) / "generated"
+            copied = self.file_indexer.copy_into_dataset(output_path, generated_root, requested_relative_path)
+            copied_paths.append(copied)
+            final_relative_path = copied.relative_to(generated_root).as_posix()
+            output_sample = self.dataset_repository.create_sample(
                 session,
-                task_id=task_id,
-                level="info",
-                message="Generation outputs persisted",
-                payload_json={"generated_count": len(persisted_items), "target_dataset_id": target_dataset.id},
+                dataset_id=target_dataset.id,
+                source_sample_id=output.get("source_sample_id"),
+                name=copied.name,
+                modality=target_dataset.modality,
+                file_path=str(copied),
+                relative_path=final_relative_path,
+                sha256=self.file_indexer.compute_sha256(copied),
+                mime_type=self.file_indexer.detect_mime_type(copied),
+                extension=copied.suffix.lower(),
+                size_bytes=copied.stat().st_size,
+                status="generated",
+                metadata_json=inherited_metadata,
+                labels_json=inherited_labels or [],
             )
-            session.commit()
+            row = GenerationOutput(
+                task_id=task_id,
+                source_sample_id=output.get("source_sample_id"),
+                output_sample_id=output_sample.id,
+                algorithm_id=algorithm_id,
+                status=output.get("status", "created"),
+                metadata_json=inherited_metadata,
+            )
+            session.add(row)
+            session.flush()
+            if generated_group_id and source_sample is not None:
+                self._copy_multimodal_companions(
+                    session=session,
+                    source_sample=source_sample,
+                    target_dataset=target_dataset,
+                    generated_root=generated_root,
+                    generated_group_id=generated_group_id,
+                    indexes=multimodal_indexes,
+                    plugin_context=plugin_context,
+                    copied_paths=copied_paths,
+                )
+            persisted_items.append(self._serialize_generation_output(session, row))
         return persisted_items
 
     def _copy_multimodal_companions(
@@ -844,6 +973,8 @@ class GenerationService(ServiceBase):
         generated_root: Path,
         generated_group_id: str,
         indexes: dict[int, dict[str, list[Sample]]],
+        plugin_context=None,
+        copied_paths: list[Path] | None = None,
     ) -> None:
         source_dataset_id = source_sample.dataset_id
         if source_dataset_id not in indexes:
@@ -858,6 +989,8 @@ class GenerationService(ServiceBase):
             indexes[source_dataset_id] = grouped
 
         for companion in indexes[source_dataset_id].get(sample_group_id(source_sample), []):
+            if plugin_context is not None and plugin_context.is_cancel_requested():
+                raise _GenerationCancelled()
             role = sample_role(companion)
             if companion.id == source_sample.id or role == "image":
                 continue
@@ -868,6 +1001,8 @@ class GenerationService(ServiceBase):
                 Path("groups") / generated_group_id / role / companion_path.name
             ).as_posix()
             copied = self.file_indexer.copy_into_dataset(companion_path, generated_root, relative_path)
+            if copied_paths is not None:
+                copied_paths.append(copied)
             metadata = sample_metadata(companion)
             metadata.update(
                 {
@@ -895,98 +1030,103 @@ class GenerationService(ServiceBase):
             )
 
     def _persist_source_outputs(self, *, task_id: int, target_dataset_id: int, source_samples: list[Sample]) -> int:
-        if not source_samples:
-            return 0
+        _, copied_count = self._persist_task_outputs_transaction(
+            task_id=task_id,
+            target_dataset_id=target_dataset_id,
+            outputs_by_algorithm=[],
+            source_samples=source_samples,
+            plugin_context=None,
+        )
+        return copied_count
 
+    def _persist_source_output_rows(
+        self,
+        *,
+        session,
+        task_id: int,
+        target_dataset: Dataset,
+        source_samples: list[Sample],
+        plugin_context,
+        copied_paths: list[Path],
+    ) -> int:
         total_samples = len(source_samples)
-        self.task_manager.set_progress(task_id, 99.0, f"正在合并原始样本 0/{total_samples}")
+        task = self.task_repository.get_task_model(session, task_id)
+        if task is not None:
+            task.progress = 99.0
+            task.progress_message = f"正在合并原始样本 0/{total_samples}"
+            session.flush()
         copied_count = 0
-        with self.session_factory() as session:
-            target_dataset = session.query(Dataset).filter(Dataset.id == target_dataset_id).first()
-            if target_dataset is None:
-                raise NotFoundError(f"Dataset {target_dataset_id} not found.")
+        generated_root = Path(target_dataset.storage_path) / "generated"
+        pending_samples: list[dict] = []
+        pending_outputs: list[dict] = []
 
-            generated_root = Path(target_dataset.storage_path) / "generated"
-            pending_samples: list[dict] = []
-            pending_outputs: list[dict] = []
-
-            def persist_batch() -> None:
-                nonlocal copied_count
-                if not pending_samples:
-                    return
-
-                output_samples = self.dataset_repository.create_samples(session, pending_samples)
-                session.add_all(
-                    [
-                        GenerationOutput(
-                            task_id=task_id,
-                            source_sample_id=source_data["source_sample_id"],
-                            output_sample_id=output_sample.id,
-                            algorithm_id=None,
-                            status="source",
-                            metadata_json=source_data["metadata"],
-                        )
-                        for output_sample, source_data in zip(output_samples, pending_outputs)
-                    ]
-                )
-                copied_count += len(output_samples)
-                task = self.task_repository.get_task_model(session, task_id)
-                if task is not None:
-                    task.progress = 99.0 + 0.9 * copied_count / total_samples
-                    task.progress_message = f"正在合并原始样本 {copied_count}/{total_samples}"
-                session.commit()
-                pending_samples.clear()
-                pending_outputs.clear()
-
-            for source_sample in source_samples:
-                source_path = Path(source_sample.file_path or "")
-                if not source_path.is_file():
-                    continue
-
-                labels = list(source_sample.labels_json or [])
-                metadata = dict(source_sample.metadata_json or {})
-                metadata.update(
-                    {
-                        "result_type": "source",
-                        "is_original": True,
-                        "source_sample_id": source_sample.id,
-                    }
-                )
-                requested_relative_path = Path("source") / (source_sample.relative_path or source_path.name)
-                copied = self.file_indexer.copy_into_dataset(source_path, generated_root, requested_relative_path.as_posix())
-                pending_samples.append(
-                    {
-                        "dataset_id": target_dataset.id,
-                        "source_sample_id": source_sample.id,
-                        "name": copied.name,
-                        "modality": target_dataset.modality,
-                        "file_path": str(copied),
-                        "relative_path": copied.relative_to(generated_root).as_posix(),
-                        # copy2 保持文件内容不变，复用源指纹可避免再次完整读取大文件。
-                        "sha256": source_sample.sha256,
-                        "mime_type": source_sample.mime_type or self.file_indexer.detect_mime_type(copied),
-                        "extension": source_sample.extension or copied.suffix.lower(),
-                        "size_bytes": source_sample.size_bytes or copied.stat().st_size,
-                        "status": "generated",
-                        "metadata_json": metadata,
-                        "labels_json": labels,
-                    }
-                )
-                pending_outputs.append({"source_sample_id": source_sample.id, "metadata": metadata})
-                if len(pending_samples) >= SOURCE_OUTPUT_BATCH_SIZE:
-                    persist_batch()
-
-            persist_batch()
-
-            self._refresh_dataset_stats(session, target_dataset)
-            self.task_repository.add_task_log(
-                session,
-                task_id=task_id,
-                level="info",
-                message="Source samples copied into generation outputs",
-                payload_json={"source_copied_count": copied_count, "target_dataset_id": target_dataset.id},
+        def persist_batch() -> None:
+            nonlocal copied_count
+            if not pending_samples:
+                return
+            output_samples = self.dataset_repository.create_samples(session, pending_samples)
+            session.add_all(
+                [
+                    GenerationOutput(
+                        task_id=task_id,
+                        source_sample_id=source_data["source_sample_id"],
+                        output_sample_id=output_sample.id,
+                        algorithm_id=None,
+                        status="source",
+                        metadata_json=source_data["metadata"],
+                    )
+                    for output_sample, source_data in zip(output_samples, pending_outputs)
+                ]
             )
-            session.commit()
+            copied_count += len(output_samples)
+            if task is not None:
+                task.progress = 99.0 + 0.9 * copied_count / total_samples
+                task.progress_message = f"正在合并原始样本 {copied_count}/{total_samples}"
+            session.flush()
+            pending_samples.clear()
+            pending_outputs.clear()
+
+        for source_sample in source_samples:
+            self._raise_if_cancelled(plugin_context)
+            source_path = Path(source_sample.file_path or "")
+            if not source_path.is_file():
+                continue
+
+            labels = list(source_sample.labels_json or [])
+            metadata = dict(source_sample.metadata_json or {})
+            metadata.update(
+                {
+                    "result_type": "source",
+                    "is_original": True,
+                    "source_sample_id": source_sample.id,
+                }
+            )
+            requested_relative_path = Path("source") / (source_sample.relative_path or source_path.name)
+            copied = self.file_indexer.copy_into_dataset(source_path, generated_root, requested_relative_path.as_posix())
+            copied_paths.append(copied)
+            pending_samples.append(
+                {
+                    "dataset_id": target_dataset.id,
+                    "source_sample_id": source_sample.id,
+                    "name": copied.name,
+                    "modality": target_dataset.modality,
+                    "file_path": str(copied),
+                    "relative_path": copied.relative_to(generated_root).as_posix(),
+                    # copy2 保持文件内容不变，复用源指纹可避免再次完整读取大文件。
+                    "sha256": source_sample.sha256,
+                    "mime_type": source_sample.mime_type or self.file_indexer.detect_mime_type(copied),
+                    "extension": source_sample.extension or copied.suffix.lower(),
+                    "size_bytes": source_sample.size_bytes or copied.stat().st_size,
+                    "status": "generated",
+                    "metadata_json": metadata,
+                    "labels_json": labels,
+                }
+            )
+            pending_outputs.append({"source_sample_id": source_sample.id, "metadata": metadata})
+            if len(pending_samples) >= SOURCE_OUTPUT_BATCH_SIZE:
+                persist_batch()
+
+        persist_batch()
         return copied_count
 
     def _refresh_dataset_stats(self, session, dataset: Dataset) -> None:
@@ -1001,6 +1141,22 @@ class GenerationService(ServiceBase):
             size_bytes=size_bytes,
             modality_breakdown=modality_breakdown,
         )
+
+    @staticmethod
+    def _raise_if_cancelled(plugin_context) -> None:
+        if plugin_context is not None and plugin_context.is_cancel_requested():
+            raise _GenerationCancelled()
+
+    def _fail_and_discard_staging(self, task_id: int, error_code: str, error_message: str) -> None:
+        try:
+            self.task_manager.fail(task_id, error_code=error_code, error_message=error_message)
+        except (NotFoundError, ValidationError):
+            return
+        with self.session_factory() as session:
+            task = self.task_repository.get_task_model(session, task_id)
+            if task is not None:
+                self.task_repository.discard_generation_staging_dataset(session, task)
+                session.commit()
 
     def _resolve_output_labels(self, output: dict, source_labels) -> tuple[list, str]:
         policy_value = output.get("label_policy")
@@ -1088,9 +1244,18 @@ class GenerationService(ServiceBase):
             return False
         return "image" in artifact_types or "generated_samples" in produces or "outputs" in produces
 
-    def _serialize_generation_output(self, session, row: GenerationOutput) -> dict:
+    def _serialize_generation_output(
+        self,
+        session,
+        row: GenerationOutput,
+        *,
+        source_sample: Sample | None = None,
+        output_sample: Sample | None = None,
+        samples_loaded: bool = False,
+    ) -> dict:
         source_sample_id = row.source_sample_id
-        source_sample = session.query(Sample).filter(Sample.id == source_sample_id).first()
+        if not samples_loaded:
+            source_sample = session.query(Sample).filter(Sample.id == source_sample_id).first()
         if source_sample is None:
             # 兼容旧版插件未写入 source_sample_id 的历史生成记录。
             original_path = (row.metadata_json or {}).get("original")
@@ -1098,7 +1263,8 @@ class GenerationService(ServiceBase):
                 source_sample = session.query(Sample).filter(Sample.file_path == str(original_path)).first()
                 if source_sample is not None:
                     source_sample_id = source_sample.id
-        output_sample = session.query(Sample).filter(Sample.id == row.output_sample_id).first()
+        if not samples_loaded:
+            output_sample = session.query(Sample).filter(Sample.id == row.output_sample_id).first()
         return {
             "id": row.id,
             "task_id": row.task_id,

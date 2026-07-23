@@ -60,7 +60,7 @@ class BackendService(QObject):
     algorithmsUpdated = Signal(list)
     modelAssetsUpdated = Signal(dict)
     modelAssetOperationFinished = Signal(dict)
-    generationStatusUpdated = Signal(str, bool, float)
+    generationStatusUpdated = Signal(int, str, bool, float)
     generationOutputsUpdated = Signal(dict)
 
     evaluationScenariosUpdated = Signal(list)
@@ -110,11 +110,11 @@ class BackendService(QObject):
             try:
                 result = self._bridge.run_generation_task(task_id)
                 if result.get("ok"):
-                    self.generationStatusUpdated.emit("生成任务已完成", True, 100.0)
+                    self.generationStatusUpdated.emit(task_id, "生成任务已完成", True, 100.0)
                 else:
-                    self.generationStatusUpdated.emit(self._user_message(result.get("message"), "生成任务执行失败，请查看日志了解详细信息。"), False, 0.0)
+                    self.generationStatusUpdated.emit(task_id, self._user_message(result.get("message"), "生成任务执行失败，请查看日志了解详细信息。"), False, 0.0)
             except Exception as exc:
-                self.generationStatusUpdated.emit(self._user_message(exc, "生成任务执行失败，请查看日志了解详细信息。"), False, 0.0)
+                self.generationStatusUpdated.emit(task_id, self._user_message(exc, "生成任务执行失败，请查看日志了解详细信息。"), False, 0.0)
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -548,8 +548,13 @@ class BackendService(QObject):
 
     @Slot(int, str, int, int)
     def getGenerationOutputs(self, taskId: int, status: str, page: int, pageSize: int):
-        result = self._bridge.get_generation_outputs(taskId, status, page, pageSize)
-        self.generationOutputsUpdated.emit(result)
+        def worker():
+            result = self._bridge.get_generation_outputs(taskId, status, page, pageSize)
+            result["task_id"] = taskId
+            result.setdefault("page", max(page, 1))
+            self.generationOutputsUpdated.emit(result)
+
+        threading.Thread(target=worker, daemon=True).start()
 
 
     @Slot(str)
@@ -616,9 +621,9 @@ class BackendService(QObject):
         result = self._bridge.get_training_tasks(datasetId, status)
         self.trainingTasksUpdated.emit(result)
 
-    @Slot(int, str, result=dict)
-    def exportTrainingWeights(self, taskId: int, exportName: str) -> dict:
-        result = self._bridge.export_training_weights(taskId, exportName)
+    @Slot(int, str, str, result=dict)
+    def exportTrainingWeights(self, taskId: int, exportName: str, targetDir: str) -> dict:
+        result = self._bridge.export_training_weights(taskId, exportName, targetDir)
         if result.get("ok"):
             return {
                 "status": "success",

@@ -6,8 +6,17 @@ import shutil
 from pathlib import Path
 
 from .._compat import to_local_isoformat
-from ..models import Task, TaskLog, CleaningSuggestion, GenerationOutput, EvaluationResult
-from ..models import Dataset
+from ..errors import ValidationError
+from ..models import (
+    CleaningSuggestion,
+    Dataset,
+    DatasetStatistics,
+    EvaluationResult,
+    GenerationOutput,
+    Sample,
+    Task,
+    TaskLog,
+)
 from .base import RepositoryBase
 
 
@@ -26,25 +35,33 @@ class TaskRepository(RepositoryBase):
             task = self.get_task_model(session, task_id)
             return self._serialize_task(task, session=session) if task else None
 
-    def list_tasks(self, *, task_type: str, status: str, page: int, page_size: int) -> dict:
+    def list_tasks(
+        self,
+        *,
+        task_type: str,
+        status: str,
+        page: int,
+        page_size: int | None,
+        dataset_id: int = 0,
+    ) -> dict:
         with self.session_factory() as session:
             query = session.query(Task)
             if task_type:
                 query = query.filter(Task.task_type == task_type)
             if status:
                 query = query.filter(Task.status == status)
+            if dataset_id:
+                query = query.filter(Task.source_dataset_id == dataset_id)
             total = query.count()
-            items = (
-                query.order_by(Task.created_at.desc(), Task.id.desc())
-                .offset(max(page - 1, 0) * page_size)
-                .limit(page_size)
-                .all()
-            )
+            query = query.order_by(Task.created_at.desc(), Task.id.desc())
+            if page_size is not None:
+                query = query.offset(max(page - 1, 0) * page_size).limit(page_size)
+            items = query.all()
             return {
                 "total": total,
                 "items": [self._serialize_task(item, session=session) for item in items],
                 "page": max(page, 1),
-                "page_size": max(page_size, 1),
+                "page_size": max(page_size, 1) if page_size is not None else total,
             }
 
     def add_task_log(self, session, *, task_id: int, level: str, message: str, payload_json: dict | None = None) -> TaskLog:
@@ -97,12 +114,15 @@ class TaskRepository(RepositoryBase):
         task = self.get_task_model(session, task_id)
         if task is None:
             return None
+        if task.status == "running":
+            raise ValidationError("运行中的任务不能删除，请先停止任务并等待其结束。")
         task_info = self._serialize_task(task, session=session)
 
         session.query(CleaningSuggestion).filter(CleaningSuggestion.task_id == task_id).delete()
         session.query(GenerationOutput).filter(GenerationOutput.task_id == task_id).delete()
         session.query(EvaluationResult).filter(EvaluationResult.task_id == task_id).delete()
         session.query(TaskLog).filter(TaskLog.task_id == task_id).delete()
+        self.discard_generation_staging_dataset(session, task, hard_delete=True)
         session.delete(task)
 
         output_dir = task_info.get("output_dir", "")
@@ -112,6 +132,47 @@ class TaskRepository(RepositoryBase):
                 shutil.rmtree(path)
 
         return task_info
+
+    def discard_generation_staging_dataset(self, session, task: Task, *, hard_delete: bool = False) -> bool:
+        if task.task_type != "generation" or not task.target_dataset_id:
+            return False
+        dataset = session.query(Dataset).filter(Dataset.id == task.target_dataset_id).first()
+        if dataset is None:
+            return False
+        tags = set(dataset.tags_json or [])
+        extra = dict(dataset.extra_json or {})
+        is_staging = dataset.status == "staging" or "generation_staging" in tags or extra.get("dataset_stage") == "staging"
+        if not is_staging:
+            return False
+        other_task_count = (
+            session.query(Task.id)
+            .filter(Task.target_dataset_id == dataset.id, Task.id != task.id)
+            .count()
+        )
+        if other_task_count:
+            return False
+
+        session.query(GenerationOutput).filter(GenerationOutput.task_id == task.id).delete()
+        session.query(Sample).filter(Sample.dataset_id == dataset.id).delete()
+        session.query(DatasetStatistics).filter(DatasetStatistics.dataset_id == dataset.id).delete()
+
+        dataset_path = Path(dataset.storage_path) if dataset.storage_path else None
+        if dataset_path and dataset_path.exists():
+            shutil.rmtree(dataset_path)
+        if hard_delete:
+            task.target_dataset_id = None
+            session.flush()
+            session.delete(dataset)
+        else:
+            dataset.status = "deleted"
+            dataset.is_deleted = True
+            dataset.deleted_at = datetime.now(timezone.utc)
+            dataset.storage_path = ""
+            dataset.total_samples = 0
+            dataset.valid_samples = 0
+            dataset.generated_samples = 0
+            dataset.size_bytes = 0
+        return True
 
     def update_task_title(self, session, task_id: int, title: str) -> Task | None:
         task = self.get_task_model(session, task_id)

@@ -80,3 +80,34 @@ def test_parameter_contract_includes_sensor_degradation_controls():
         assert seed_parameter["default"] == default
         assert seed_parameter["min"] == minimum
         assert seed_parameter["max"] == maximum
+
+
+def test_output_offset_changes_random_sensor_effects(tmp_path):
+    source_path = tmp_path / "offset_source.png"
+    assert write_image(source_path, np.full((32, 32, 3), 128, dtype=np.uint8))
+    parameters = {
+        "blur_kernel": 0,
+        "downsample": 1.0,
+        "noise_std": 0.05,
+        "brightness_shift": 0.05,
+        "color_shift": 0.05,
+    }
+
+    def generate(offset, folder):
+        return augmenter.run(
+            {
+                "task_id": 10,
+                "output_index": offset,
+                "target_count": 1,
+                "parameters": parameters,
+                "input": {"samples": [{"id": 1, "sample_path": str(source_path)}]},
+                "output": {"output_dir": str(folder)},
+            },
+            Context(),
+        )
+
+    first = generate(0, tmp_path / "offset_first")
+    second = generate(1, tmp_path / "offset_second")
+    first_image = read_image(first["outputs"][0]["output_path"])
+    second_image = read_image(second["outputs"][0]["output_path"])
+    assert not np.array_equal(first_image, second_image)

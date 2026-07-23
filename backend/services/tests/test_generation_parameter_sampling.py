@@ -1,7 +1,9 @@
 from types import SimpleNamespace
 
 from backend.parameter_ranges import (
+    default_parameter_sampling_range,
     normalize_parameter_sampling_value,
+    parameter_display_precision,
     parameter_sampling_is_variable,
     sample_parameter_value,
 )
@@ -16,6 +18,41 @@ INT_PARAMETER = {
     "max_value": 10,
     "options": [],
 }
+
+
+def test_default_sampling_range_uses_about_one_third_of_allowed_range():
+    assert default_parameter_sampling_range(INT_PARAMETER) == {"min": 3, "max": 7}
+    float_parameter = {
+        "name": "strength",
+        "type": "float",
+        "default_value": 0.2,
+        "min_value": 0.0,
+        "max_value": 1.0,
+    }
+    result = default_parameter_sampling_range(float_parameter)
+    assert result == {"min": 0.13, "max": 0.47}
+    assert default_parameter_sampling_range(
+        {"name": "fixed", "type": "int", "default_value": 1, "min_value": 1, "max_value": 1}
+    ) == {"min": 1, "max": 1}
+
+
+def test_parameter_display_precision_matches_parameter_scale():
+    assert parameter_display_precision(INT_PARAMETER) == 0
+    assert parameter_display_precision(
+        {"name": "strength", "type": "float", "default_value": 0.2, "min_value": 0, "max_value": 1}
+    ) == 2
+    assert parameter_display_precision(
+        {"name": "noise", "type": "float", "default_value": 0.03, "min_value": 0, "max_value": 0.2}
+    ) == 3
+    assert parameter_display_precision(
+        {
+            "name": "learning_rate",
+            "type": "float",
+            "default_value": 0.0001,
+            "min_value": 0.000001,
+            "max_value": 0.1,
+        }
+    ) == 6
 
 
 def test_range_is_clamped_swapped_and_equal_bounds_are_fixed():

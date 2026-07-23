@@ -83,6 +83,7 @@ def run(payload: dict, context) -> dict:
     brightness_shift = _clamp_float(parameters.get("brightness_shift", 0.05), 0.0, 0.3)
     color_shift = _clamp_float(parameters.get("color_shift", 0.05), 0.0, 0.3)
     task_seed = int(payload.get("task_id") or 0)
+    output_offset = max(0, int(payload.get("output_index") or 0))
 
     outputs = []
     for index in range(target_count):
@@ -109,7 +110,7 @@ def run(payload: dict, context) -> dict:
             small = cv2.resize(out, (nw, nh), interpolation=cv2.INTER_AREA)
             out = cv2.resize(small, (w, h), interpolation=cv2.INTER_LINEAR)
 
-        rng = np.random.default_rng((task_seed * 1000003 + index) & 0xFFFFFFFF)
+        rng = np.random.default_rng((task_seed * 1000003 + output_offset + index) & 0xFFFFFFFF)
         if color_shift > 0:
             channel_gains = rng.uniform(1.0 - color_shift, 1.0 + color_shift, size=(1, 1, 3))
             out *= channel_gains

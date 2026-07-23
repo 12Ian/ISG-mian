@@ -361,7 +361,15 @@ class BackendBridge:
 
     def get_generation_tasks(self, dataset_id: int, status: str) -> dict:
         try:
-            return self.get_tasks("generation", status, 1, 200)
+            result = self.facade.task_repository.list_tasks(
+                task_type="generation",
+                status=status or "",
+                page=1,
+                page_size=None,
+                dataset_id=max(dataset_id, 0),
+            )
+            result["items"] = [self._serialize_task(item) for item in result.get("items", [])]
+            return result
         except Exception as exc:
             return _normalize_error(exc)
 
@@ -482,8 +490,14 @@ class BackendBridge:
         except Exception as exc:
             return _normalize_error(exc)
 
-    def export_training_weights(self, task_id: int, export_name: str = "") -> dict:
+    def export_training_weights(self, task_id: int, export_name: str = "", target_dir: str = "") -> dict:
         try:
+            if not str(target_dir or "").strip():
+                raise ValidationError("请选择权重导出位置。")
+            export_parent = Path(target_dir).expanduser()
+            if not export_parent.is_dir():
+                raise ValidationError("所选权重导出位置不存在或不是文件夹。")
+
             with self.facade.session_factory() as session:
                 task = self.facade.task_repository.get_task_model(session, task_id)
                 if task is None:
@@ -504,10 +518,8 @@ class BackendBridge:
 
                 default_name = export_name or task.title or f"训练任务_{task.id}"
 
-            desktop_dir = Path.home() / "Desktop"
-            desktop_dir.mkdir(parents=True, exist_ok=True)
             export_dir = self._build_export_dir(
-                desktop_dir,
+                export_parent,
                 f"导出权重_{self._sanitize_export_name(default_name)}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
             )
             export_dir.mkdir(parents=True, exist_ok=True)
@@ -763,7 +775,12 @@ class BackendBridge:
             if src == dest.resolve():
                 return {"ok": True, "path": str(dest)}
             if dest.exists():
-                dest.unlink()
+                if src.read_bytes() == dest.read_bytes():
+                    return {"ok": True, "path": str(dest)}
+                index = 1
+                while dest.exists():
+                    dest = plugins_user_dir / f"{src.stem}_{index}{src.suffix}"
+                    index += 1
             shutil.copy2(src, dest)
             return {"ok": True, "path": str(dest)}
         except Exception as exc:

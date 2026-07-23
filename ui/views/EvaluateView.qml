@@ -39,6 +39,8 @@ Item {
     property var currentHistoryItem: null
     property int pendingDeleteIndex: -1
     property int pendingEditIndex: -1
+    property int pendingWeightExportTaskId: 0
+    property string pendingWeightExportName: ""
     property bool trainingHistoryExpanded: true
     property bool evaluationHistoryExpanded: true
     property string workMode: "train"  // "train" / "eval"
@@ -1206,6 +1208,51 @@ Item {
         toastCloseTimer.restart()
     }
 
+    function localPathFromUrl(url) {
+        var value = String(url || "")
+        if (value.indexOf("file://") === 0) {
+            value = value.slice("file://".length)
+            if (/^\/[A-Za-z]:\//.test(value)) {
+                value = value.slice(1)
+            } else if (value.indexOf("//") === 0 || value.charAt(0) === "/") {
+                // 保留 POSIX 根路径以及 file:////server/share 形式的 UNC 路径。
+            } else if (value.toLowerCase().indexOf("localhost/") === 0) {
+                value = "/" + value.slice("localhost/".length)
+                if (/^\/[A-Za-z]:\//.test(value)) value = value.slice(1)
+            } else if (value !== "") {
+                value = "//" + value
+            }
+        }
+        try {
+            return decodeURIComponent(value)
+        } catch (error) {
+            return value
+        }
+    }
+
+    FolderDialog {
+        id: weightExportFolderDialog
+        title: "选择权重导出位置"
+        onAccepted: {
+            var targetDir = root.localPathFromUrl(selectedFolder)
+            var result = backendService.exportTrainingWeights(
+                        root.pendingWeightExportTaskId,
+                        root.pendingWeightExportName,
+                        targetDir)
+            if (result.status === "success") {
+                root.showToast("✅ 已导出 " + (result.file_count || 0) + " 个权重到所选位置")
+            } else {
+                root.showToast("⚠️ " + (result.message || "导出权重失败"))
+            }
+            root.pendingWeightExportTaskId = 0
+            root.pendingWeightExportName = ""
+        }
+        onRejected: {
+            root.pendingWeightExportTaskId = 0
+            root.pendingWeightExportName = ""
+        }
+    }
+
     // ================= 保存评估工程弹窗 =================
     Popup {
         id: saveProjectPopup
@@ -1540,12 +1587,9 @@ Item {
                                                     root.showToast("⚠️ 未找到可导出的训练任务")
                                                     return
                                                 }
-                                                var result = backendService.exportTrainingWeights(Number(taskIds[0]), historyItem.projectName || "")
-                                                if (result.status === "success") {
-                                                    root.showToast("✅ 已导出 " + (result.file_count || 0) + " 个权重到桌面文件夹")
-                                                } else {
-                                                    root.showToast("⚠️ " + (result.message || "导出权重失败"))
-                                                }
+                                                root.pendingWeightExportTaskId = Number(taskIds[0])
+                                                root.pendingWeightExportName = historyItem.projectName || ""
+                                                weightExportFolderDialog.open()
                                             }
                                         }
                                         Button {

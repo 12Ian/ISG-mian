@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import math
 import random
+from decimal import Decimal
 from typing import Any
 
 
@@ -117,6 +119,76 @@ def normalized_parameter_range(parameter: dict[str, Any]) -> dict[str, Any]:
     return {"min_value": min_value, "max_value": max_value, "options": options}
 
 
+def default_parameter_sampling_range(parameter: dict[str, Any]) -> dict[str, Any] | None:
+    """为数值参数生成约占完整允许范围三分之一的默认采样区间。"""
+    ptype = normalize_parameter_type(parameter.get("type"))
+    if ptype not in {"int", "float"}:
+        return None
+    min_value, max_value = infer_parameter_bounds(parameter)
+    default = _to_float_or_none(parameter.get("default_value", parameter.get("default")))
+    if min_value is None or max_value is None or default is None:
+        return None
+
+    if ptype == "int":
+        lower_bound = math.ceil(min_value)
+        upper_bound = math.floor(max_value)
+        default_value = max(lower_bound, min(int(round(default)), upper_bound))
+        if lower_bound >= upper_bound:
+            return {"min": default_value, "max": default_value}
+        lower = int(round(default_value - (default_value - lower_bound) / 3.0))
+        upper = int(round(default_value + (upper_bound - default_value) / 3.0))
+        lower = max(lower_bound, min(lower, upper_bound))
+        upper = max(lower_bound, min(upper, upper_bound))
+        if lower == upper:
+            if upper < upper_bound:
+                upper += 1
+            else:
+                lower -= 1
+        return {"min": lower, "max": upper}
+
+    default_value = max(min_value, min(default, max_value))
+    if min_value >= max_value:
+        return {"min": default_value, "max": default_value}
+    precision = parameter_display_precision(parameter)
+    lower = round(default_value - (default_value - min_value) / 3.0, precision)
+    upper = round(default_value + (max_value - default_value) / 3.0, precision)
+    return {"min": lower, "max": upper}
+
+
+def parameter_display_precision(parameter: dict[str, Any]) -> int:
+    """根据参数量级返回适合界面输入和展示的小数位数。"""
+    if normalize_parameter_type(parameter.get("type")) == "int":
+        return 0
+    min_value, max_value = infer_parameter_bounds(parameter)
+    if min_value is None or max_value is None:
+        return 3
+    span = abs(max_value - min_value)
+    if span >= 10:
+        precision = 1
+    elif span >= 1:
+        precision = 2
+    elif span >= 0.1:
+        precision = 3
+    elif span >= 0.01:
+        precision = 4
+    elif span >= 0.001:
+        precision = 5
+    else:
+        precision = 6
+
+    for value in (
+        min_value,
+        max_value,
+        _to_float_or_none(parameter.get("default_value", parameter.get("default"))),
+    ):
+        if value in (None, 0):
+            continue
+        exponent = Decimal(str(abs(value))).normalize().as_tuple().exponent
+        if exponent < 0:
+            precision = max(precision, min(-exponent, 6))
+    return precision
+
+
 def normalize_parameter_value(parameter: dict[str, Any], value: Any) -> Any:
     ptype = normalize_parameter_type(parameter.get("type"))
     range_info = normalized_parameter_range(parameter)
@@ -148,12 +220,17 @@ def normalize_parameter_value(parameter: dict[str, Any], value: Any) -> Any:
             number = _to_float_or_none(default)
         if number is None:
             number = range_info["min_value"] if range_info["min_value"] is not None else 0.0
+        if ptype == "int":
+            integer = int(round(number))
+            if range_info["min_value"] is not None:
+                integer = max(integer, math.ceil(range_info["min_value"]))
+            if range_info["max_value"] is not None:
+                integer = min(integer, math.floor(range_info["max_value"]))
+            return integer
         if range_info["min_value"] is not None and number < range_info["min_value"]:
             number = range_info["min_value"]
         if range_info["max_value"] is not None and number > range_info["max_value"]:
             number = range_info["max_value"]
-        if ptype == "int":
-            return int(round(number))
         return float(number)
 
     if value is None:

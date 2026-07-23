@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+import math
 import sys
 from pathlib import Path
 from typing import Any
@@ -11,7 +12,6 @@ from typing import Any
 from core.data_management.dataset_requirements import normalize_dataset_requirements
 
 
-_REQUIRED_FIELDS = {"name", "type", "default"}
 _ALLOWED_TYPES = {"string", "int", "float", "bool", "select"}
 
 
@@ -66,7 +66,7 @@ def reflect_parameters(script_path: Path) -> dict[str, Any]:
         if parameters is None:
             return {"ok": False, "error": "脚本中未找到 PARAMETERS 变量。请在 .py 文件中声明 PARAMETERS = [...]"}
 
-        valid, error = _validate_parameters(parameters)
+        valid, error = validate_parameters(parameters)
         if not valid:
             return {"ok": False, "error": f"PARAMETERS 格式错误: {error}"}
 
@@ -90,27 +90,54 @@ def reflect_parameters(script_path: Path) -> dict[str, Any]:
         sys.modules.pop(module_name, None)
 
 
-def _validate_parameters(params: Any) -> tuple[bool, str]:
+def validate_parameters(params: Any) -> tuple[bool, str]:
     if not isinstance(params, list):
         return False, "PARAMETERS 必须是 list 类型"
+    names: set[str] = set()
     for i, item in enumerate(params):
         if not isinstance(item, dict):
             return False, f"第 {i} 项不是 dict 类型"
-        missing = _REQUIRED_FIELDS - set(item.keys())
-        if missing:
-            return False, f"第 {i} 项缺少必填字段: {missing}"
-        ptype = item.get("type", "")
+        name = str(item.get("name", "")).strip()
+        if not name:
+            return False, f"第 {i} 项参数名不能为空"
+        if name in names:
+            return False, f"参数名重复: {name}"
+        names.add(name)
+        if "type" not in item:
+            return False, f"第 {i} 项缺少必填字段: type"
+        if "default" not in item and "default_value" not in item:
+            return False, f"第 {i} 项缺少必填字段: default"
+        ptype = str(item.get("type", "")).lower()
         if ptype not in _ALLOWED_TYPES:
             return False, f"第 {i} 项 type='{ptype}' 不合法，允许: {_ALLOWED_TYPES}"
+        default = item.get("default", item.get("default_value"))
         if ptype == "select":
-            options = item.get("options", [])
+            options = item.get("options", item.get("options_json", []))
             if not isinstance(options, list) or len(options) == 0:
                 return False, f"第 {i} 项 type='select' 但 options 为空或非列表"
+            if not any(default == option or str(default) == str(option) for option in options):
+                return False, f"第 {i} 项默认值不在 options 中"
+        if ptype == "bool" and not isinstance(default, bool):
+            return False, f"第 {i} 项默认值不是 bool 类型"
         if ptype in ("int", "float"):
-            for key in ("min", "max"):
-                val = item.get(key)
-                if val is not None and not isinstance(val, (int, float)):
-                    return False, f"第 {i} 项 {key}={val} 不是数值类型"
+            if isinstance(default, bool) or not isinstance(default, (int, float)):
+                return False, f"第 {i} 项默认值不是数值类型"
+            if ptype == "int" and not float(default).is_integer():
+                return False, f"第 {i} 项 int 默认值必须是整数"
+            min_value = item.get("min", item.get("min_value"))
+            max_value = item.get("max", item.get("max_value"))
+            for key, value in (("min", min_value), ("max", max_value)):
+                if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float))):
+                    return False, f"第 {i} 项 {key}={value} 不是数值类型"
+            if min_value is not None and max_value is not None and min_value > max_value:
+                return False, f"第 {i} 项 min 不能大于 max"
+            if min_value is not None and default < min_value:
+                return False, f"第 {i} 项默认值小于 min"
+            if max_value is not None and default > max_value:
+                return False, f"第 {i} 项默认值大于 max"
+            if ptype == "int" and min_value is not None and max_value is not None:
+                if math.ceil(min_value) > math.floor(max_value):
+                    return False, f"第 {i} 项范围内没有可用整数"
     return True, ""
 
 

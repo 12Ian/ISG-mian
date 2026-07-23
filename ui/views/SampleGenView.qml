@@ -30,6 +30,7 @@ Item {
 
     property string viewMode: "history"
     property bool isGenerating: false
+    property bool isCancellationRequested: false
     property bool hasActiveGenerationTasks: false
     property bool isCompleted: false
     property int currentCount: 0
@@ -234,15 +235,23 @@ Item {
                 var parameterType = String(param.type || "string").toLowerCase()
                 var numeric = parameterType === "int" || parameterType === "integer"
                               || parameterType === "float" || parameterType === "number"
-                var defaultText = defaultValue !== undefined && defaultValue !== null ? String(defaultValue) : ""
+                var displayPrecision = param.display_precision !== undefined
+                                       ? Number(param.display_precision) : 3
+                var defaultText = defaultValue !== undefined && defaultValue !== null
+                                  ? root.formatParameterNumber(param, defaultValue) : ""
+                var suggestedMin = param.suggested_min_value !== undefined && param.suggested_min_value !== null
+                                   ? root.formatParameterNumber(param, param.suggested_min_value) : defaultText
+                var suggestedMax = param.suggested_max_value !== undefined && param.suggested_max_value !== null
+                                   ? root.formatParameterNumber(param, param.suggested_max_value) : defaultText
                 params.push({
                     n: param.name || "",
                     label: param.label || param.name || "",
                     v: defaultText,
-                    minV: defaultText,
-                    maxV: defaultText,
+                    minV: numeric ? suggestedMin : defaultText,
+                    maxV: numeric ? suggestedMax : defaultText,
                     isNumeric: numeric,
                     type: param.type || "string",
+                    displayPrecision: displayPrecision,
                     minValue: param.min_value !== undefined ? param.min_value : param.min,
                     maxValue: param.max_value !== undefined ? param.max_value : param.max,
                     options: opts,
@@ -314,9 +323,22 @@ Item {
             if (param.minValue !== undefined && param.minValue !== null && param.minValue !== "" && numberValue < Number(param.minValue)) numberValue = Number(param.minValue)
             if (param.maxValue !== undefined && param.maxValue !== null && param.maxValue !== "" && numberValue > Number(param.maxValue)) numberValue = Number(param.maxValue)
             if (ptype === "int" || ptype === "integer") numberValue = Math.round(numberValue)
-            return String(numberValue)
+            return root.formatParameterNumber(param, numberValue)
         }
         return String(value)
+    }
+
+    function formatParameterNumber(param, value) {
+        var numberValue = Number(value)
+        if (isNaN(numberValue)) return String(value)
+        var rawPrecision = param.displayPrecision !== undefined
+                           ? param.displayPrecision : param.display_precision
+        var precision = rawPrecision !== undefined ? Number(rawPrecision) : 3
+        var ptype = String(param.type || "").toLowerCase()
+        if (ptype === "int" || ptype === "integer") precision = 0
+        if (isNaN(precision)) precision = 3
+        precision = Math.max(0, Math.min(Math.round(precision), 6))
+        return Number(numberValue.toFixed(precision)).toString()
     }
 
     function normalizeParameterRangeInput(param, lowerValue, upperValue) {
@@ -327,7 +349,10 @@ Item {
             lower = upper
             upper = swapped
         }
-        return { min: String(lower), max: String(upper) }
+        return {
+            min: root.formatParameterNumber(param, lower),
+            max: root.formatParameterNumber(param, upper)
+        }
     }
 
     function parameterValueText(value) {
@@ -337,6 +362,32 @@ Item {
                     : String(value.min) + " ～ " + String(value.max)
         }
         return String(value)
+    }
+
+    function sampledParametersText(algorithmId, metadata) {
+        metadata = metadata || {}
+        var pipeline = metadata.pipeline_sampled_parameters || {}
+        var pipelineKeys = Object.keys(pipeline)
+        var sections = []
+        for (var pi = 0; pi < pipelineKeys.length; pi++) {
+            var algorithmKey = pipelineKeys[pi]
+            var values = pipeline[algorithmKey] || {}
+            var valueKeys = Object.keys(values)
+            var parts = []
+            for (var vi = 0; vi < valueKeys.length; vi++) {
+                var valueKey = valueKeys[vi]
+                parts.push(root.parameterLabelOnly(valueKey, []) + "=" + root.parameterValueText(values[valueKey]))
+            }
+            if (parts.length > 0) sections.push(algorithmKey + ": " + parts.join(", "))
+        }
+        if (sections.length > 0) return sections.join(" | ")
+        var sampled = metadata.sampled_parameters || {}
+        var keys = Object.keys(sampled)
+        var result = []
+        for (var i = 0; i < keys.length; i++) {
+            result.push(root.parameterLabelOnly(keys[i], [algorithmId]) + "=" + root.parameterValueText(sampled[keys[i]]))
+        }
+        return result.join(", ")
     }
 
     function setParamValue(algorithmId, paramName, value) {
@@ -624,6 +675,11 @@ Item {
                                     && presetValue.min !== undefined && presetValue.max !== undefined
                 var presetMin = presetIsRange ? presetValue.min : presetValue
                 var presetMax = presetIsRange ? presetValue.max : presetValue
+                if (presetValue !== undefined && item.isNumeric) {
+                    var normalizedPreset = root.normalizeParameterRangeInput(item, presetMin, presetMax)
+                    presetMin = normalizedPreset.min
+                    presetMax = normalizedPreset.max
+                }
                 var copied = {
                     n: item.n,
                     label: item.label,
@@ -632,6 +688,7 @@ Item {
                     maxV: presetValue !== undefined && item.isNumeric ? String(presetMax) : item.maxV,
                     isNumeric: item.isNumeric,
                     type: item.type,
+                    displayPrecision: item.displayPrecision,
                     minValue: item.minValue,
                     maxValue: item.maxValue,
                     options: item.options,
@@ -890,11 +947,13 @@ Item {
 
         function onAllDatasetsUpdated(data) { root.updateSourceDatasets(data) }
 
-        function onGenerationStatusUpdated(message, success, progressVal) {
+        function onGenerationStatusUpdated(taskId, message, success, progressVal) {
+            if (Number(taskId) !== root.currentTaskId) return
             root.showToast(success ? "✅ " + message : "⚠️ " + message)
             root.progress = progressVal / 100.0
             root.currentCount = Math.round(root.progress * root.totalCount)
             root.isGenerating = false
+            root.isCancellationRequested = false
             if (success) {
                 root.isCompleted = true
                 if (root.currentTaskId > 0) {
@@ -969,6 +1028,7 @@ Item {
                     }
                     if (task.status === "completed" || task.status === "failed" || task.status === "cancelled" || task.status === "interrupted") {
                         root.isGenerating = false
+                        root.isCancellationRequested = false
                         root.isCompleted = task.status === "completed"
                     }
                 }
@@ -1046,6 +1106,14 @@ Item {
         }
 
         function onGenerationOutputsUpdated(data) {
+            var activeTaskId = root.currentHistoryItem
+                    ? Number(root.currentHistoryItem.taskId || 0) : root.currentTaskId
+            if (data.task_id !== undefined && Number(data.task_id) !== activeTaskId) return
+            if (data.page !== undefined && Number(data.page) !== root.generationOutputPage) return
+            if (data.ok === false) {
+                root.showToast("⚠️ " + (data.message || "生成结果加载失败"))
+                return
+            }
             previewModel.clear()
             root.generationOutputTotal = Number(data.total || 0)
             root.generationOutputPage = Math.max(1, Number(data.page || root.generationOutputPage))
@@ -1065,6 +1133,7 @@ Item {
                     sourcePath: srcSample.path || srcSample.sample_path || "",
                     generatedPath: hasGenerated ? (outSample.path || outSample.sample_path || item.output_path || "") : "",
                     algoId: item.algorithm_id || 0,
+                    sampledParametersText: root.sampledParametersText(item.algorithm_id || 0, item.metadata || {}),
                     status: item.status || ""
                 })
             }
@@ -1079,6 +1148,7 @@ Item {
                     sourcePath: "",
                     generatedPath: "",
                     algoId: 0,
+                    sampledParametersText: "",
                     status: ""
                 })
             }
@@ -1893,7 +1963,7 @@ Item {
                 Text { text: "⚠️"; font.pixelSize: 20 }
                 Text { text: "确认删除此生成记录吗？"; color: root.textColor; font.pixelSize: 15; font.bold: true }
             }
-            Text { text: "删除后将无法恢复，相关文件依然保留在磁盘中。"; color: root.textMuted; font.pixelSize: 12; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+            Text { text: "删除后将无法恢复。已保存的数据集文件会保留，未保存的临时生成文件将被清理。"; color: root.textMuted; font.pixelSize: 12; wrapMode: Text.WordWrap; Layout.fillWidth: true }
             Item { Layout.fillHeight: true }
             RowLayout {
                 Layout.fillWidth: true
@@ -2210,12 +2280,13 @@ Item {
                             width: 138; height: 36; radius: 4
                             color: root.selectedStrategies.length === 0 ? Theme.border : (root.isGenerating ? Theme.muted : root.primaryColor)
                             opacity: root.selectedStrategies.length === 0 ? 0.5 : 1.0
-                            Text { text: root.isGenerating ? "停止生成" : "开始生成"; color: "#FFFFFF"; font.bold: true; font.pixelSize: 13; anchors.centerIn: parent }
+                            Text { text: root.isCancellationRequested ? "正在停止" : (root.isGenerating ? "停止生成" : "开始生成"); color: "#FFFFFF"; font.bold: true; font.pixelSize: 13; anchors.centerIn: parent }
                             MouseArea {
                                 anchors.fill: parent
                                 cursorShape: root.selectedStrategies.length === 0 ? Qt.ArrowCursor : Qt.PointingHandCursor
                                 onClicked: {
                                     if (root.selectedStrategies.length === 0) return
+                                    if (root.isCancellationRequested) return
                                     if (!root.isGenerating) {
                                         var source = root.currentSourceDataset()
                                         if (!source || !source.id) {
@@ -2228,6 +2299,10 @@ Item {
                                         if (algoIds.length === 0) {
                                             root.selectedStrategies = []
                                             root.showToast("⚠ 请重新选择与当前数据集类型匹配的算法")
+                                            return
+                                        }
+                                        if (root.generationMode === "independent" && root.totalCount < algoIds.length) {
+                                            root.showToast("⚠️ 独立模式的生成数量不能少于所选算法数量")
                                             return
                                         }
                                         root.selectedStrategies = algoIds
@@ -2246,14 +2321,16 @@ Item {
                                         root.progress = 0
                                         root.progressMessage = ""
                                         root.isCompleted = false
+                                        root.isCancellationRequested = false
                                         previewModel.clear()
                                         backendService.startEnhancementTask(root.currentTaskId)
                                         root.showToast("✅ 生成任务已启动 (" + root.currentTaskId + ")")
+                                        root.isGenerating = true
                                     } else {
                                         backendService.stopEnhancementTask(root.currentTaskId)
+                                        root.isCancellationRequested = true
                                         root.showToast("⏹ 已请求停止任务")
                                     }
-                                    root.isGenerating = !root.isGenerating
                                 }
                             }
                         }
@@ -2633,7 +2710,7 @@ Item {
                                 anchors.fill: parent; anchors.margins: 10; spacing: 8; model: previewModel; clip: true
                                 delegate: Rectangle {
                                     width: taskMonitorList.width
-                                    height: 68
+                                    height: sampledParametersText ? 82 : 68
                                     radius: 4
                                     color: genMa.containsMouse ? root.tableHoverBg : "transparent"
                                     border.color: genMa.containsMouse ? root.primaryColor : "transparent"
@@ -2719,6 +2796,7 @@ Item {
                                             spacing: 2
                                             Text { text: "\u751f\u6210\u6837\u672c"; color: root.successColor; font.pixelSize: 10; font.bold: true }
                                             Text { text: generatedName || "-"; color: root.textColor; font.pixelSize: 12; font.family: "Courier"; elide: Text.ElideRight; Layout.fillWidth: true }
+                                            Text { visible: sampledParametersText !== ""; text: sampledParametersText; color: root.textMuted; font.pixelSize: 9; elide: Text.ElideRight; Layout.fillWidth: true }
                                         }
                                     }
                                 }
@@ -3458,7 +3536,7 @@ Item {
                             }
                             delegate: Rectangle {
                                 width: detailFileListView.width
-                                height: 76
+                                height: sampledParametersText ? 90 : 76
                                 radius: 4
                                 color: detailMa.containsMouse ? root.tableHoverBg : "transparent"
                                 border.color: detailMa.containsMouse ? root.primaryColor : "transparent"
@@ -3544,6 +3622,7 @@ Item {
                                         spacing: 2
                                         Text { text: "\u751f\u6210\u6837\u672c"; color: root.successColor; font.pixelSize: 10; font.bold: true }
                                         Text { text: generatedName || "-"; color: root.textColor; font.pixelSize: 12; font.family: "Courier"; elide: Text.ElideRight; Layout.fillWidth: true }
+                                        Text { visible: sampledParametersText !== ""; text: sampledParametersText; color: root.textMuted; font.pixelSize: 9; elide: Text.ElideRight; Layout.fillWidth: true }
                                     }
 
                                     ColumnLayout {

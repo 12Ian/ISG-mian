@@ -4,7 +4,7 @@ import ast
 from pathlib import Path
 from typing import Any, Iterable
 
-from .reflector import _normalize_parameters, _validate_parameters
+from .reflector import _normalize_parameters, validate_parameters
 
 
 class PluginContractError(ValueError):
@@ -22,7 +22,7 @@ def load_plugin_parameters(root: Path, module_path: str) -> list[dict[str, Any]]
         raise PluginContractError(f"无法解析插件参数文件 {script_path}: {exc}") from exc
 
     raw_parameters = _find_parameter_literal(tree, script_path)
-    valid, error = _validate_parameters(raw_parameters)
+    valid, error = validate_parameters(raw_parameters)
     if not valid:
         raise PluginContractError(f"{module_path}.PARAMETERS 格式错误: {error}")
 

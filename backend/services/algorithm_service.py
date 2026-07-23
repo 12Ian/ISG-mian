@@ -5,8 +5,14 @@ from pathlib import Path
 from .._compat import slots_dataclass
 
 from ..errors import NotFoundError, ValidationError
-from ..parameter_ranges import normalized_parameter_range
+from ..models import CleaningSuggestion, EvaluationResult, GenerationOutput, Task
+from ..parameter_ranges import (
+    default_parameter_sampling_range,
+    normalized_parameter_range,
+    parameter_display_precision,
+)
 from ..plugins import PluginRunner
+from ..plugins.reflector import validate_parameters
 from core.data_management.dataset_requirements import normalize_dataset_requirements
 from .base import ServiceBase
 
@@ -53,6 +59,10 @@ class AlgorithmService(ServiceBase):
             return {"ok": True, "data": self._serialize_algorithm(session, algorithm)}
 
     def update_algorithm(self, algorithm_id: int, payload: dict) -> dict:
+        if "parameters" in payload:
+            valid, error = validate_parameters(payload["parameters"])
+            if not valid:
+                raise ValidationError(f"算法参数配置错误：{error}")
         with self.session_factory() as session:
             algorithm = self._require_algorithm(session, algorithm_id)
             validation_rules = self._merge_validation_rules(payload, existing=algorithm.validation_rules_json or {})
@@ -90,8 +100,49 @@ class AlgorithmService(ServiceBase):
     def delete_algorithm(self, algorithm_id: int) -> dict:
         with self.session_factory() as session:
             algorithm = self._require_algorithm(session, algorithm_id)
+            active_task = None
+            for candidate in session.query(Task).filter(Task.status.in_(["pending", "running"])).all():
+                referenced_ids = set((candidate.parameters_json or {}).get("algorithm_ids", []))
+                referenced_ids.update((candidate.payload_json or {}).get("algorithm_ids", []))
+                if candidate.algorithm_id == algorithm_id or algorithm_id in referenced_ids:
+                    active_task = candidate
+                    break
+            if active_task is not None:
+                raise ValidationError(f"算法正在被任务 {active_task.id} 使用，不能卸载。")
             # 级联清理绑定关系
             self.algorithm_repository.delete_bindings_for_algorithm(session, algorithm_id)
+            session.query(Task).filter(Task.algorithm_id == algorithm_id).update(
+                {Task.algorithm_id: None}, synchronize_session=False
+            )
+            session.query(CleaningSuggestion).filter(CleaningSuggestion.algorithm_id == algorithm_id).update(
+                {CleaningSuggestion.algorithm_id: None}, synchronize_session=False
+            )
+            session.query(GenerationOutput).filter(GenerationOutput.algorithm_id == algorithm_id).update(
+                {GenerationOutput.algorithm_id: None}, synchronize_session=False
+            )
+            session.query(EvaluationResult).filter(EvaluationResult.algorithm_id == algorithm_id).update(
+                {EvaluationResult.algorithm_id: None}, synchronize_session=False
+            )
+            for task in session.query(Task).all():
+                parameters = dict(task.parameters_json or {})
+                payload = dict(task.payload_json or {})
+                changed = False
+                for container in (parameters, payload):
+                    ids = list(container.get("algorithm_ids", []))
+                    filtered_ids = [item for item in ids if item != algorithm_id]
+                    if filtered_ids != ids:
+                        container["algorithm_ids"] = filtered_ids
+                        changed = True
+                scopes = dict(parameters.get("algorithm_parameters", {}) or {})
+                if str(algorithm_id) in scopes or algorithm_id in scopes:
+                    scopes.pop(str(algorithm_id), None)
+                    scopes.pop(algorithm_id, None)
+                    parameters["algorithm_parameters"] = scopes
+                    changed = True
+                if changed:
+                    task.parameters_json = parameters
+                    task.payload_json = payload
+            self.algorithm_repository.replace_parameters(session, algorithm_id, [])
             session.delete(algorithm)
             self.log_repository.add(
                 session,
@@ -147,6 +198,9 @@ class AlgorithmService(ServiceBase):
             raise ValidationError("Either module_path or script_path is required.")
         if not payload.get("callable_name"):
             raise ValidationError("callable_name is required.")
+        valid, error = validate_parameters(payload.get("parameters", []))
+        if not valid:
+            raise ValidationError(f"算法参数配置错误：{error}")
 
     def _require_algorithm(self, session, algorithm_id: int):
         algorithm = self.algorithm_repository.get_algorithm(session, algorithm_id)
@@ -251,6 +305,11 @@ class AlgorithmService(ServiceBase):
         base["min_value"] = range_info["min_value"]
         base["max_value"] = range_info["max_value"]
         base["options"] = range_info["options"]
+        base["display_precision"] = parameter_display_precision(base)
+        sampling_range = default_parameter_sampling_range(base)
+        if sampling_range is not None:
+            base["suggested_min_value"] = sampling_range["min"]
+            base["suggested_max_value"] = sampling_range["max"]
         return base
 
     def _supports_pipeline(self, algorithm) -> bool:
