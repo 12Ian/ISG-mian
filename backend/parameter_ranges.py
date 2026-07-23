@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import random
 from typing import Any
 
 
@@ -158,6 +159,46 @@ def normalize_parameter_value(parameter: dict[str, Any], value: Any) -> Any:
     if value is None:
         return "" if default is None else str(default)
     return str(value)
+
+
+def normalize_parameter_sampling_value(parameter: dict[str, Any], value: Any) -> Any:
+    """规范化任务参数；数值区间会截断到算法边界并自动纠正顺序。"""
+    ptype = normalize_parameter_type(parameter.get("type"))
+    if ptype not in {"int", "float"} or not isinstance(value, dict):
+        return normalize_parameter_value(parameter, value)
+
+    default = parameter.get("default_value", parameter.get("default"))
+    lower_raw = value.get("min", value.get("lower", default))
+    upper_raw = value.get("max", value.get("upper", lower_raw))
+    lower = normalize_parameter_value(parameter, lower_raw)
+    upper = normalize_parameter_value(parameter, upper_raw)
+    if lower > upper:
+        lower, upper = upper, lower
+    return {"min": lower, "max": upper}
+
+
+def parameter_sampling_is_variable(value: Any) -> bool:
+    return isinstance(value, dict) and value.get("min") != value.get("max")
+
+
+def sample_parameter_value(parameter: dict[str, Any], value: Any, *, seed: str) -> Any:
+    """从已规范化的数值区间采样；相等上下限按固定值处理。"""
+    if not isinstance(value, dict):
+        return normalize_parameter_value(parameter, value)
+
+    normalized = normalize_parameter_sampling_value(parameter, value)
+    if not isinstance(normalized, dict):
+        return normalized
+    lower = normalized["min"]
+    upper = normalized["max"]
+    if lower == upper:
+        return lower
+
+    rng = random.Random(seed)
+    ptype = normalize_parameter_type(parameter.get("type"))
+    if ptype == "int":
+        return rng.randint(int(lower), int(upper))
+    return rng.uniform(float(lower), float(upper))
 
 
 def _to_float_or_none(value: Any) -> float | None:

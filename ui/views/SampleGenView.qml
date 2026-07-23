@@ -56,6 +56,10 @@ Item {
     property var detailAlgorithmItems: []
     property var detailParameters: ({})
     property bool hasDetailCustomParams: false
+    property int generationOutputPage: 1
+    property int generationOutputPageSize: 200
+    property int generationOutputTotal: 0
+    readonly property int generationOutputTotalPages: Math.max(1, Math.ceil(generationOutputTotal / generationOutputPageSize))
 
     property string previewKind: ""
     property string previewTitle: ""
@@ -83,6 +87,14 @@ Item {
             if (generationHistoryModel.get(i).isSelected) count++
         }
         root.selectedExportCount = count
+    }
+
+    function loadGenerationOutputPage(taskId, page) {
+        var resolvedTaskId = Number(taskId || 0)
+        if (resolvedTaskId <= 0) return
+        var resolvedPage = Math.max(1, Number(page || 1))
+        root.generationOutputPage = resolvedPage
+        backendService.getGenerationOutputs(resolvedTaskId, "", resolvedPage, root.generationOutputPageSize)
     }
 
     function loadGenerationParameterPresets() {
@@ -219,10 +231,17 @@ Item {
                 var param = rawParams[p]
                 var opts = param.options || param.options_json || []
                 var defaultValue = param.default_value
+                var parameterType = String(param.type || "string").toLowerCase()
+                var numeric = parameterType === "int" || parameterType === "integer"
+                              || parameterType === "float" || parameterType === "number"
+                var defaultText = defaultValue !== undefined && defaultValue !== null ? String(defaultValue) : ""
                 params.push({
                     n: param.name || "",
                     label: param.label || param.name || "",
-                    v: defaultValue !== undefined && defaultValue !== null ? String(defaultValue) : "",
+                    v: defaultText,
+                    minV: defaultText,
+                    maxV: defaultText,
+                    isNumeric: numeric,
                     type: param.type || "string",
                     minValue: param.min_value !== undefined ? param.min_value : param.min,
                     maxValue: param.max_value !== undefined ? param.max_value : param.max,
@@ -300,11 +319,43 @@ Item {
         return String(value)
     }
 
+    function normalizeParameterRangeInput(param, lowerValue, upperValue) {
+        var lower = Number(root.normalizeParameterInput(param, lowerValue))
+        var upper = Number(root.normalizeParameterInput(param, upperValue))
+        if (lower > upper) {
+            var swapped = lower
+            lower = upper
+            upper = swapped
+        }
+        return { min: String(lower), max: String(upper) }
+    }
+
+    function parameterValueText(value) {
+        if (value && typeof value === "object" && value.min !== undefined && value.max !== undefined) {
+            return String(value.min) === String(value.max)
+                    ? String(value.min)
+                    : String(value.min) + " ～ " + String(value.max)
+        }
+        return String(value)
+    }
+
     function setParamValue(algorithmId, paramName, value) {
         var paramList = root.paramsDataMap[String(algorithmId)] || []
         for (var i = 0; i < paramList.length; i++) {
             if (paramList[i].n === paramName) {
                 paramList[i].v = value
+                break
+            }
+        }
+        contextEstimateTimer.restart()
+    }
+
+    function setParamRange(algorithmId, paramName, lowerValue, upperValue) {
+        var paramList = root.paramsDataMap[String(algorithmId)] || []
+        for (var i = 0; i < paramList.length; i++) {
+            if (paramList[i].n === paramName) {
+                paramList[i].minV = lowerValue
+                paramList[i].maxV = upperValue
                 break
             }
         }
@@ -326,7 +377,14 @@ Item {
         if (!contextAlgorithmId) return
         var params = {}
         var list = root.paramsDataMap[String(contextAlgorithmId)] || []
-        for (var p = 0; p < list.length; p++) params[list[p].n] = list[p].v
+        for (var p = 0; p < list.length; p++) {
+            if (list[p].isNumeric) {
+                var range = root.normalizeParameterRangeInput(list[p], list[p].minV, list[p].maxV)
+                params[list[p].n] = (Number(range.min) + Number(range.max)) / 2
+            } else {
+                params[list[p].n] = list[p].v
+            }
+        }
         var result = backendService.estimateContextEmbeddingVariants(source.id, params)
         if (result && result.status === "success") root.contextVariantEstimate = Number(result.estimated_max || 0)
     }
@@ -398,15 +456,28 @@ Item {
     }
 
     function selectedGenerationParameters() {
-        var result = { algorithm_ids: root.selectedStrategies.slice(), generation_mode: root.generationMode }
+        var result = {
+            algorithm_ids: root.selectedStrategies.slice(),
+            generation_mode: root.generationMode,
+            algorithm_parameters: {}
+        }
         for (var i = 0; i < root.selectedStrategies.length; i++) {
             var id = String(root.selectedStrategies[i])
             var params = root.paramsDataMap[id] || []
+            var scopedParameters = {}
             for (var p = 0; p < params.length; p++) {
-                var normalizedValue = root.normalizeParameterInput(params[p], params[p].v)
-                params[p].v = normalizedValue
-                result[params[p].n] = normalizedValue
+                if (params[p].isNumeric) {
+                    var normalizedRange = root.normalizeParameterRangeInput(params[p], params[p].minV, params[p].maxV)
+                    params[p].minV = normalizedRange.min
+                    params[p].maxV = normalizedRange.max
+                    scopedParameters[params[p].n] = { min: normalizedRange.min, max: normalizedRange.max }
+                } else {
+                    var normalizedValue = root.normalizeParameterInput(params[p], params[p].v)
+                    params[p].v = normalizedValue
+                    scopedParameters[params[p].n] = normalizedValue
+                }
             }
+            result.algorithm_parameters[id] = scopedParameters
         }
         return result
     }
@@ -434,7 +505,23 @@ Item {
             for (var i = 0; i < keys.length; i++) {
                 var k = keys[i]
                 if (k === "algorithm_ids" || k === "target_count") continue
-                parts.push(root.parameterDisplayName(k, ids) + "=" + paramsJson[k])
+                if (k === "algorithm_parameters") {
+                    var scopes = paramsJson[k] || {}
+                    var scopeIds = Object.keys(scopes)
+                    for (var si = 0; si < scopeIds.length; si++) {
+                        var scopeId = scopeIds[si]
+                        var scoped = scopes[scopeId] || {}
+                        var scopedKeys = Object.keys(scoped)
+                        for (var sk = 0; sk < scopedKeys.length; sk++) {
+                            var scopedKey = scopedKeys[sk]
+                            parts.push(root.algorithmName(Number(scopeId)) + "."
+                                       + root.parameterDisplayName(scopedKey, [Number(scopeId)]) + "="
+                                       + root.parameterValueText(scoped[scopedKey]))
+                        }
+                    }
+                    continue
+                }
+                parts.push(root.parameterDisplayName(k, ids) + "=" + root.parameterValueText(paramsJson[k]))
             }
         }
         return parts.join(" | ")
@@ -517,6 +604,7 @@ Item {
         if (availableIds.length > 0) root.selectedStrategies = availableIds
 
         var params = preset.parameters || {}
+        var parameterScopes = params.algorithm_parameters || {}
         if (params.target_count !== undefined) {
             var count = parseInt(params.target_count)
             if (!isNaN(count) && count > 0) root.totalCount = count
@@ -530,11 +618,22 @@ Item {
             var targetList = []
             for (var p = 0; p < sourceList.length; p++) {
                 var item = sourceList[p]
+                var scopedPreset = parameterScopes[mapKey] || {}
+                var presetValue = scopedPreset[item.n] !== undefined ? scopedPreset[item.n] : params[item.n]
+                var presetIsRange = presetValue && typeof presetValue === "object"
+                                    && presetValue.min !== undefined && presetValue.max !== undefined
+                var presetMin = presetIsRange ? presetValue.min : presetValue
+                var presetMax = presetIsRange ? presetValue.max : presetValue
                 var copied = {
                     n: item.n,
                     label: item.label,
-                    v: params[item.n] !== undefined ? String(params[item.n]) : item.v,
+                    v: presetValue !== undefined && !item.isNumeric ? String(presetValue) : item.v,
+                    minV: presetValue !== undefined && item.isNumeric ? String(presetMin) : item.minV,
+                    maxV: presetValue !== undefined && item.isNumeric ? String(presetMax) : item.maxV,
+                    isNumeric: item.isNumeric,
                     type: item.type,
+                    minValue: item.minValue,
+                    maxValue: item.maxValue,
                     options: item.options,
                     optionsJson: item.optionsJson,
                     rangeText: item.rangeText,
@@ -557,7 +656,25 @@ Item {
         for (var i = 0; i < keys.length; i++) {
             var key = keys[i]
             if (key === "algorithm_ids") continue
-            result.push({ label: root.parameterLabelOnly(key, ids), value: String(params[key]) })
+            if (key === "algorithm_parameters") {
+                var scopes = params[key] || {}
+                var scopeIds = Object.keys(scopes)
+                for (var si = 0; si < scopeIds.length; si++) {
+                    var scopeId = scopeIds[si]
+                    var scoped = scopes[scopeId] || {}
+                    var scopedKeys = Object.keys(scoped)
+                    for (var sk = 0; sk < scopedKeys.length; sk++) {
+                        var scopedKey = scopedKeys[sk]
+                        result.push({
+                            label: root.algorithmName(Number(scopeId)) + " · "
+                                   + root.parameterLabelOnly(scopedKey, [Number(scopeId)]),
+                            value: root.parameterValueText(scoped[scopedKey])
+                        })
+                    }
+                }
+                continue
+            }
+            result.push({ label: root.parameterLabelOnly(key, ids), value: root.parameterValueText(params[key]) })
         }
         return result
     }
@@ -629,6 +746,24 @@ Item {
         for (var i = 0; i < keys.length; i++) {
             var key = keys[i]
             if (key === "algorithm_ids") continue
+            if (key === "algorithm_parameters") {
+                var scopes = params[key] || {}
+                var scopeIds = Object.keys(scopes)
+                for (var si = 0; si < scopeIds.length; si++) {
+                    var scopeId = scopeIds[si]
+                    var scoped = scopes[scopeId] || {}
+                    var scopedKeys = Object.keys(scoped)
+                    for (var sk = 0; sk < scopedKeys.length; sk++) {
+                        var scopedKey = scopedKeys[sk]
+                        result.push({
+                            k: root.algorithmName(Number(scopeId)) + " · "
+                               + root.parameterLabelOnly(scopedKey, [Number(scopeId)]),
+                            v: scoped[scopedKey]
+                        })
+                    }
+                }
+                continue
+            }
             result.push({ k: key, v: params[key] })
         }
         return result
@@ -763,7 +898,7 @@ Item {
             if (success) {
                 root.isCompleted = true
                 if (root.currentTaskId > 0) {
-                    backendService.getGenerationOutputs(root.currentTaskId, "", 1, 200)
+                    root.loadGenerationOutputPage(root.currentTaskId, 1)
                 }
             } else {
                 root.showGenerationFailure(message)
@@ -912,6 +1047,8 @@ Item {
 
         function onGenerationOutputsUpdated(data) {
             previewModel.clear()
+            root.generationOutputTotal = Number(data.total || 0)
+            root.generationOutputPage = Math.max(1, Number(data.page || root.generationOutputPage))
             var items = data.items || []
             for (var i = 0; i < items.length; i++) {
                 var item = items[i]
@@ -1399,7 +1536,7 @@ Item {
     function refreshGenerationHistoryState() {
         backendService.getEnhancementTasks(0, "")
         var detailTaskId = root.currentHistoryItem ? Number(root.currentHistoryItem.taskId || 0) : root.currentTaskId
-        if (detailTaskId > 0) backendService.getGenerationOutputs(detailTaskId, "", 1, 200)
+        if (detailTaskId > 0) root.loadGenerationOutputPage(detailTaskId, root.currentHistoryItem ? root.generationOutputPage : 1)
     }
 
     function refreshPage() {
@@ -2320,9 +2457,63 @@ Item {
                                                             }
                                                         }
                                                     }
-                                                    // 无options → 文本输入
+                                                    RowLayout {
+                                                        visible: modelData.isNumeric
+                                                        width: parent.width
+                                                        spacing: 8
+
+                                                        ColumnLayout {
+                                                            Layout.fillWidth: true
+                                                            spacing: 3
+                                                            Text { text: "下限"; color: root.textMuted; font.pixelSize: 10 }
+                                                            Rectangle {
+                                                                Layout.fillWidth: true; Layout.preferredHeight: 36
+                                                                color: root.bgDark; radius: 4; border.color: root.borderColor; border.width: 1
+                                                                TextInput {
+                                                                    id: lowerBoundInput
+                                                                    text: modelData.minV
+                                                                    color: root.textColor; font.pixelSize: 13
+                                                                    anchors.fill: parent; leftPadding: 10
+                                                                    verticalAlignment: TextInput.AlignVCenter
+                                                                    inputMethodHints: Qt.ImhFormattedNumbersOnly
+                                                                    onTextChanged: root.setParamRange(selectedAlgoDelegate.selectedAlgoId, modelData.n, text, upperBoundInput.text)
+                                                                    onEditingFinished: {
+                                                                        var range = root.normalizeParameterRangeInput(modelData, text, upperBoundInput.text)
+                                                                        text = range.min
+                                                                        upperBoundInput.text = range.max
+                                                                        root.setParamRange(selectedAlgoDelegate.selectedAlgoId, modelData.n, range.min, range.max)
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                        ColumnLayout {
+                                                            Layout.fillWidth: true
+                                                            spacing: 3
+                                                            Text { text: "上限"; color: root.textMuted; font.pixelSize: 10 }
+                                                            Rectangle {
+                                                                Layout.fillWidth: true; Layout.preferredHeight: 36
+                                                                color: root.bgDark; radius: 4; border.color: root.borderColor; border.width: 1
+                                                                TextInput {
+                                                                    id: upperBoundInput
+                                                                    text: modelData.maxV
+                                                                    color: root.textColor; font.pixelSize: 13
+                                                                    anchors.fill: parent; leftPadding: 10
+                                                                    verticalAlignment: TextInput.AlignVCenter
+                                                                    inputMethodHints: Qt.ImhFormattedNumbersOnly
+                                                                    onTextChanged: root.setParamRange(selectedAlgoDelegate.selectedAlgoId, modelData.n, lowerBoundInput.text, text)
+                                                                    onEditingFinished: {
+                                                                        var range = root.normalizeParameterRangeInput(modelData, lowerBoundInput.text, text)
+                                                                        lowerBoundInput.text = range.min
+                                                                        text = range.max
+                                                                        root.setParamRange(selectedAlgoDelegate.selectedAlgoId, modelData.n, range.min, range.max)
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                    // 无options的非数值参数 → 文本输入
                                                     Rectangle {
-                                                        visible: !modelData.options || modelData.options.length === 0
+                                                        visible: (!modelData.options || modelData.options.length === 0) && !modelData.isNumeric
                                                         width: parent.width; height: 36; color: root.bgDark; radius: 4; border.color: root.borderColor; border.width: 1
                                                         TextInput {
                                                             text: modelData.v
@@ -3001,7 +3192,7 @@ Item {
                                     root.detailParameters = detailParams
                                     root.hasDetailCustomParams = root.computeHasDetailParams(root.detailParameters)
                                     if (model.taskId && model.taskId > 0) {
-                                        backendService.getGenerationOutputs(model.taskId, "", 1, 200)
+                                        root.loadGenerationOutputPage(model.taskId, 1)
                                     }
                                     root.viewMode = "fileDetail"
                                 }
@@ -3074,7 +3265,7 @@ Item {
             Item { Layout.fillWidth: true }
 
             Label {
-                text: "共 " + previewModel.count + " 条生成记录"
+                text: "共 " + root.generationOutputTotal + " 条生成记录"
                 color: Theme.muted; font.pixelSize: 13
             }
 
@@ -3085,7 +3276,7 @@ Item {
                 contentItem: Text { text: parent.text; color: "black"; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                 onClicked: {
                     if (root.currentHistoryItem && root.currentHistoryItem.taskId > 0) {
-                        backendService.getGenerationOutputs(root.currentHistoryItem.taskId, "", 1, 200)
+                        root.loadGenerationOutputPage(root.currentHistoryItem.taskId, root.generationOutputPage)
                     }
                 }
             }
@@ -3155,7 +3346,7 @@ Item {
                                     Rectangle {
                                         width: parent.width; height: 28; color: root.bgDark; radius: 4; border.color: root.borderColor; border.width: 1
                                         Text {
-                                            text: String(modelData.v)
+                                            text: root.parameterValueText(modelData.v)
                                             color: root.textColor; font.pixelSize: 12
                                             anchors.verticalCenter: parent.verticalCenter; anchors.left: parent.left; anchors.right: parent.right
                                             anchors.leftMargin: 8; anchors.rightMargin: 8
@@ -3215,13 +3406,44 @@ Item {
                             visible: previewModel.count === 0
                             Text { text: "正在加载结果"; color: root.textMuted; font.pixelSize: 14; font.family: "Courier"; font.bold: true; Layout.alignment: Qt.AlignHCenter }
                         }
+                        RowLayout {
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.bottom: parent.bottom
+                            anchors.margins: 8
+                            height: 30
+                            spacing: 10
+
+                            Item { Layout.fillWidth: true }
+                            Button {
+                                text: "\u4e0a\u4e00\u9875"
+                                enabled: root.generationOutputPage > 1
+                                Layout.preferredWidth: 72
+                                Layout.preferredHeight: 28
+                                onClicked: root.loadGenerationOutputPage(root.currentHistoryItem.taskId, root.generationOutputPage - 1)
+                            }
+                            Text {
+                                text: "\u7b2c " + root.generationOutputPage + " / " + root.generationOutputTotalPages
+                                      + " \u9875  \u5171 " + root.generationOutputTotal + " \u6761"
+                                color: root.textMuted
+                                font.pixelSize: 12
+                            }
+                            Button {
+                                text: "\u4e0b\u4e00\u9875"
+                                enabled: root.generationOutputPage < root.generationOutputTotalPages
+                                Layout.preferredWidth: 72
+                                Layout.preferredHeight: 28
+                                onClicked: root.loadGenerationOutputPage(root.currentHistoryItem.taskId, root.generationOutputPage + 1)
+                            }
+                            Item { Layout.fillWidth: true }
+                        }
                         ListView {
                             id: detailFileListView
                             anchors.fill: parent
                             anchors.leftMargin: 10
                             anchors.topMargin: 10
                             anchors.rightMargin: 18
-                            anchors.bottomMargin: 10
+                            anchors.bottomMargin: 46
                             spacing: 8
                             model: previewModel
                             clip: true

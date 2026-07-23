@@ -13,7 +13,11 @@ from core.data_management.multimodal_association import (
 
 from ..errors import NotFoundError, ValidationError
 from ..models import Algorithm, Dataset, GenerationOutput, Sample
-from ..parameter_ranges import normalize_parameter_value
+from ..parameter_ranges import (
+    normalize_parameter_sampling_value,
+    parameter_sampling_is_variable,
+    sample_parameter_value,
+)
 from ..plugins import PluginRunner
 from ..storage import FileIndexer
 from .base import ServiceBase
@@ -21,6 +25,29 @@ from .sample_ordering import interleave_by_top_folder
 
 
 SOURCE_OUTPUT_BATCH_SIZE = 500
+
+
+@slots_dataclass
+class _SampledPluginContext:
+    base_context: object
+    output_index: int
+    target_count: int
+
+    def set_progress(self, progress: float, message: str = "") -> None:
+        bounded = max(0.0, min(float(progress), 100.0))
+        overall = (self.output_index + bounded / 100.0) * 100.0 / self.target_count
+        self.base_context.set_progress(overall, message)
+
+    def log(self, level: str, message: str, payload: dict | None = None) -> None:
+        if hasattr(self.base_context, "log"):
+            self.base_context.log(level, message, payload or {})
+
+    def is_cancel_requested(self) -> bool:
+        return self.base_context.is_cancel_requested()
+
+    @property
+    def output_dir(self) -> str:
+        return getattr(self.base_context, "output_dir", "")
 
 
 @slots_dataclass
@@ -135,8 +162,15 @@ class GenerationService(ServiceBase):
         return self.create_task(source_dataset_id, target_dataset_id, algorithm_ids, parameters, target_count)
 
     def _normalize_task_parameters(self, session, algorithms: list[Algorithm], parameters: dict | None) -> dict:
-        normalized = dict(parameters or {})
+        provided = dict(parameters or {})
+        provided_scopes = provided.get("algorithm_parameters", {})
+        normalized = {key: value for key, value in provided.items() if key != "algorithm_parameters"}
+        normalized_scopes = {}
         for algorithm in algorithms:
+            source_scope = provided_scopes.get(str(algorithm.id), provided_scopes.get(algorithm.id, provided))
+            if not isinstance(source_scope, dict):
+                source_scope = provided
+            normalized_scope = {}
             for item in self.algorithm_repository.list_parameters(session, algorithm.id):
                 parameter = {
                     "name": item.name,
@@ -146,7 +180,13 @@ class GenerationService(ServiceBase):
                     "max_value": item.max_value,
                     "options": item.options_json,
                 }
-                normalized[item.name] = normalize_parameter_value(parameter, normalized.get(item.name, item.default_value))
+                normalized_scope[item.name] = normalize_parameter_sampling_value(
+                    parameter,
+                    source_scope.get(item.name, item.default_value),
+                )
+                normalized.pop(item.name, None)
+            normalized_scopes[str(algorithm.id)] = normalized_scope
+        normalized["algorithm_parameters"] = normalized_scopes
         return normalized
 
     def run_task(self, task_id: int, context=None) -> dict:
@@ -171,6 +211,7 @@ class GenerationService(ServiceBase):
                 raise ValidationError("Generation task target_count must be greater than zero.")
 
             algorithms: list[Algorithm] = []
+            parameter_contracts_by_algorithm: dict[int, list[dict]] = {}
             for algorithm_id in algorithm_ids:
                 algorithm = self.algorithm_repository.get_algorithm(session, algorithm_id)
                 if not algorithm:
@@ -186,6 +227,17 @@ class GenerationService(ServiceBase):
                 if generation_mode == "pipeline" and not self._supports_pipeline(algorithm, source_dataset.modality):
                     raise ValidationError(f"Algorithm {algorithm.name} does not support pipeline generation.")
                 algorithms.append(algorithm)
+                parameter_contracts_by_algorithm[algorithm.id] = [
+                    {
+                        "name": item.name,
+                        "type": item.type,
+                        "default_value": item.default_value,
+                        "min_value": item.min_value,
+                        "max_value": item.max_value,
+                        "options": item.options_json,
+                    }
+                    for item in self.algorithm_repository.list_parameters(session, algorithm.id)
+                ]
 
             source_samples = (
                 session.query(Sample)
@@ -209,6 +261,7 @@ class GenerationService(ServiceBase):
                 target_count=target_count,
                 plugin_context=plugin_context,
                 task_parameters=task.parameters_json,
+                parameter_contracts_by_algorithm=parameter_contracts_by_algorithm,
             )
 
         algorithm_count = len(algorithms)
@@ -230,28 +283,18 @@ class GenerationService(ServiceBase):
                 )
                 if not algorithm_samples:
                     raise ValidationError(f"算法 {algorithm.name} 没有可用的输入样本。")
-                payload = {
-                    "task_id": task_id,
-                    "algorithm_key": algorithm.key,
-                    "category": "generation",
-                    "modality": source_dataset.modality,
-                    "parameters": task.parameters_json,
-                    "target_count": algorithm_target_count,
-                    "input": {
-                        "dataset_id": source_dataset.id,
-                        "dataset_path": source_dataset.storage_path,
-                        "samples": [self._serialize_sample(sample) for sample in algorithm_samples],
-                    },
-                    "output": {
-                        "output_dir": self.task_manager.get_output_dir(task_id),
-                    },
-                }
-                result = self.plugin_runner.run(
-                    payload,
-                    plugin_context,
-                    module_path=algorithm.module_path or None,
-                    callable_name=algorithm.callable_name or None,
-                    script_path=algorithm.script_path or None,
+                result = self._run_plugin_with_parameter_sampling(
+                    task_id=task_id,
+                    algorithm=algorithm,
+                    modality=source_dataset.modality,
+                    task_parameters=task.parameters_json,
+                    parameter_contracts=parameter_contracts_by_algorithm.get(algorithm.id, []),
+                    target_count=algorithm_target_count,
+                    dataset_id=source_dataset.id,
+                    dataset_path=source_dataset.storage_path,
+                    samples=[self._serialize_sample(sample) for sample in algorithm_samples],
+                    output_dir=Path(self.task_manager.get_output_dir(task_id)),
+                    plugin_context=plugin_context,
                 )
                 if not result.get("ok", False):
                     error_code = result.get("error_code", "ALGORITHM_RUNTIME_ERROR")
@@ -310,6 +353,114 @@ class GenerationService(ServiceBase):
             self.task_manager.fail(task_id, error_code="ALGORITHM_RUNTIME_ERROR", error_message=str(exc))
             raise
 
+    def _run_plugin_with_parameter_sampling(
+        self,
+        *,
+        task_id: int,
+        algorithm: Algorithm,
+        modality: str,
+        task_parameters: dict,
+        parameter_contracts: list[dict],
+        target_count: int,
+        dataset_id: int,
+        dataset_path: str,
+        samples: list[dict],
+        output_dir: Path,
+        plugin_context,
+    ) -> dict:
+        configured_scopes = task_parameters.get("algorithm_parameters", {})
+        configured_parameters = configured_scopes.get(
+            str(algorithm.id),
+            configured_scopes.get(algorithm.id, task_parameters),
+        )
+        if not isinstance(configured_parameters, dict):
+            configured_parameters = task_parameters
+        variable_ranges = [
+            contract
+            for contract in parameter_contracts
+            if parameter_sampling_is_variable(configured_parameters.get(contract["name"]))
+        ]
+
+        def parameters_for(output_index: int) -> tuple[dict, dict]:
+            resolved = {
+                key: value
+                for key, value in (task_parameters or {}).items()
+                if key != "algorithm_parameters"
+            }
+            sampled = {}
+            for contract in parameter_contracts:
+                name = contract["name"]
+                configured = configured_parameters.get(name, contract.get("default_value"))
+                value = sample_parameter_value(
+                    contract,
+                    configured,
+                    seed=f"{task_id}:{algorithm.id}:{output_index}:{name}",
+                )
+                resolved[name] = value
+                sampled[name] = value
+            return resolved, sampled
+
+        def run_once(
+            run_parameters: dict,
+            run_samples: list[dict],
+            count: int,
+            destination: Path,
+            context,
+        ) -> dict:
+            payload = {
+                "task_id": task_id,
+                "algorithm_key": algorithm.key,
+                "category": "generation",
+                "modality": modality,
+                "parameters": run_parameters,
+                "target_count": count,
+                "input": {
+                    "dataset_id": dataset_id,
+                    "dataset_path": dataset_path,
+                    "samples": run_samples,
+                },
+                "output": {"output_dir": str(destination)},
+            }
+            return self.plugin_runner.run(
+                payload,
+                context,
+                module_path=algorithm.module_path or None,
+                callable_name=algorithm.callable_name or None,
+                script_path=algorithm.script_path or None,
+            )
+
+        if not variable_ranges:
+            resolved_parameters, sampled_parameters = parameters_for(0)
+            result = run_once(resolved_parameters, samples, target_count, output_dir, plugin_context)
+            if result.get("ok", False):
+                self._attach_sampled_parameters(result.get("outputs", []), sampled_parameters)
+            return result
+
+        combined_outputs = []
+        combined_logs = []
+        for output_index in range(target_count):
+            resolved_parameters, sampled_parameters = parameters_for(output_index)
+            source_index = output_index % len(samples)
+            rotated_samples = samples[source_index:] + samples[:source_index]
+            destination = output_dir / f"parameter_samples_{algorithm.id}" / f"{output_index:06d}"
+            sampled_context = _SampledPluginContext(plugin_context, output_index, target_count)
+            result = run_once(resolved_parameters, rotated_samples, 1, destination, sampled_context)
+            if not result.get("ok", False):
+                return result
+            outputs = list(result.get("outputs", []))[:1]
+            self._attach_sampled_parameters(outputs, sampled_parameters)
+            combined_outputs.extend(outputs)
+            combined_logs.extend(result.get("logs", []))
+
+        return {"ok": True, "outputs": combined_outputs, "logs": combined_logs}
+
+    @staticmethod
+    def _attach_sampled_parameters(outputs: list[dict], sampled_parameters: dict) -> None:
+        for output in outputs:
+            metadata = dict(output.get("metadata", {}) or {})
+            metadata["sampled_parameters"] = dict(sampled_parameters)
+            output["metadata"] = metadata
+
     def _run_pipeline_task(
         self,
         *,
@@ -321,6 +472,7 @@ class GenerationService(ServiceBase):
         target_count: int,
         plugin_context,
         task_parameters: dict,
+        parameter_contracts_by_algorithm: dict[int, list[dict]],
     ) -> dict:
         current_samples = [self._serialize_sample(sample) for sample in source_samples]
         final_algorithm_id = algorithms[-1].id
@@ -333,28 +485,18 @@ class GenerationService(ServiceBase):
                     break
                 stage_dir = Path(self.task_manager.get_output_dir(task_id)) / f"pipeline_{index + 1:02d}_{algorithm.id}"
                 stage_target_count = target_count if index == 0 else len(current_samples)
-                payload = {
-                    "task_id": task_id,
-                    "algorithm_key": algorithm.key,
-                    "category": "generation",
-                    "modality": source_dataset.modality,
-                    "parameters": task_parameters,
-                    "target_count": stage_target_count,
-                    "input": {
-                        "dataset_id": source_dataset.id,
-                        "dataset_path": source_dataset.storage_path,
-                        "samples": current_samples,
-                    },
-                    "output": {
-                        "output_dir": str(stage_dir),
-                    },
-                }
-                result = self.plugin_runner.run(
-                    payload,
-                    plugin_context,
-                    module_path=algorithm.module_path or None,
-                    callable_name=algorithm.callable_name or None,
-                    script_path=algorithm.script_path or None,
+                result = self._run_plugin_with_parameter_sampling(
+                    task_id=task_id,
+                    algorithm=algorithm,
+                    modality=source_dataset.modality,
+                    task_parameters=task_parameters,
+                    parameter_contracts=parameter_contracts_by_algorithm.get(algorithm.id, []),
+                    target_count=stage_target_count,
+                    dataset_id=source_dataset.id,
+                    dataset_path=source_dataset.storage_path,
+                    samples=current_samples,
+                    output_dir=stage_dir,
+                    plugin_context=plugin_context,
                 )
                 if not result.get("ok", False):
                     error_code = result.get("error_code", "ALGORITHM_RUNTIME_ERROR")
