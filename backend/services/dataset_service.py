@@ -20,6 +20,7 @@ from ..errors import NotFoundError, ValidationError
 from ..models import Dataset, Sample
 from ..storage import FileIndexer
 from .base import ServiceBase
+from .dataset_layout import dataset_content_roots, normalize_dataset_relative_path
 
 
 def _normalize_manifest_label(label) -> dict:
@@ -402,6 +403,45 @@ class DatasetService(ServiceBase):
         folder = Path(folder_path)
         if not folder.is_dir():
             raise ValidationError("Import folder does not exist.")
+
+        content_roots = dataset_content_roots(folder)
+        if content_roots != [folder]:
+            imported_count = 0
+            failed_count = 0
+            errors: list[dict] = []
+            annotation_report = None
+            for content_root in content_roots:
+                content_files = [
+                    path
+                    for path in content_root.rglob("*")
+                    if path.is_file() and path.name != "dataset_manifest.json"
+                ]
+                if not any(self._is_supported_import_file(path) for path in content_files):
+                    unsupported = [path for path in content_files if not self._is_supported_import_file(path)]
+                    failed_count += len(unsupported)
+                    errors.extend(
+                        {"path": str(path), "reason": "unsupported_file_type"}
+                        for path in unsupported
+                    )
+                    continue
+                result = self.import_folder(dataset_id, str(content_root), include_subfolders)
+                data = result.get("data", {})
+                imported_count += int(data.get("imported_count", 0))
+                failed_count += int(data.get("failed_count", 0))
+                errors.extend(data.get("errors", []))
+                annotation_report = annotation_report or data.get("annotation_report")
+            if imported_count == 0:
+                raise ValidationError("未发现可导入的数据文件。")
+            return {
+                "ok": True,
+                "data": {
+                    "imported_count": imported_count,
+                    "failed_count": failed_count,
+                    "errors": errors,
+                    "annotation_report": annotation_report,
+                },
+            }
+
         with self.session_factory() as session:
             dataset_modality = self._require_dataset(
                 session, dataset_id, include_deleted=False
@@ -419,7 +459,7 @@ class DatasetService(ServiceBase):
                 # 支持两种格式: dict-of-dicts {"0": {...}} 或 list-of-dicts [{...}]
                 entries = samples_raw.values() if isinstance(samples_raw, dict) else samples_raw
                 for entry in entries:
-                    rel = (entry.get("path") or "").lstrip("/\\")
+                    rel = normalize_dataset_relative_path(entry.get("path") or "")
                     raw_labels = entry.get("labels") or []
                     if isinstance(raw_labels, str):
                         raw_labels = [raw_labels]
@@ -491,9 +531,11 @@ class DatasetService(ServiceBase):
                     failed_count += 1
                     errors.append({"path": str(source), "reason": "missing_file"})
                     continue
-                copied = self.file_indexer.copy_into_dataset(source, Path(dataset.storage_path) / "raw", record["relative_path"])
-                rel_path = Path(record["relative_path"]).as_posix()
-                labels = list(record.get("labels", [])) or label_map.get(rel_path, [])
+                raw_root = Path(dataset.storage_path) / "raw"
+                requested_relative_path = normalize_dataset_relative_path(record["relative_path"])
+                labels = list(record.get("labels", [])) or label_map.get(requested_relative_path, [])
+                copied = self.file_indexer.copy_into_dataset(source, raw_root, requested_relative_path)
+                rel_path = copied.relative_to(raw_root).as_posix()
                 # 无manifest标签时，从子文件夹名推断标签
                 if not labels and not detection_records and dataset.modality != "multimodal" and "/" in rel_path:
                     inferred = rel_path.split("/")[0]
@@ -536,7 +578,7 @@ class DatasetService(ServiceBase):
 
             if label_map:
                 extra = dict(dataset.extra_json or {})
-                class_dist: dict[str, int] = {}
+                class_dist: dict[str, int] = dict(extra.get("class_distribution", {}))
                 for lbs in label_map.values():
                     for lb in lbs:
                         cn = lb["class_name"]

@@ -23,6 +23,10 @@ from ..parameter_ranges import (
 from ..plugins import PluginRunner
 from ..storage import FileIndexer
 from .base import ServiceBase
+from .dataset_layout import (
+    normalize_dataset_relative_path,
+    normalize_generated_source_relative_path,
+)
 from .sample_ordering import interleave_by_top_folder
 
 
@@ -917,7 +921,9 @@ class GenerationService(ServiceBase):
                     }
                 )
 
-            requested_relative_path = output.get("relative_path") or output_path.name
+            requested_relative_path = normalize_dataset_relative_path(
+                output.get("relative_path") or output_path.name
+            )
             if generated_group_id:
                 requested_relative_path = (Path("groups") / generated_group_id / "image" / Path(requested_relative_path).name).as_posix()
             generated_root = Path(target_dataset.storage_path) / "generated"
@@ -1101,7 +1107,10 @@ class GenerationService(ServiceBase):
                     "source_sample_id": source_sample.id,
                 }
             )
-            requested_relative_path = Path("source") / (source_sample.relative_path or source_path.name)
+            source_relative_path = normalize_generated_source_relative_path(
+                source_sample.relative_path or source_path.name
+            )
+            requested_relative_path = Path("source") / source_relative_path
             copied = self.file_indexer.copy_into_dataset(source_path, generated_root, requested_relative_path.as_posix())
             copied_paths.append(copied)
             pending_samples.append(

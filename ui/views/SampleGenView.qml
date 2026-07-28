@@ -1793,7 +1793,6 @@ Item {
                             root.currentTargetDatasetId = storedDataset.id || root.currentTargetDatasetId
                             root.currentTargetDatasetName = newDatasetName
                             backendService.getAllDatasets("")
-                            backendService.getDatasets(1, 100, "")
                             backendService.getEnhancementTasks(0, "")
                             root.showToast("✅ 生成结果已保存")
                         } else {

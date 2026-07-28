@@ -10,6 +10,7 @@ from ..plugins import PluginRunner
 from ..errors import NotFoundError, ValidationError
 from ..storage import FileIndexer
 from .base import ServiceBase
+from .dataset_layout import normalize_dataset_relative_path
 from .sample_ordering import interleave_by_top_folder
 
 
@@ -350,7 +351,7 @@ class CleaningService(ServiceBase):
                     skipped_count += 1
                     continue
 
-                relative_path = sample.relative_path or sample.name
+                relative_path = normalize_dataset_relative_path(sample.relative_path or sample.name)
                 copied = self.file_indexer.copy_into_dataset(
                     source_path,
                     Path(target_dataset.storage_path) / "cleaned",
@@ -363,7 +364,7 @@ class CleaningService(ServiceBase):
                     name=sample.name,
                     modality=sample.modality,
                     file_path=str(copied),
-                    relative_path=Path(relative_path).as_posix(),
+                    relative_path=copied.relative_to(Path(target_dataset.storage_path) / "cleaned").as_posix(),
                     sha256=self.file_indexer.compute_sha256(copied),
                     mime_type=self.file_indexer.detect_mime_type(copied),
                     extension=copied.suffix.lower(),
@@ -481,7 +482,7 @@ class CleaningService(ServiceBase):
             raise ValidationError(f"Cleaned artifact path does not exist: {source_path}")
 
         cleaned_root = Path(dataset.storage_path) / "cleaned"
-        relative_path = sample.relative_path or sample.name
+        relative_path = normalize_dataset_relative_path(sample.relative_path or sample.name)
         copied = self.file_indexer.copy_into_dataset(source_path, cleaned_root, relative_path)
         output_sample = self.dataset_repository.create_sample(
             session,
@@ -490,7 +491,7 @@ class CleaningService(ServiceBase):
             name=copied.name,
             modality=sample.modality,
             file_path=str(copied),
-            relative_path=Path(relative_path).as_posix(),
+            relative_path=copied.relative_to(cleaned_root).as_posix(),
             sha256=self.file_indexer.compute_sha256(copied),
             mime_type=self.file_indexer.detect_mime_type(copied),
             extension=copied.suffix.lower(),
