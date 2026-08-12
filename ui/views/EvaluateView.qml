@@ -50,6 +50,9 @@ Item {
     property real evalProgressValue: 0.0
     property string evalProgressMessage: ""
     property int expectedEvalResultCount: 0
+    property var savedWeightTaskIds: []
+    property bool migrateLegacySavedWeights: false
+    property bool evalStateReady: false
 
     property var algorithmNameMap: ({})
     property var evalAlgorithmMap: ({})
@@ -487,8 +490,7 @@ Item {
 
             var historyIndex = root.historyIndexForTask(taskId)
             if (historyIndex >= 0) evalHistoryModel.remove(historyIndex)
-            var weightIndex = root.weightOptionIndex(taskId)
-            if (weightIndex >= 0) weightOptionModel.remove(weightIndex)
+            root.forgetSavedWeight(taskId)
         }
 
         taskQueueModel.remove(index)
@@ -632,6 +634,32 @@ Item {
         return -1
     }
 
+    function savedWeightIndex(taskId) {
+        var id = Number(taskId || 0)
+        for (var i = 0; i < root.savedWeightTaskIds.length; i++) {
+            if (Number(root.savedWeightTaskIds[i] || 0) === id) return i
+        }
+        return -1
+    }
+
+    function markWeightSaved(taskId) {
+        var id = Number(taskId || 0)
+        if (id > 0 && root.savedWeightIndex(id) < 0) {
+            root.savedWeightTaskIds = root.savedWeightTaskIds.concat([id])
+        }
+    }
+
+    function forgetSavedWeight(taskId) {
+        var index = root.savedWeightIndex(taskId)
+        if (index >= 0) {
+            var ids = root.savedWeightTaskIds.slice()
+            ids.splice(index, 1)
+            root.savedWeightTaskIds = ids
+        }
+        var weightIndex = root.weightOptionIndex(taskId)
+        if (weightIndex >= 0) weightOptionModel.remove(weightIndex)
+    }
+
     function syncActiveEvalSourceTask(task) {
         if (!task) return
         var sourceIndex = root.evalSourceIndexForTask(task.id || 0)
@@ -686,7 +714,7 @@ Item {
         var checkpointPath = artifacts.length > 0 ? (artifacts[0] || "") : ""
         var existingIndex = root.weightOptionIndex(taskId)
 
-        if (status !== "completed" || !checkpointPath) {
+        if (status !== "completed" || !checkpointPath || !root.isWeightSaved(taskId)) {
             if (existingIndex >= 0) weightOptionModel.remove(existingIndex)
             return
         }
@@ -736,12 +764,20 @@ Item {
         target: backendService
 
         function onSettingValueLoaded(key, value) {
-            if (key !== "eval_state" || !value) return
+            if (key !== "eval_state") return
+            if (!value) {
+                root.evalStateReady = true
+                backendService.getTrainingTasks(0, "")
+                return
+            }
             try {
                 var state = JSON.parse(value)
                 root.isTraining = state.isTraining || false
                 root.taskCounter = state.taskCounter || 1
                 root.evalMetricHeaders = state.metricHeaders || []
+                root.savedWeightTaskIds = state.savedWeightTaskIds || []
+                root.migrateLegacySavedWeights = !state.hasOwnProperty("savedWeightTaskIds")
+                root.evalStateReady = true
 
                 var h = state.evalHistory || []
                 for (var hi = 0; hi < h.length; hi++) evalHistoryModel.append(h[hi])
@@ -903,10 +939,15 @@ Item {
             for (var i = 0; i < items.length; i++) {
                 var task = items[i]
                 root.upsertTrainingTask(task)
-                root.upsertWeightOption(task)
+                if (root.evalStateReady && root.migrateLegacySavedWeights) {
+                    var legacyArtifacts = task.result && task.result.artifacts ? task.result.artifacts : []
+                    if (task.status === "completed" && legacyArtifacts.length > 0) root.markWeightSaved(task.id || 0)
+                }
+                if (root.evalStateReady) root.upsertWeightOption(task)
                 root.syncHistoryFromTrainingTask(task)
                 if (task.status === "running") root.isTraining = true
             }
+            if (root.evalStateReady) root.migrateLegacySavedWeights = false
             if (root.isTraining) {
                 var allDone = true
                 for (var k = 0; k < taskQueueModel.count; k++) {
@@ -915,7 +956,7 @@ Item {
                 if (allDone) root.isTraining = false
             }
             // 同步到全局状态
-            root.saveToAppState()
+            if (root.evalStateReady) root.saveToAppState()
         }
 
         function onTrainingStatusUpdated(message, success, progressVal) {
@@ -1090,7 +1131,7 @@ Item {
     }
 
     function saveToAppState() {
-        if (!root.hasBackendService()) return
+        if (!root.hasBackendService() || !root.evalStateReady) return
         // 把 ListModel 序列化为 JSON 持久化到后端数据库
         var histArr = []
         for (var hi = 0; hi < evalHistoryModel.count; hi++) {
@@ -1135,6 +1176,7 @@ Item {
             activeEvalSources: activeEvalSources,
             expectedEvalResultCount: root.expectedEvalResultCount,
             metricHeaders: root.evalMetricHeaders,
+            savedWeightTaskIds: root.savedWeightTaskIds,
             isTraining: root.isTraining,
             taskCounter: root.taskCounter
         }
@@ -1915,9 +1957,17 @@ Item {
                     var count = 0; var delCount = 0
                     for (var i = taskQueueModel.count - 1; i >= 0; i--) {
                         var t = taskQueueModel.get(i)
-                        if (t.trainStatus === 2 && t.isSelected) { taskQueueModel.setProperty(i, "saved", true); count++ }
+                        if (t.trainStatus === 2 && t.isSelected) {
+                            taskQueueModel.setProperty(i, "saved", true)
+                            root.markWeightSaved(t.taskId)
+                            count++
+                        }
                         else if (t.trainStatus === 2) {
-                            if (t.taskId > 0) { backendService.deleteTask(t.taskId); delCount++ }
+                            if (t.taskId > 0) {
+                                root.forgetSavedWeight(t.taskId)
+                                backendService.deleteTask(t.taskId)
+                                delCount++
+                            }
                             taskQueueModel.remove(i)
                         }
                     }
@@ -2332,7 +2382,7 @@ Item {
 
                             Text {
                                 visible: weightOptionModel.count === 0
-                                text: "暂无可用训练权重，请先完成训练任务"
+                                text: "暂无已保存训练权重，请先在训练区保存权重"
                                 color: root.textMuted
                                 font.pixelSize: 13
                                 anchors.centerIn: parent
@@ -2644,10 +2694,11 @@ Item {
     }
 
     function isWeightSaved(taskId) {
+        if (root.savedWeightIndex(taskId) >= 0) return true
         for (var i = 0; i < taskQueueModel.count; i++) {
             if (Number(taskQueueModel.get(i).taskId || 0) === Number(taskId)) return taskQueueModel.get(i).saved === true
         }
-        return true  // 不在队列中的历史权重默认允许评估
+        return false
     }
 
     function findScenarioId(name) {
