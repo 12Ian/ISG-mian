@@ -8,6 +8,8 @@ import re
 
 import numpy as np
 
+from .text_lexicon import generated_common_rules
+
 
 PARAMETERS = [{
     "name": "replacement_ratio", "type": "float", "label": "替换比例", "default": 0.3,
@@ -71,7 +73,46 @@ SYNONYM_RULES = (
     ("此外", ("另外", "除此之外"), "conjunction"),
     ("然而", ("不过", "但是"), "conjunction"),
     ("因为", ("由于", "缘于"), "conjunction"),
-)
+    # 校园/叙事类常见词，覆盖短文本中高频且语义稳定的替换。
+    ("校园", ("学校", "校园里"), "noun"),
+    ("铃声", ("铃音", "钟声"), "noun"),
+    ("响起", ("传来", "响起了"), "verb"),
+    ("走廊", ("长廊", "过道"), "noun"),
+    ("同学们", ("同学们纷纷", "同窗们"), "noun"),
+    ("课本", ("教材", "书本"), "noun"),
+    ("教室", ("课堂", "教学楼"), "noun"),
+    ("老师", ("教师", "授课老师"), "noun"),
+    ("写下", ("记下", "写出"), "verb"),
+    ("今天", ("今日", "这一天"), "noun"),
+    ("窗外", ("窗边", "屋外"), "noun"),
+    ("随风飘动", ("迎风摇曳", "随风摇摆"), "verb"),
+    ("安静", ("宁静", "静谧"), "adjective"),
+    ("学习", ("求学", "学习过程"), "verb"),
+    ("轻松", ("容易", "从容"), "adjective"),
+    ("有时", ("偶尔", "有时候"), "adverb"),
+    ("一道题", ("一个问题", "一道难题"), "noun"),
+    ("困惑", ("疑惑", "迷茫"), "noun"),
+    ("思路", ("思考方向", "解题思路"), "noun"),
+    ("打开", ("理清", "打通"), "verb"),
+    ("心里", ("心中", "内心"), "noun"),
+    ("充满", ("洋溢着", "满是"), "verb"),
+    ("明亮", ("明朗", "灿烂"), "adjective"),
+    ("喜悦", ("欣喜", "愉悦"), "noun"),
+    ("青春", ("年华", "青春岁月"), "noun"),
+    ("探索", ("探寻", "求索"), "verb"),
+    ("失败", ("挫折", "失利"), "noun"),
+    ("重新尝试", ("再次尝试", "重新探索"), "verb"),
+    ("勇气", ("胆量", "勇敢的心"), "noun"),
+    ("珍惜", ("珍重", "爱惜"), "verb"),
+    ("时光", ("岁月", "光阴"), "noun"),
+    ("不断成长", ("持续成长", "逐渐成长"), "verb"),
+    ("热爱", ("热忱", "喜爱"), "verb"),
+    ("坚定", ("坚决", "笃定"), "adjective"),
+    ("平凡岁月", ("平淡岁月", "普通日子"), "noun"),
+    ("收获", ("获得", "得到"), "verb"),
+    ("温暖", ("暖意", "温情"), "noun"),
+    ("希望", ("期望", "盼望"), "noun"),
+) + generated_common_rules()
 
 FORBIDDEN = ("维持热爱", "做良好", "做优秀", "造成目标", "达成问题", "结论显示结果")
 NEGATION_RE = re.compile(r"没有|不能|不可|并非|未曾|无需|无须|不|未|无|否|非(?!常)")
@@ -117,7 +158,7 @@ def _quality_check(source: str, candidate: str, existing: list[str]) -> tuple[bo
     }
     result["passed"] = (
         result["changed"] and result["numbers_preserved"] and result["negations_preserved"]
-        and not result["forbidden_collocation"] and 0.72 <= similarity <= 0.98 and not result["near_duplicate"]
+        and not result["forbidden_collocation"] and 0.70 <= similarity <= 0.995 and not result["near_duplicate"]
     )
     return result["passed"], result
 

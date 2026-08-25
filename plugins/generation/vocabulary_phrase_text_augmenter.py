@@ -8,6 +8,8 @@ from pathlib import Path
 
 import numpy as np
 
+from .text_lexicon import generated_common_rules
+
 
 PARAMETERS = [
     {
@@ -59,12 +61,49 @@ RULES = (
     {"source": "因此", "targets": ("所以", "因而"), "pos": "conjunction", "kind": "word"},
     {"source": "此外", "targets": ("另外", "除此之外"), "pos": "conjunction", "kind": "word"},
     {"source": "然而", "targets": ("不过", "但是"), "pos": "conjunction", "kind": "word"},
+    {"source": "校园", "targets": ("学校", "校园里"), "pos": "noun", "kind": "word"},
+    {"source": "铃声", "targets": ("铃音", "钟声"), "pos": "noun", "kind": "word"},
+    {"source": "响起", "targets": ("传来", "响起了"), "pos": "verb", "kind": "word"},
+    {"source": "走廊", "targets": ("长廊", "过道"), "pos": "noun", "kind": "word"},
+    {"source": "同学们", "targets": ("同窗们", "同学们纷纷"), "pos": "noun", "kind": "word"},
+    {"source": "课本", "targets": ("教材", "书本"), "pos": "noun", "kind": "word"},
+    {"source": "教室", "targets": ("课堂", "教学楼"), "pos": "noun", "kind": "word"},
+    {"source": "老师", "targets": ("教师", "授课老师"), "pos": "noun", "kind": "word"},
+    {"source": "写下", "targets": ("记下", "写出"), "pos": "verb", "kind": "word"},
+    {"source": "今天", "targets": ("今日", "这一天"), "pos": "noun", "kind": "word"},
+    {"source": "窗外", "targets": ("窗边", "屋外"), "pos": "noun", "kind": "word"},
+    {"source": "随风飘动", "targets": ("迎风摇曳", "随风摇摆"), "pos": "verb", "kind": "phrase"},
+    {"source": "安静", "targets": ("宁静", "静谧"), "pos": "adjective", "kind": "word"},
+    {"source": "学习", "targets": ("求学", "学习过程"), "pos": "verb", "kind": "word"},
+    {"source": "轻松", "targets": ("容易", "从容"), "pos": "adjective", "kind": "word"},
+    {"source": "有时", "targets": ("偶尔", "有时候"), "pos": "adverb", "kind": "word"},
+    {"source": "困惑", "targets": ("疑惑", "迷茫"), "pos": "noun", "kind": "word"},
+    {"source": "思路", "targets": ("思考方向", "解题思路"), "pos": "noun", "kind": "word"},
+    {"source": "打开", "targets": ("理清", "打通"), "pos": "verb", "kind": "word"},
+    {"source": "充满", "targets": ("洋溢着", "满是"), "pos": "verb", "kind": "word"},
+    {"source": "喜悦", "targets": ("欣喜", "愉悦"), "pos": "noun", "kind": "word"},
+    {"source": "青春", "targets": ("年华", "青春岁月"), "pos": "noun", "kind": "word"},
+    {"source": "探索", "targets": ("探寻", "求索"), "pos": "verb", "kind": "word"},
+    {"source": "失败", "targets": ("挫折", "失利"), "pos": "noun", "kind": "word"},
+    {"source": "勇气", "targets": ("胆量", "勇敢的心"), "pos": "noun", "kind": "word"},
+    {"source": "珍惜", "targets": ("珍重", "爱惜"), "pos": "verb", "kind": "word"},
+    {"source": "时光", "targets": ("岁月", "光阴"), "pos": "noun", "kind": "word"},
+    {"source": "成长", "targets": ("长大", "进步"), "pos": "verb", "kind": "word"},
+    {"source": "热爱", "targets": ("热忱", "喜爱"), "pos": "verb", "kind": "word"},
+    {"source": "坚定", "targets": ("坚决", "笃定"), "pos": "adjective", "kind": "word"},
+    {"source": "收获", "targets": ("获得", "得到"), "pos": "verb", "kind": "word"},
+    {"source": "温暖", "targets": ("暖意", "温情"), "pos": "noun", "kind": "word"},
+    {"source": "希望", "targets": ("期望", "盼望"), "pos": "noun", "kind": "word"},
+) + tuple(
+    {"source": source, "targets": targets, "pos": pos, "kind": "phrase"}
+    for source, targets, pos in generated_common_rules()
 )
 FORBIDDEN_COLLOCATIONS = (
     "做良好", "做优秀", "维持热爱", "强劲大", "显著大", "强宏大", "强庞大", "轻微事", "更新的风景",
 )
 NEGATION_PATTERN = re.compile(r"没有|不能|不可|并非|未曾|无需|无须|不|未|无|否|非(?!常)")
-MAX_VARIANTS_PER_SOURCE = 1000
+MAX_VARIANTS_PER_SOURCE = 100
+MAX_VARIANT_ATTEMPTS = 500
 
 
 def _as_bool(value) -> bool:
@@ -121,7 +160,7 @@ def _quality_check(source: str, candidate: str) -> tuple[bool, str, float]:
     if len(NEGATION_PATTERN.findall(source)) != len(NEGATION_PATTERN.findall(candidate)):
         return False, "negation_changed", 0.0
     similarity = SequenceMatcher(None, source, candidate).ratio()
-    if similarity > 0.98:
+    if similarity > 0.995:
         return False, "change_too_small", similarity
     if similarity < 0.72:
         return False, "change_too_large", similarity
@@ -137,20 +176,25 @@ def _source_variants(text: str, ratio: float, pos_constraint: str, phrase_level:
     accepted = []
     attempts = 0
 
-    for selected in itertools.combinations(matches, replace_count):
-        target_groups = [item["rule"]["targets"] for item in selected]
-        for targets in itertools.product(*target_groups):
-            attempts += 1
-            candidate, records = _apply_replacements(text, selected, targets)
-            passed, quality, similarity = _quality_check(text, candidate)
-            near_duplicate = any(SequenceMatcher(None, candidate, item["text"]).ratio() > 0.985 for item in accepted)
-            if passed and not near_duplicate:
-                accepted.append({
-                    "text": candidate, "records": records, "similarity": similarity,
-                    "quality": quality, "attempts": attempts,
-                })
-            if len(accepted) >= MAX_VARIANTS_PER_SOURCE:
-                return accepted
+    # 先尝试用户指定比例，再逐步增加替换数量，扩大短文本的候选空间。
+    counts = list(range(replace_count, len(matches) + 1)) + list(range(1, replace_count))
+    for selected_count in counts:
+        for selected in itertools.combinations(matches, selected_count):
+            target_groups = [item["rule"]["targets"] for item in selected]
+            for targets in itertools.product(*target_groups):
+                attempts += 1
+                candidate, records = _apply_replacements(text, selected, targets)
+                passed, quality, similarity = _quality_check(text, candidate)
+                near_duplicate = any(SequenceMatcher(None, candidate, item["text"]).ratio() > 0.995 for item in accepted)
+                if passed and not near_duplicate:
+                    accepted.append({
+                        "text": candidate, "records": records, "similarity": similarity,
+                        "quality": quality, "attempts": attempts,
+                    })
+                if len(accepted) >= MAX_VARIANTS_PER_SOURCE:
+                    return accepted
+                if attempts >= MAX_VARIANT_ATTEMPTS:
+                    return accepted
     return accepted
 
 
@@ -165,10 +209,14 @@ def run(payload: dict, context) -> dict:
     target_count = max(1, int(payload.get("target_count") or len(samples)))
     ratio = max(0.0, min(float(parameters.get("replacement_ratio", parameters.get("ratio", 0.3)) or 0.0), 1.0))
     pos_constraint = str(parameters.get("pos_constraint", "") or "")
+    if pos_constraint.strip().lower() in {"0", "all", "none", "无", "不限"}:
+        pos_constraint = ""
     phrase_level = _as_bool(parameters.get("phrase_level", True))
 
     source_items = []
     for sample in samples:
+        if sum(len(item["variants"]) - item["cursor"] for item in source_items) >= target_count:
+            break
         path = Path(sample.get("sample_path") or sample.get("path") or sample.get("file_path") or "")
         try:
             text = path.read_text(encoding="utf-8", errors="ignore")

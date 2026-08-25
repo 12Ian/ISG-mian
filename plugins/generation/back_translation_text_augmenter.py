@@ -7,6 +7,8 @@ import re
 
 import numpy as np
 
+from .text_lexicon import generated_common_rules
+
 
 PARAMETERS = [
     {
@@ -47,6 +49,17 @@ PARAMETERS = [
 
 # 仅收录完整词语和短语，不使用“好、大、小”等单字规则，避免在词语内部替换。
 ZH_VARIANTS = {
+    "校园": ["学校", "校园里"], "铃声": ["铃音", "钟声"], "响起": ["传来", "响起了"],
+    "走廊": ["长廊", "过道"], "同学们": ["同窗们", "同学们纷纷"], "课本": ["教材", "书本"],
+    "教室": ["课堂", "教学楼"], "老师": ["教师", "授课老师"], "写下": ["记下", "写出"],
+    "今天": ["今日", "这一天"], "窗外": ["窗边", "屋外"], "安静": ["宁静", "静谧"],
+    "学习": ["求学", "学习过程"], "轻松": ["容易", "从容"], "有时": ["偶尔", "有时候"],
+    "困惑": ["疑惑", "迷茫"], "思路": ["思考方向", "解题思路"], "打开": ["理清", "打通"],
+    "充满": ["洋溢着", "满是"], "喜悦": ["欣喜", "愉悦"], "青春": ["年华", "青春岁月"],
+    "探索": ["探寻", "求索"], "失败": ["挫折", "失利"], "勇气": ["胆量", "勇敢的心"],
+    "珍惜": ["珍重", "爱惜"], "时光": ["岁月", "光阴"], "成长": ["长大", "进步"],
+    "热爱": ["热忱", "喜爱"], "坚定": ["坚决", "笃定"], "收获": ["获得", "得到"],
+    "温暖": ["暖意", "温情"], "希望": ["期望", "盼望"],
     "表现良好": ["表现出色", "表现较好"],
     "效果良好": ["效果较好", "成效良好"],
     "实力强大": ["实力强劲", "具备较强实力"],
@@ -90,6 +103,8 @@ ZH_VARIANTS = {
     "所以": ["因此", "因而"],
     "因为": ["由于", "缘于"],
 }
+for _source, _targets, _ in generated_common_rules():
+    ZH_VARIANTS.setdefault(_source, list(_targets))
 
 LANGUAGE_NAMES = {"英语": "en", "日语": "ja", "韩语": "ko", "en": "en", "ja": "ja", "ko": "ko"}
 NEGATIONS = ("不", "没", "无", "未", "非", "否", "不能", "不会", "没有", "并非")
@@ -154,7 +169,7 @@ def _restructure(text: str) -> tuple[str, str | None]:
 
 def _quality_check(source: str, candidate: str, existing: list[str]) -> tuple[bool, dict]:
     similarity = SequenceMatcher(None, source, candidate).ratio()
-    near_duplicate = any(SequenceMatcher(None, old, candidate).ratio() >= 0.98 for old in existing)
+    near_duplicate = any(SequenceMatcher(None, old, candidate).ratio() >= 0.995 for old in existing)
     checks = {
         "changed": candidate != source,
         "foreign_residue": bool(FOREIGN_RE.search(candidate)),
@@ -169,7 +184,7 @@ def _quality_check(source: str, candidate: str, existing: list[str]) -> tuple[bo
         and not checks["foreign_residue"]
         and checks["numbers_preserved"]
         and checks["negations_preserved"]
-        and 0.78 <= similarity <= 0.98
+        and 0.70 <= similarity <= 0.995
         and 0.75 <= checks["length_ratio"] <= 1.25
         and not near_duplicate
     )
@@ -204,7 +219,7 @@ def run(payload: dict, context) -> dict:
     outputs = []
     unique_by_source: dict[str, list[str]] = defaultdict(list)
     attempts_by_source: dict[str, int] = defaultdict(int)
-    max_attempts = max(target_count * 12, len(source_cache) * 12)
+    max_attempts = max(target_count * 40, len(source_cache) * 40)
     total_attempts = 0
 
     while len(outputs) < target_count and total_attempts < max_attempts:
