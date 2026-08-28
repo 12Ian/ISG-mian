@@ -314,6 +314,7 @@ def _parse_yolo(root, pairs, report, default_split):
 
     for image_dir, label_dir in pairs:
         for image_path in sorted(path for path in image_dir.rglob("*") if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS):
+            image_width, image_height = _image_size(image_path)
             relative = image_path.relative_to(image_dir)
             label_path = (label_dir / relative).with_suffix(".txt")
             split = _infer_split(
@@ -341,7 +342,7 @@ def _parse_yolo(root, pairs, report, default_split):
                     except (TypeError, ValueError):
                         _add_error(report, label_path, f"YOLO 第 {line_number} 行包含非数字字段")
                         continue
-                    normalized = sanitize_normalized_bbox(bbox)
+                    normalized = _normalize_yolo_bbox(bbox, image_width, image_height)
                     if class_id < 0 or normalized is None:
                         _add_error(report, label_path, f"YOLO 第 {line_number} 行类别或 bbox 无效")
                         continue
@@ -484,6 +485,25 @@ def _normalize_absolute_xywh(bbox, image_width, image_height):
     except (TypeError, ValueError):
         return None
     return _normalize_absolute_xyxy([x, y, x + width, y + height], image_width, image_height)
+
+
+def _normalize_yolo_bbox(bbox, image_width: int, image_height: int):
+    """兼容标准归一化 YOLO 与像素级 cx/cy/w/h 标签。"""
+    try:
+        values = [float(value) for value in bbox[:4]]
+    except (TypeError, ValueError, IndexError):
+        return None
+    if all(0.0 <= value <= 1.0 for value in values):
+        return sanitize_normalized_bbox(values, tolerance=0.01)
+    if image_width <= 0 or image_height <= 0:
+        return None
+    converted = [
+        values[0] / image_width,
+        values[1] / image_height,
+        values[2] / image_width,
+        values[3] / image_height,
+    ]
+    return sanitize_normalized_bbox(converted, tolerance=0.01)
 
 
 def _normalize_absolute_xyxy(bbox, image_width, image_height):

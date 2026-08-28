@@ -7,6 +7,7 @@ import "."
 ComboBox {
     id: control
     implicitHeight: 40
+    property bool marqueeText: false
 
     background: Rectangle {
         color: Theme.control
@@ -15,14 +16,27 @@ ComboBox {
         radius: 4
     }
 
-    contentItem: Text {
-        text: control.displayText
-        color: Theme.text
-        font.pixelSize: 13
-        verticalAlignment: Text.AlignVCenter
-        leftPadding: 12
-        rightPadding: 36
-        elide: Text.ElideRight
+    contentItem: Item {
+        id: selectedClip
+        clip: true
+        Text {
+            id: selectedText
+            text: control.displayText
+            color: Theme.text
+            font.pixelSize: 13
+            width: Math.max(selectedClip.width - 48, implicitWidth)
+            height: selectedClip.height
+            verticalAlignment: Text.AlignVCenter
+            x: 12
+            SequentialAnimation on x {
+                loops: Animation.Infinite
+                running: control.marqueeText && selectedText.implicitWidth > selectedClip.width - 48
+                PauseAnimation { duration: 900 }
+                NumberAnimation { to: -(selectedText.implicitWidth - selectedClip.width + 36); duration: 1800; easing.type: Easing.InOutQuad }
+                PauseAnimation { duration: 900 }
+                NumberAnimation { to: 12; duration: 500; easing.type: Easing.InOutQuad }
+            }
+        }
     }
 
     indicator: Canvas {
@@ -61,7 +75,7 @@ ComboBox {
 
     popup: Popup {
         y: control.height + 2
-        width: control.width
+        width: Math.max(control.width, 280)
         padding: 4
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
 
@@ -94,16 +108,30 @@ ComboBox {
         id: optionDelegate
         required property int index
 
-        width: control.width - 20
+        width: popupList.width - 8
         height: 36
 
-        contentItem: Text {
-            text: control.textAt(optionDelegate.index)
-            color: Theme.text
-            font.pixelSize: 13
-            verticalAlignment: Text.AlignVCenter
-            leftPadding: 12
-            elide: Text.ElideRight
+        contentItem: Item {
+            id: optionClip
+            clip: true
+            Text {
+                id: optionText
+                text: control.textAt(optionDelegate.index)
+                color: Theme.text
+                font.pixelSize: 13
+                width: implicitWidth
+                height: optionClip.height
+                verticalAlignment: Text.AlignVCenter
+                x: 12
+                SequentialAnimation on x {
+                    loops: Animation.Infinite
+                    running: control.marqueeText && optionText.implicitWidth > optionClip.width - 24
+                    PauseAnimation { duration: 700 }
+                    NumberAnimation { to: -(optionText.implicitWidth - optionClip.width + 24); duration: 1800; easing.type: Easing.InOutQuad }
+                    PauseAnimation { duration: 700 }
+                    NumberAnimation { to: 12; duration: 500; easing.type: Easing.InOutQuad }
+                }
+            }
         }
 
         background: Rectangle {

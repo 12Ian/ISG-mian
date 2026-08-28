@@ -11,6 +11,7 @@ import os, sys, shutil, json, re, yaml
 import utils as _shared_utils  # 预加载合并后的项目/YOLOv5 utils，避免同名模块抢占。
 from core.data_management.detection_annotations import sanitize_normalized_bbox
 from core.hardware_adapter import resolve_yolo_device
+from PIL import Image
 
 
 _YOLOV5_ROOT = Path(__file__).resolve().parent.parent / "detection" / "yolov5_core"
@@ -26,8 +27,8 @@ PARAMETERS = [
         "default": "yolov5n.pt",
         "min": None,
         "max": None,
-        "options": ["yolov5n.pt", ""],
-        "description": "内置 yolov5n.pt；空字符串表示从头训练",
+        "options": ["yolov5n.pt"],
+        "description": "固定使用内置 yolov5n.pt",
         "required": False,
     },
     {
@@ -37,8 +38,8 @@ PARAMETERS = [
         "default": "models/yolov5n.yaml",
         "min": None,
         "max": None,
-        "options": ["models/yolov5n.yaml", "models/yolov5s.yaml", "models/yolov5m.yaml", "models/yolov5l.yaml", "models/yolov5x.yaml"],
-        "description": "YOLOv5 模型配置文件",
+        "options": ["models/yolov5n.yaml"],
+        "description": "固定使用 yolov5n 模型配置",
         "required": False,
     },
     {
@@ -110,6 +111,45 @@ PARAMETERS = [
 ]
 
 
+def _normalize_bbox_for_sample(bbox, label: dict, sample: dict):
+    """兼容像素级 cxcywh 标注；归一化标注仍按原规则校验。"""
+    try:
+        numeric = [float(value) for value in list(bbox[:4])]
+    except (TypeError, ValueError):
+        return None
+    if all(0.0 <= value <= 1.0 for value in numeric):
+        return sanitize_normalized_bbox(numeric, tolerance=0.01)
+
+    image_path = sample.get("file_path") or sample.get("path")
+    if not image_path:
+        return None
+    try:
+        with Image.open(image_path) as image:
+            image_width, image_height = image.size
+    except (OSError, ValueError):
+        return None
+    if image_width <= 0 or image_height <= 0:
+        return None
+
+    bbox_format = str(label.get("bbox_format") or "cxcywh").strip().lower()
+    if bbox_format in {"xyxy", "pixel_xyxy", "absolute_xyxy"}:
+        xmin, ymin, xmax, ymax = numeric
+        converted = [
+            (xmin + xmax) / 2.0 / image_width,
+            (ymin + ymax) / 2.0 / image_height,
+            (xmax - xmin) / image_width,
+            (ymax - ymin) / image_height,
+        ]
+    else:
+        converted = [
+            numeric[0] / image_width,
+            numeric[1] / image_height,
+            numeric[2] / image_width,
+            numeric[3] / image_height,
+        ]
+    return sanitize_normalized_bbox(converted, tolerance=0.01)
+
+
 def run(payload: dict, context) -> dict:
     try:
         return _run_training(payload, context)
@@ -138,9 +178,9 @@ def _run_training(payload: dict, context) -> dict:
     batch_size = int(params.get("batch_size", 16))
     img_size = int(params.get("img_size", 640))
     device = str(params.get("device", "") or "")
-    weights_value = params.get("weights", "yolov5n.pt")
-    weights = "yolov5n.pt" if weights_value is None else str(weights_value)
-    model_cfg = str(params.get("model_yaml", "models/yolov5n.yaml") or "models/yolov5n.yaml")
+    # 当前应用统一固定使用 yolov5n，避免权重和模型结构不匹配。
+    weights = "yolov5n.pt"
+    model_cfg = "models/yolov5n.yaml"
     train_ratio = float(params.get("train_ratio", 0.7))
     val_ratio = float(params.get("val_ratio", 0.15))
 
@@ -157,7 +197,7 @@ def _run_training(payload: dict, context) -> dict:
             bbox = label.get("bbox", [])
             if len(bbox) < 4:
                 continue
-            normalized_bbox = sanitize_normalized_bbox(bbox)
+            normalized_bbox = _normalize_bbox_for_sample(bbox, label, s)
             if normalized_bbox is None:
                 return {
                     "ok": False,

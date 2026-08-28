@@ -2069,9 +2069,30 @@ Item {
                 Text { text: "➡"; color: root.borderColor; font.pixelSize: 16 }
                 ColumnLayout { spacing: 5
                     Text { text: "2. 挂载数据集"; color: root.textMuted; font.pixelSize: 12; font.bold: true }
-                    StableComboBox { id: datasetCombo; model: datasetModel; textRole: "name"; Layout.preferredWidth: 160
+                    StableComboBox { id: datasetCombo; model: datasetModel; textRole: "name"; marqueeText: true; Layout.preferredWidth: 220
                         background: Rectangle { color: root.bgDark; border.color: root.borderColor; radius: 4 }
-                        contentItem: Text { text: parent.currentText; color: root.textColor; verticalAlignment: Text.AlignVCenter; padding: 10; elide: Text.ElideRight }
+                        contentItem: Item {
+                            id: datasetSelectedClip
+                            clip: true
+                            Text {
+                                id: datasetSelectedText
+                                text: datasetCombo.currentText
+                                color: root.textColor
+                                font.pixelSize: 13
+                                width: Math.max(datasetSelectedClip.width - 48, implicitWidth)
+                                height: datasetSelectedClip.height
+                                x: 12
+                                verticalAlignment: Text.AlignVCenter
+                                SequentialAnimation on x {
+                                    loops: Animation.Infinite
+                                    running: datasetCombo.marqueeText && datasetSelectedText.implicitWidth > datasetSelectedClip.width - 48
+                                    PauseAnimation { duration: 900 }
+                                    NumberAnimation { to: -(datasetSelectedText.implicitWidth - datasetSelectedClip.width + 36); duration: 1800; easing.type: Easing.InOutQuad }
+                                    PauseAnimation { duration: 900 }
+                                    NumberAnimation { to: 12; duration: 500; easing.type: Easing.InOutQuad }
+                                }
+                            }
+                        }
                         onCurrentIndexChanged: root.requestTrainingCompatibility()
                     }
                 }
@@ -2856,8 +2877,12 @@ Item {
             for (var i = 0; i < rawParams.length; i++) {
                 var rp = rawParams[i]
                 var val = rp.default_value
+                if (key === "training.image.yolov5_detector" && rp.name === "weights") val = "yolov5n.pt"
+                if (key === "training.image.yolov5_detector" && rp.name === "model_yaml") val = "models/yolov5n.yaml"
                 if (typeof val !== "string") val = JSON.stringify(val)
                 var opts = rp.options || rp.options_json || []
+                if (key === "training.image.yolov5_detector" && rp.name === "weights") opts = ["yolov5n.pt"]
+                if (key === "training.image.yolov5_detector" && rp.name === "model_yaml") opts = ["models/yolov5n.yaml"]
                 editable.push({name: rp.name, label: rp.label || rp.name, value: val, defaultValue: val, optionsJson: JSON.stringify(opts)})
             }
             paramEditModel.clear()
@@ -2916,6 +2941,7 @@ Item {
                             // 有 options = 下拉框
                             StableComboBox {
                                 visible: _opts.length > 0
+                                enabled: !(root.pendingAlgoKey === "training.image.yolov5_detector" && (model.name === "weights" || model.name === "model_yaml"))
                                 Layout.preferredWidth: 200
                                 model: _optionLabels
                                 currentIndex: {
@@ -2933,6 +2959,7 @@ Item {
                             // 无 options = 文本输入
                             Rectangle {
                                 visible: _opts.length === 0
+                                enabled: !(root.pendingAlgoKey === "training.image.yolov5_detector" && (model.name === "weights" || model.name === "model_yaml"))
                                 Layout.preferredWidth: 200; height: 30
                                 color: "transparent"; border.color: root.borderColor; border.width: 1; radius: 4
                                 TextInput {

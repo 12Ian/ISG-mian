@@ -2687,7 +2687,8 @@ _DEFAULT_ALGORITHMS = (
                 "type": "string",
                 "required": False,
                 "default_value": "yolov5n.pt",
-                "description": "内置 yolov5n.pt；留空表示从头训练",
+                "options": ["yolov5n.pt"],
+                "description": "固定使用内置 yolov5n.pt",
             },
             {
                 "name": "model_yaml",
@@ -2695,7 +2696,8 @@ _DEFAULT_ALGORITHMS = (
                 "type": "string",
                 "required": False,
                 "default_value": "models/yolov5n.yaml",
-                "description": "YOLOv5 模型配置文件",
+                "options": ["models/yolov5n.yaml"],
+                "description": "固定使用 yolov5n 模型配置",
             },
             {
                 "name": "epochs",
