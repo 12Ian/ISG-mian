@@ -536,7 +536,8 @@ def train(hyp, opt, device, callbacks):
                         data_dict,
                         batch_size=batch_size // WORLD_SIZE * 2,
                         imgsz=imgsz,
-                        model=attempt_load(f, device).half(),
+                        # 最终验证不需要融合 Conv+BN；确定性 CUDA 模式下融合会触发 cuBLAS 非确定性错误。
+                        model=attempt_load(f, device, fuse=False).half(),
                         iou_thres=0.65 if is_coco else 0.60,  # best pycocotools at iou 0.65
                         single_cls=single_cls,
                         dataloader=val_loader,
