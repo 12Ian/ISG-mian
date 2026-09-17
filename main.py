@@ -5,6 +5,11 @@ import os
 import threading
 from datetime import datetime
 
+# CUDA 10.2+ 在启用 PyTorch 确定性算法前需要预先配置 cuBLAS 工作区。
+os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+if os.environ.get("CUBLAS_WORKSPACE_CONFIG") not in {":4096:8", ":16:8"}:
+    os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+
 from PySide6.QtGui import QDesktopServices, QGuiApplication
 from PySide6.QtQml import QQmlApplicationEngine, QQmlContext
 from PySide6.QtCore import QUrl, QObject, Signal, Slot, Property

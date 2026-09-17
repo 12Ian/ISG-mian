@@ -104,7 +104,11 @@ def attempt_load(weights, device=None, inplace=True, fuse=True):
         if hasattr(ckpt, "names") and isinstance(ckpt.names, (list, tuple)):
             ckpt.names = dict(enumerate(ckpt.names))  # convert to dict
 
-        model.append(ckpt.fuse().eval() if fuse and hasattr(ckpt, "fuse") else ckpt.eval())  # model in eval mode
+        # 训练阶段可能已经开启全局确定性算法；此时 GPU 上融合 Conv+BN 的矩阵乘法会触发 cuBLAS 限制。
+        can_fuse = fuse and hasattr(ckpt, "fuse")
+        if can_fuse and torch.are_deterministic_algorithms_enabled():
+            can_fuse = False
+        model.append(ckpt.fuse().eval() if can_fuse else ckpt.eval())  # model in eval mode
 
     # Module updates
     for m in model.modules():

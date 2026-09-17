@@ -44,13 +44,11 @@ PARAMETERS = [
     },
     {
         "name": 'patch_size',
-        "type": 'int',
+        "type": 'select',
         "label": 'Patch大小',
         "default": 4,
-        "min": 2,
-        "max": 32,
-        "options": [],
-        "description": 'ViT patch划分尺寸',
+        "options": [2, 4, 8, 16, 32],
+        "description": 'ViT patch划分尺寸（必须能整除内部的64×64图像尺寸）',
         "required": False,
     },
     {
@@ -84,7 +82,7 @@ def run(payload: dict, context) -> dict:
     target_count = max(1, int(payload.get("target_count") or len(samples)))
     mask_ratio = _clamp_float(parameters.get("mask_ratio", 0.35), 0.05, 0.9)
     train_cap = _clamp_int(parameters.get("training_steps", parameters.get("train_cap", 120)), 10, 500)
-    ps = _clamp_int(parameters.get("patch_size", parameters.get("ps", 4)), 2, 32)
+    ps = _normalize_patch_size(parameters.get("patch_size", parameters.get("ps", 4)))
     lr = _clamp_float(parameters.get("learning_rate", parameters.get("lr", 0.0001)), 1e-6, 0.1)
     blend_strength = _clamp_float(parameters.get("blend_strength", 0.65), 0.0, 1.0)
     image_size = 64
@@ -164,7 +162,7 @@ def run(payload: dict, context) -> dict:
 
 
 def _run_mask_blur_augmentation(payload, context, output_dir, samples, target_count, method, parameters):
-    ps = _clamp_int(parameters.get("patch_size", parameters.get("ps", 4)), 2, 32)
+    ps = _normalize_patch_size(parameters.get("patch_size", parameters.get("ps", 4)))
     mask_ratio = _clamp_float(parameters.get("mask_ratio", 0.35), 0.05, 0.9)
     outputs = []
     for index in range(target_count):
@@ -251,6 +249,13 @@ def _clamp_int(value, low, high):
     except (TypeError, ValueError):
         parsed = low
     return max(low, min(parsed, high))
+
+
+def _normalize_patch_size(value):
+    """将旧任务或直接调用传入的任意整数纠正为可整除 64 的 patch 大小。"""
+    requested = _clamp_int(value, 2, 32)
+    valid_sizes = (2, 4, 8, 16, 32)
+    return min(valid_sizes, key=lambda size: abs(size - requested))
 
 
 def _patch(x, ps, nps):

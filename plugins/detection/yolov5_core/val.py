@@ -26,6 +26,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+# 直接运行 val.py 时也要在导入 PyTorch 前配置 cuBLAS。
+if os.environ.get("CUBLAS_WORKSPACE_CONFIG") not in {":4096:8", ":16:8"}:
+    os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+
 import numpy as np
 import torch
 from tqdm import tqdm
@@ -263,7 +267,7 @@ def run(
         (save_dir / "labels" if save_txt else save_dir).mkdir(parents=True, exist_ok=True)  # make dir
 
         # Load model
-        model = DetectMultiBackend(weights, device=device, dnn=dnn, data=data, fp16=half)
+        model = DetectMultiBackend(weights, device=device, dnn=dnn, data=data, fp16=half, fuse=False)
         stride, pt, jit, engine = model.stride, model.pt, model.jit, model.engine
         imgsz = check_img_size(imgsz, s=stride)  # check image size
         half = model.fp16  # FP16 supported on limited backends with CUDA

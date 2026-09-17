@@ -53,6 +53,7 @@ Item {
     property var savedWeightTaskIds: []
     property bool migrateLegacySavedWeights: false
     property bool evalStateReady: false
+    property var restoredEvalTaskIds: []
 
     property var algorithmNameMap: ({})
     property var evalAlgorithmMap: ({})
@@ -810,11 +811,14 @@ Item {
                         evalStatus: src.evalStatus || ""
                     })
                     var restoredTaskId = Number(src.evalTaskId || 0)
-                    if (restoredTaskId > 0 && !root.hasEvalResultForTask(restoredTaskId)) {
+                    var restoredStatus = String(src.evalStatus || "").toLowerCase()
+                    var terminalStatus = ["failed", "cancelled", "interrupted"].indexOf(restoredStatus) >= 0
+                    if (restoredTaskId > 0 && !terminalStatus && !root.hasEvalResultForTask(restoredTaskId)) {
                         restoredPendingIds.push(restoredTaskId)
                     }
                 }
                 root.pendingEvalTaskIds = restoredPendingIds
+                root.restoredEvalTaskIds = restoredPendingIds.slice()
                 root.isEvaluating = restoredPendingIds.length > 0
                 root.refreshEvaluationProgressState()
                 if (restoredPendingIds.length > 0) {
@@ -989,12 +993,19 @@ Item {
                     if (idx >= 0) {
                         if (it.status === "completed") {
                             backendService.getEvaluationResults(taskId)
-                        } else if (it.status === "failed") {
+                        } else if (it.status === "failed" || it.status === "cancelled" || it.status === "interrupted") {
                             var failedIds = root.pendingEvalTaskIds.slice()
                             failedIds.splice(idx, 1)
                             root.pendingEvalTaskIds = failedIds
                             root.expectedEvalResultCount = Math.max(0, root.expectedEvalResultCount - 1)
-                            root.showToast("⚠️ 评估失败: " + (it.error_message || it.progress_message || "未知错误"))
+                            var restored = root.restoredEvalTaskIds.indexOf(taskId) >= 0
+                            var restoredIds = root.restoredEvalTaskIds.slice()
+                            var restoredIndex = restoredIds.indexOf(taskId)
+                            if (restoredIndex >= 0) restoredIds.splice(restoredIndex, 1)
+                            root.restoredEvalTaskIds = restoredIds
+                            if (!restored) {
+                                root.showToast("⚠️ 评估失败: " + (it.error_message || it.progress_message || "未知错误"))
+                            }
                         }
                     }
                 }
@@ -1004,6 +1015,7 @@ Item {
                         root.isEvaluating = false
                     }
                     root.refreshEvaluationProgressState()
+                    root.saveToAppState()
                 }
             }
         }

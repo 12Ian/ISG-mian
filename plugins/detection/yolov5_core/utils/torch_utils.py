@@ -277,15 +277,31 @@ def fuse_conv_and_bn(conv, bn):
         .to(conv.weight.device)
     )
 
+    # 确定性算法开启时，CUDA 的 torch.mm 需要进程启动前配置 cuBLAS 工作区。
+    # 融合只在加载模型时执行一次，改在 CPU 计算可绕过旧进程/旧入口未设置环境变量的问题。
+    cpu_fusion = conv.weight.is_cuda and torch.are_deterministic_algorithms_enabled()
+    calculation_device = torch.device("cpu") if cpu_fusion else conv.weight.device
+    calculation_dtype = torch.float32 if cpu_fusion else conv.weight.dtype
+
     # Prepare filters
-    w_conv = conv.weight.clone().view(conv.out_channels, -1)
-    w_bn = torch.diag(bn.weight.div(torch.sqrt(bn.eps + bn.running_var)))
-    fusedconv.weight.copy_(torch.mm(w_bn, w_conv).view(fusedconv.weight.shape))
+    w_conv = conv.weight.detach().to(device=calculation_device, dtype=calculation_dtype).view(conv.out_channels, -1)
+    bn_weight = bn.weight.detach().to(device=calculation_device, dtype=calculation_dtype)
+    bn_running_var = bn.running_var.detach().to(device=calculation_device, dtype=calculation_dtype)
+    w_bn = torch.diag(bn_weight.div(torch.sqrt(bn.eps + bn_running_var)))
+    fused_weight = torch.mm(w_bn, w_conv).view(fusedconv.weight.shape)
+    fusedconv.weight.copy_(fused_weight.to(device=fusedconv.weight.device, dtype=fusedconv.weight.dtype))
 
     # Prepare spatial bias
-    b_conv = torch.zeros(conv.weight.size(0), device=conv.weight.device) if conv.bias is None else conv.bias
-    b_bn = bn.bias - bn.weight.mul(bn.running_mean).div(torch.sqrt(bn.running_var + bn.eps))
-    fusedconv.bias.copy_(torch.mm(w_bn, b_conv.reshape(-1, 1)).reshape(-1) + b_bn)
+    b_conv = (
+        torch.zeros(conv.weight.size(0), device=calculation_device, dtype=calculation_dtype)
+        if conv.bias is None
+        else conv.bias.detach().to(device=calculation_device, dtype=calculation_dtype)
+    )
+    bn_bias = bn.bias.detach().to(device=calculation_device, dtype=calculation_dtype)
+    bn_running_mean = bn.running_mean.detach().to(device=calculation_device, dtype=calculation_dtype)
+    b_bn = bn_bias - bn_weight.mul(bn_running_mean).div(torch.sqrt(bn_running_var + bn.eps))
+    fused_bias = torch.mm(w_bn, b_conv.reshape(-1, 1)).reshape(-1) + b_bn
+    fusedconv.bias.copy_(fused_bias.to(device=fusedconv.bias.device, dtype=fusedconv.bias.dtype))
 
     return fusedconv
 

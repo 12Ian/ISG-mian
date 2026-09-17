@@ -25,6 +25,10 @@ from copy import deepcopy
 from datetime import datetime, timedelta
 from pathlib import Path
 
+# 直接运行 train.py 时也要在导入 PyTorch 前配置 cuBLAS。
+if os.environ.get("CUBLAS_WORKSPACE_CONFIG") not in {":4096:8", ":16:8"}:
+    os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+
 # 本地桌面训练默认不启用在线实验跟踪，避免可选服务导入 TensorFlow 等无关依赖。
 comet_ml = None
 if os.getenv("ISG_ENABLE_ONLINE_LOGGERS") == "1":

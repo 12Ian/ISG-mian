@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 def test_all_default_algorithms_use_plugin_parameter_contracts():
     assert len(DEFAULT_ALGORITHMS) == 69
-    assert sum(len(item["parameters"]) for item in DEFAULT_ALGORITHMS) == 233
+    assert sum(len(item["parameters"]) for item in DEFAULT_ALGORITHMS) == 236
 
     for algorithm in DEFAULT_ALGORITHMS:
         assert algorithm["parameters"] == load_plugin_parameters(ROOT, algorithm["module_path"])
@@ -29,6 +29,18 @@ def test_all_default_algorithms_use_plugin_parameter_contracts():
             if parameter["type"] not in {"int", "float"}:
                 continue
             assert range_info["min_value"] <= default <= range_info["max_value"]
+
+
+def test_vit_mae_patch_size_contract_accepts_only_internal_image_divisors():
+    algorithm = next(item for item in DEFAULT_ALGORITHMS if item["key"] == "generation.image.vit_mae")
+    patch_parameter = next(item for item in algorithm["parameters"] if item["name"] == "patch_size")
+
+    assert patch_parameter["type"] == "select"
+    assert patch_parameter["options"] == [2, 4, 8, 16, 32]
+
+    from plugins.generation.vit_mae_image_augmenter import _normalize_patch_size
+
+    assert [_normalize_patch_size(value) for value in (2, 3, 6, 13, 32)] == [2, 2, 4, 16, 32]
 
 
 def test_runtime_clamps_match_declared_plugin_ranges():

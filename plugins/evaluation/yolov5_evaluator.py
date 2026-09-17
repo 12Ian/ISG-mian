@@ -6,7 +6,13 @@ YOLOv5 目标检测评估插件。
 """
 from __future__ import annotations
 from pathlib import Path
+import importlib.util
+import threading
 import os, sys, json, shutil, yaml
+
+# 评估插件也可能被独立入口加载，必须在导入 PyTorch 前配置 cuBLAS。
+if os.environ.get("CUBLAS_WORKSPACE_CONFIG") not in {":4096:8", ":16:8"}:
+    os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
 
 import utils as _shared_utils  # 预加载合并后的项目/YOLOv5 utils，避免同名模块抢占。
 from core.data_management.detection_annotations import sanitize_normalized_bbox
@@ -14,8 +20,40 @@ from core.hardware_adapter import resolve_yolo_device
 
 
 _YOLOV5_ROOT = Path(__file__).resolve().parent.parent / "detection" / "yolov5_core"
+_YOLOV5_VAL_LOCK = threading.RLock()
 os.environ.setdefault("NO_ALBUMENTATIONS_UPDATE", "1")
 os.environ.setdefault("YOLO_OFFLINE", "true")
+
+
+def _load_yolov5_val():
+    """从当前项目源码加载验证模块，避免顶层 val 模块被其他入口缓存。"""
+    with _YOLOV5_VAL_LOCK:
+        root_text = str(_YOLOV5_ROOT)
+        if root_text in sys.path:
+            sys.path.remove(root_text)
+        sys.path.insert(0, root_text)
+
+        module_name = "isg_yolov5_val"
+        val_path = _YOLOV5_ROOT / "val.py"
+        module = sys.modules.get(module_name)
+        module_file = Path(getattr(module, "__file__", "")) if module is not None else None
+        if module is not None and module_file is not None and module_file.resolve() == val_path.resolve():
+            if hasattr(module, "run"):
+                return module
+            sys.modules.pop(module_name, None)
+
+        spec = importlib.util.spec_from_file_location(module_name, val_path)
+        if spec is None or spec.loader is None:
+            raise ImportError(f"无法加载 YOLOv5 验证模块: {val_path}")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+        try:
+            spec.loader.exec_module(module)
+        except Exception:
+            if sys.modules.get(module_name) is module:
+                sys.modules.pop(module_name, None)
+            raise
+        return module
 
 PARAMETERS = [
     {
@@ -207,14 +245,17 @@ def _run_evaluation(payload: dict, context) -> dict:
     context.set_progress(10.0, f"验证样本: {valid_count}, {len(class_names)} 类")
 
     # 导入 YOLOv5
-    if str(_YOLOV5_ROOT) not in sys.path:
-        sys.path.insert(0, str(_YOLOV5_ROOT))
     import torch
-    import val as yolo_val
+    yolo_val = _load_yolov5_val()
 
     device_str, device_warning = resolve_yolo_device(device, torch)
     context.set_progress(15.0, f"{device_warning} YOLOv5 评估启动: {checkpoint_path}".strip())
 
+    # 训练阶段会把确定性算法开关保留在当前进程的全局状态中；评估不需要该开关，
+    # 否则 GPU 上的模型加载/融合可能因 cuBLAS 约束失败。评估结束后恢复原状态。
+    deterministic_enabled = torch.are_deterministic_algorithms_enabled()
+    if deterministic_enabled:
+        torch.use_deterministic_algorithms(False)
     try:
         result = yolo_val.run(
             data=str(data_yaml_path),
@@ -239,6 +280,9 @@ def _run_evaluation(payload: dict, context) -> dict:
         import traceback
         return {"ok": False, "error_code": "EVALUATION_FAILED",
                 "message": f"YOLOv5 评估失败: {exc}\n{traceback.format_exc()}"}
+    finally:
+        if deterministic_enabled:
+            torch.use_deterministic_algorithms(True)
 
     # 解析指标
     metrics_raw, maps_per_class, times = result
