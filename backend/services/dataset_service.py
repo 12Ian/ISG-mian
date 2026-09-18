@@ -323,6 +323,10 @@ class DatasetService(ServiceBase):
                     failed_count += 1
                     errors.append({"path": str(source), "reason": "missing_file"})
                     continue
+                if source.stat().st_size == 0:
+                    failed_count += 1
+                    errors.append({"path": str(source), "reason": "empty_file"})
+                    continue
                 if not self._is_supported_import_file(source):
                     failed_count += 1
                     errors.append({"path": str(source), "reason": "unsupported_file_type"})
@@ -353,6 +357,8 @@ class DatasetService(ServiceBase):
                     resource_id=str(sample.id),
                     message=f"Imported file {copied.name} into dataset {dataset.name}",
                 )
+            if imported_count == 0 and any(error.get("reason") == "empty_file" for error in errors):
+                raise ValidationError("空文件不可上传。")
             if imported_count == 0 and errors:
                 raise ValidationError("未发现可导入的数据文件")
             self._refresh_dataset_stats(session, dataset)
@@ -430,6 +436,8 @@ class DatasetService(ServiceBase):
                 failed_count += int(data.get("failed_count", 0))
                 errors.extend(data.get("errors", []))
                 annotation_report = annotation_report or data.get("annotation_report")
+            if imported_count == 0 and any(error.get("reason") == "empty_file" for error in errors):
+                raise ValidationError("空文件不可上传。")
             if imported_count == 0:
                 raise ValidationError("未发现可导入的数据文件。")
             return {
@@ -531,6 +539,10 @@ class DatasetService(ServiceBase):
                     failed_count += 1
                     errors.append({"path": str(source), "reason": "missing_file"})
                     continue
+                if source.stat().st_size == 0:
+                    failed_count += 1
+                    errors.append({"path": str(source), "reason": "empty_file"})
+                    continue
                 raw_root = Path(dataset.storage_path) / "raw"
                 requested_relative_path = normalize_dataset_relative_path(record["relative_path"])
                 labels = list(record.get("labels", [])) or label_map.get(requested_relative_path, [])
@@ -569,6 +581,9 @@ class DatasetService(ServiceBase):
                     message=f"Imported file {copied.name} into dataset {dataset.name}",
                     payload_json={"relative_path": record["relative_path"]},
                 )
+            if imported_count == 0 and any(error.get("reason") == "empty_file" for error in errors):
+                raise ValidationError("空文件不可上传。")
+
             # 复制 manifest JSON 到数据集目录
             if manifest_path.is_file():
                 import shutil

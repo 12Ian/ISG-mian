@@ -247,7 +247,12 @@ class BackendService(QObject):
             imported_count = int(data.get("imported_count") or 0)
             failed_count = int(data.get("failed_count") or 0)
             self.datasetsUpdated.emit(self._bridge.get_datasets(1, 100, ""))
-            self.importStatusUpdated.emit(f"已导入 {imported_count} 个文件，失败 {failed_count} 个", True)
+            errors = data.get("errors") or []
+            has_empty_file = any(error.get("reason") == "empty_file" for error in errors if isinstance(error, dict))
+            message = f"已导入 {imported_count} 个文件，失败 {failed_count} 个"
+            if has_empty_file:
+                message += "；空文件不可上传"
+            self.importStatusUpdated.emit(message, True)
             return {"status": "success", "data": data}
         message = result.get("message", "未知错误")
         self.importStatusUpdated.emit(message, False)
