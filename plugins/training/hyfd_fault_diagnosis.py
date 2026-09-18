@@ -126,14 +126,24 @@ def _run_training(payload: dict, context) -> dict:
     y = data.iloc[:, -1].values.astype(np.int64)
 
     nc = len(np.unique(y))
+    if len(X) < 6 or nc != 6:
+        return {"ok": False, "error_code": "INSUFFICIENT_DATA",
+                "message": f"HyFD-SME 需要 6 类故障，当前窗口 {len(X)} 个、类别 {nc} 个"}
+    if min(np.unique(y, return_counts=True)[1]) < 2:
+        return {"ok": False, "error_code": "INSUFFICIENT_DATA", "message": "每个故障类别至少需要 2 个有效窗口"}
     context.set_progress(3.0, f"窗口数: {len(X)}, 类别: {nc}")
 
     # 划分
     from sklearn.model_selection import train_test_split
     test_ratio = max(0.05, 1.0 - train_ratio - val_ratio)
-    X_temp, X_test, y_temp, y_test = train_test_split(X, y, test_size=test_ratio, random_state=random_seed, stratify=y)
-    val_rel = val_ratio / (train_ratio + val_ratio) if (train_ratio + val_ratio) > 0 else 0.15
-    X_train, X_val, y_train, y_val = train_test_split(X_temp, y_temp, test_size=val_rel, random_state=random_seed, stratify=y_temp)
+    try:
+        X_temp, X_test, y_temp, y_test = train_test_split(X, y, test_size=test_ratio, random_state=random_seed, stratify=y)
+        val_rel = val_ratio / (train_ratio + val_ratio) if (train_ratio + val_ratio) > 0 else 0.15
+        X_train, X_val, y_train, y_val = train_test_split(X_temp, y_temp, test_size=val_rel, random_state=random_seed, stratify=y_temp)
+    except ValueError as exc:
+        return {"ok": False, "error_code": "INSUFFICIENT_DATA", "message": f"故障窗口无法按类别划分训练集：{exc}"}
+    if not len(X_train) or not len(X_val) or not len(X_test):
+        return {"ok": False, "error_code": "INSUFFICIENT_DATA", "message": "训练/验证/测试集划分后存在空数据，请增加样本或调整比例"}
 
     # TDF 特征
     def extract_tdf(arr):
@@ -215,6 +225,8 @@ def _run_training(payload: dict, context) -> dict:
             optimizer.step()
             train_loss += loss.item()
             train_acc += (out.argmax(1) == label).sum().item() / len(label)
+        if not len(train_dl) or not len(val_dl):
+            return {"ok": False, "error_code": "INSUFFICIENT_DATA", "message": "训练或验证数据为空，请增加样本"}
         train_acc = train_acc / len(train_dl) * 100
         train_loss /= len(train_dl)
 

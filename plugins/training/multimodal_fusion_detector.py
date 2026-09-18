@@ -205,6 +205,9 @@ def _run_training(payload: dict, context) -> dict:
     train_data = paired[:tr_end]
     val_data = paired[tr_end:val_end]
     test_data = paired[val_end:]
+    if not train_data or not val_data or not test_data:
+        return {"ok": False, "error_code": "INSUFFICIENT_DATA",
+                "message": f"训练/验证/测试集划分后存在空数据（train={len(train_data)}, val={len(val_data)}, test={len(test_data)}），请增加样本或调整比例"}
     context.set_progress(3.0, f"train={len(train_data)} val={len(val_data)} test={len(test_data)}")
 
     # ---- 模型 ----

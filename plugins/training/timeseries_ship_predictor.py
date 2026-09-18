@@ -198,6 +198,9 @@ def _run_training(payload: dict, context) -> dict:
     X_test, y_test = _build_sequences(test_data, lookback, pred_win)
 
     context.set_progress(5.0, f"序列: train={len(X_train)} val={len(X_val)} test={len(X_test)}")
+    if not len(X_train) or not len(X_val) or not len(X_test):
+        return {"ok": False, "error_code": "INSUFFICIENT_DATA",
+                "message": f"训练/验证/测试序列不足（train={len(X_train)}, val={len(X_val)}, test={len(X_test)}），请增加 AIS 数据或调整划分比例"}
 
     # 保存测试集和预处理器
     _save_preprocessor(out_dir, mean, std, feature_cols, lookback, pred_win)

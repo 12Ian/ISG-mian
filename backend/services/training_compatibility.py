@@ -34,6 +34,27 @@ def analyze_training_compatibility(dataset, samples, algorithm, parameters: dict
 
     if key == "training.demo_classifier":
         return _result(True, "演示算法接受任意非空数据集")
+    if str(algorithm.modality or "") == "audio" or "audio_classifier" in key:
+        audio_exts = {".wav", ".mp3", ".flac", ".ogg", ".aac", ".m4a"}
+        labeled = [
+            sample for sample in active_samples
+            if Path(sample_path(sample)).suffix.casefold() in audio_exts
+            and _classification_names(sample)
+            and Path(sample_path(sample)).is_file()
+        ]
+        if len(labeled) < 10:
+            return _result(False, f"音频分类至少需要 10 个可读取且有标签的音频，当前 {len(labeled)} 个")
+        counts = Counter(name for sample in labeled for name in _classification_names(sample)[:1])
+        if len(counts) < 2:
+            return _result(False, "音频分类至少需要 2 个类别")
+        if min(counts.values()) < 2:
+            return _result(False, "音频分类每个类别至少需要 2 个样本")
+        train_ratio = float(params.get("train_ratio", 0.75))
+        train_count = sum(max(1, int(count * train_ratio)) for count in counts.values())
+        test_count = len(labeled) - train_count
+        if test_count < 1:
+            return _result(False, "音频分类按当前训练比例划分后没有测试样本，请增加数据或调整比例")
+        return _result(True, f"找到 {len(labeled)} 个音频，{len(counts)} 个类别")
     if key == "training.ship_classifier":
         images = _image_samples(active_samples)
         if len(images) < 2:
@@ -53,6 +74,9 @@ def analyze_training_compatibility(dataset, samples, algorithm, parameters: dict
             return _result(False, "声呐分类至少需要 2 个类别")
         if min(counts.values()) < 2:
             return _result(False, "声呐分类每个类别至少需要 2 张图片")
+        weights_path = Path(__file__).resolve().parents[2] / "plugins" / "assets" / "resnet18-f37072fd.pth"
+        if not weights_path.is_file():
+            return _result(False, "声呐分类缺少离线 ResNet18 权重文件，请先补齐 plugins/assets/resnet18-f37072fd.pth")
         return _result(True, f"{len(labeled)} 张有标签图片，{len(counts)} 个类别")
     if key == "training.image.yolov5_detector":
         detected = [sample for sample in _image_samples(active_samples) if _detection_labels(sample)]
@@ -62,14 +86,20 @@ def analyze_training_compatibility(dataset, samples, algorithm, parameters: dict
     if key == "training.multimodal.seg":
         groups = _multimodal_groups(active_samples)
         paired = sum(1 for roles in groups.values() if roles["image"] and roles["mask"])
-        return _minimum(paired, 10, "至少需要 10 组同名图片和分割 mask")
+        result = _minimum(paired, 10, "至少需要 10 组同名图片和分割 mask")
+        if not result["compatible"]:
+            return result
+        return _check_split_counts(paired, params, "分割训练")
     if key == "training.multimodal.fusion_detector":
         groups = _multimodal_groups(active_samples)
         paired = 0
         for roles in groups.values():
             if roles["radar"] and any(_detection_labels(sample) for sample in roles["image"]):
                 paired += 1
-        return _minimum(paired, 10, "至少需要 10 组图片、检测框和雷达数据")
+        result = _minimum(paired, 10, "至少需要 10 组图片、检测框和雷达数据")
+        if not result["compatible"]:
+            return result
+        return _check_split_counts(paired, params, "融合检测训练")
     if key == "training.timeseries.hyfd_fault_diagnosis":
         csv_path = _first_csv(active_samples)
         if not csv_path:
@@ -77,7 +107,15 @@ def analyze_training_compatibility(dataset, samples, algorithm, parameters: dict
         header, _ = _csv_shape(csv_path)
         if "MEAN TEMP" not in header or "label" not in header:
             return _result(False, "CSV 必须包含 MEAN TEMP 和 label 列")
-        return _result(True, "CSV 包含故障诊断所需列")
+        window_size = int(params.get("window_size", 64))
+        stride = int(params.get("stride", 16))
+        window_count, class_counts = _hyfd_window_stats(csv_path, window_size, stride)
+        if window_count < 6:
+            return _result(False, f"故障诊断可用滑动窗口不足（当前 {window_count} 个，至少需要 6 个）")
+        if len(class_counts) != 6 or min(class_counts.values()) < 2:
+            return _result(False, "HyFD-SME 模型固定支持 6 类故障，且每类至少需要 2 个有效窗口")
+        split = _check_split_counts(window_count, params, "故障诊断")
+        return split if not split["compatible"] else _result(True, f"CSV 可生成 {window_count} 个故障诊断窗口")
     if key == "training.timeseries.ship_predictor":
         csv_path = _first_csv(active_samples)
         if not csv_path:
@@ -90,7 +128,14 @@ def analyze_training_compatibility(dataset, samples, algorithm, parameters: dict
             return _result(False, "AIS CSV 至少需要 4 个特征列")
         if row_count < minimum_rows:
             return _result(False, f"AIS CSV 至少需要约 {minimum_rows} 行，当前 {row_count} 行")
-        return _result(True, f"AIS CSV 包含 {row_count} 行数据")
+        train = int(row_count * float(params.get("train_ratio", 0.7)))
+        val = int(row_count * (float(params.get("train_ratio", 0.7)) + float(params.get("val_ratio", 0.15)))) - train
+        test = row_count - train - val
+        required = lookback + prediction
+        counts = [part - required + 1 for part in (train, val, test)]
+        if any(count < 1 for count in counts):
+            return _result(False, f"按当前划分无法同时生成训练/验证/测试序列（当前序列数 {counts}，请增加数据或调整比例）")
+        return _result(True, f"AIS CSV 包含 {row_count} 行数据，可生成序列 train={counts[0]} val={counts[1]} test={counts[2]}")
 
     expected = str(algorithm.modality or "")
     actual = str(dataset.modality or "")
@@ -320,3 +365,32 @@ def _csv_shape(path: Path) -> tuple[list[str], int]:
         return header, row_count
     except OSError:
         return [], 0
+
+
+def _check_split_counts(count: int, params: dict, name: str) -> dict:
+    train_ratio = float(params.get("train_ratio", 0.7))
+    val_ratio = float(params.get("val_ratio", 0.15))
+    train = int(count * train_ratio)
+    val = int(count * (train_ratio + val_ratio)) - train
+    test = count - train - val
+    if min(train, val, test) < 1:
+        return _result(False, f"{name}按当前比例划分后存在空数据集（train={train}, val={val}, test={test}），请增加样本或调整比例")
+    return _result(True, "划分后训练、验证、测试集均有数据")
+
+
+def _hyfd_window_stats(path: Path, window_size: int, stride: int) -> tuple[int, Counter]:
+    try:
+        with path.open("r", encoding="utf-8-sig", newline="") as handle:
+            reader = csv.DictReader(handle)
+            rows = list(reader)
+        labels = [row.get("label") for row in rows]
+        counts = Counter()
+        total = 0
+        for start in range(0, len(rows) - window_size, max(1, stride)):
+            window = labels[start:start + window_size]
+            if window and len(set(window)) == 1 and window[0] not in (None, ""):
+                counts[str(window[0])] += 1
+                total += 1
+        return total, counts
+    except (OSError, csv.Error):
+        return 0, Counter()

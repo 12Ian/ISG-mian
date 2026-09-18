@@ -212,6 +212,13 @@ def _run_training(payload: dict, context) -> dict:
     context.set_progress(5.0, f'{num_class}类, train={len(train_samples)} test={len(test_samples)}')
 
     # 写入数据列表文件
+    if num_class < 2 or not train_samples or not test_samples:
+        return {
+            'ok': False,
+            'error_code': 'INSUFFICIENT_DATA',
+            'message': f'音频训练划分无效：类别={num_class}，训练样本={len(train_samples)}，测试样本={len(test_samples)}',
+        }
+
     data_dir = out_dir / 'data_lists'
     data_dir.mkdir(parents=True, exist_ok=True)
 
@@ -239,7 +246,7 @@ def _run_training(payload: dict, context) -> dict:
                 'sample_rate': 16000, 'use_dB_normalization': True, 'target_dB': -20,
             },
             'dataLoader': {
-                'batch_size': bs, 'drop_last': True, 'num_workers': 0,
+                'batch_size': bs, 'drop_last': False, 'num_workers': 0,
             },
             'eval_conf': {
                 'batch_size': max(1, bs // 4), 'max_duration': max_dur * 3,
