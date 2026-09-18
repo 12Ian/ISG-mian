@@ -1027,9 +1027,13 @@ Item {
                         root.showGenerationFailure(task.error_message || task.progress_message || "生成任务执行失败")
                     }
                     if (task.status === "completed" || task.status === "failed" || task.status === "cancelled" || task.status === "interrupted") {
+                        var completedFromPolling = task.status === "completed" && !root.isCompleted
                         root.isGenerating = false
                         root.isCancellationRequested = false
                         root.isCompleted = task.status === "completed"
+                        if (completedFromPolling) {
+                            root.loadGenerationOutputPage(root.currentTaskId, 1)
+                        }
                     }
                 }
             }
@@ -2322,9 +2326,14 @@ Item {
                                         root.isCompleted = false
                                         root.isCancellationRequested = false
                                         previewModel.clear()
-                                        backendService.startEnhancementTask(root.currentTaskId)
-                                        root.showToast("✅ 生成任务已启动 (" + root.currentTaskId + ")")
                                         root.isGenerating = true
+                                        var startResult = backendService.startEnhancementTask(root.currentTaskId)
+                                        if (!startResult || startResult.status !== "success") {
+                                            root.isGenerating = false
+                                            root.showToast("⚠️ " + (startResult && startResult.message ? startResult.message : "生成任务启动失败"))
+                                            return
+                                        }
+                                        root.showToast("✅ 生成任务已启动 (" + root.currentTaskId + ")")
                                     } else {
                                         backendService.stopEnhancementTask(root.currentTaskId)
                                         root.isCancellationRequested = true
