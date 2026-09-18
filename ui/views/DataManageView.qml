@@ -591,6 +591,10 @@ Item {
                     clip: true
                     spacing: 4
                     model: displayedDatasets
+                    boundsBehavior: Flickable.StopAtBounds
+                    ScrollBar.vertical: ScrollBar {
+                        policy: ScrollBar.AlwaysOn
+                    }
 
                     delegate: Rectangle {
                         width: datasetListView.width

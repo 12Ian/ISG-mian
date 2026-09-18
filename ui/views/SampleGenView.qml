@@ -3076,6 +3076,10 @@ Item {
                 clip: true
                 spacing: 12
                 model: generationHistoryModel
+                boundsBehavior: Flickable.StopAtBounds
+                ScrollBar.vertical: ScrollBar {
+                    policy: ScrollBar.AlwaysOn
+                }
 
                 delegate: Rectangle {
                     id: cardItem
