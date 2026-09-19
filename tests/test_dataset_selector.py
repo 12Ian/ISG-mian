@@ -60,6 +60,41 @@ def test_sample_generation_uses_unpaged_dataset_signal():
     assert "getDatasets(1, 100" not in qml
 
 
+def test_data_management_paginates_filtered_datasets_with_manual_page_input():
+    qml = (ROOT / "ui" / "views" / "DataManageView.qml").read_text(encoding="utf-8")
+    filter_function = qml.split("function filterData()", 1)[1].split(
+        "function datasetStage", 1
+    )[0]
+
+    assert "function onAllDatasetsUpdated(data)" in qml
+    assert 'backendService.getAllDatasets("")' in qml
+    assert "property int pageSize: 15" in qml
+    assert "filteredDatasets = allDatasets.filter" in filter_function
+    assert "currentPage = 1" in filter_function
+    assert "displayedDatasets = filteredDatasets.slice(start, start + pageSize)" in qml
+    assert "onEditingFinished: root.goToPage(text)" in qml
+    assert "model: displayedDatasets" in qml
+
+
+def test_task_history_views_paginate_by_eight_records():
+    sample_gen = (ROOT / "ui" / "views" / "SampleGenView.qml").read_text(encoding="utf-8")
+    data_clean = (ROOT / "ui" / "views" / "DataCleanView.qml").read_text(encoding="utf-8")
+    evaluate = (ROOT / "ui" / "views" / "EvaluateView.qml").read_text(encoding="utf-8")
+
+    assert "property int historyPageSize: 8" in sample_gen
+    assert "generationHistoryPageModel" in sample_gen
+    assert "onEditingFinished: root.goToGenerationHistoryPage(text)" in sample_gen
+    assert "property int historyPageSize: 8" in data_clean
+    assert "cleaningHistoryPageModel" in data_clean
+    assert "onEditingFinished: root.goToCleaningHistoryPage(text)" in data_clean
+    assert "property int historyPageSize: 8" in evaluate
+    assert "function historyDisplayOrder()" in evaluate
+    assert "var trainingIndexes = []" in evaluate
+    assert "var evaluationIndexes = []" in evaluate
+    assert "historyPageIndexesByType(type)" in evaluate
+    assert "onEditingFinished: root.goToEvaluationHistoryPage(text)" in evaluate
+
+
 def test_combo_box_has_mouse_draggable_scrollbar():
     qml = (ROOT / "ui" / "StableComboBox.qml").read_text(encoding="utf-8")
     assert "ScrollBar.vertical" in qml
@@ -116,7 +151,7 @@ def test_evaluation_keeps_completed_task_pending_until_result_arrives():
         "function onEvaluationResultsUpdated", 1
     )[0]
     completed_branch = task_handler.split('if (it.status === "completed")', 1)[1].split(
-        '} else if (it.status === "failed")', 1
+        '} else if (it.status === "failed"', 1
     )[0]
     result_handler = qml.split("function onEvaluationResultsUpdated", 1)[1].split(
         "Component.onCompleted", 1
@@ -127,17 +162,53 @@ def test_evaluation_keeps_completed_task_pending_until_result_arrives():
     assert "root.pendingEvalTaskIds = remainingIds" in result_handler
 
 
-def test_evaluation_restore_refetches_missing_results():
+def test_evaluation_does_not_restore_previous_workbench_results():
     qml = (ROOT / "ui" / "views" / "EvaluateView.qml").read_text(encoding="utf-8")
     restore_handler = qml.split("function onSettingValueLoaded", 1)[1].split(
         "function onEvaluationScenariosUpdated", 1
     )[0]
 
-    assert "function hasEvalResultForTask(evalTaskId)" in qml
-    assert "!root.hasEvalResultForTask(restoredTaskId)" in restore_handler
-    assert "root.pendingEvalTaskIds = restoredPendingIds" in restore_handler
-    assert "root.isEvaluating = restoredPendingIds.length > 0" in restore_handler
-    assert 'backendService.getEvaluationTasks("")' in restore_handler
+    assert "taskQueueModel.clear()" in restore_handler
+    assert "evalResultModel.clear()" in restore_handler
+    assert "activeEvalSourceModel.clear()" in restore_handler
+    assert "root.pendingEvalTaskIds = []" in restore_handler
+    assert "root.isEvaluating = false" in restore_handler
+    assert "state.evalResults" not in restore_handler
+    assert "state.activeEvalSources" not in restore_handler
+    assert "state.taskQueue" not in restore_handler
+
+
+def test_training_dataset_combo_scrolls_full_name_at_constant_speed():
+    combo_qml = (ROOT / "ui" / "StableComboBox.qml").read_text(encoding="utf-8")
+    evaluate_qml = (ROOT / "ui" / "views" / "EvaluateView.qml").read_text(encoding="utf-8")
+    dataset_combo = evaluate_qml.split("id: datasetCombo", 1)[1].split(
+        "onCurrentIndexChanged: root.requestTrainingCompatibility()", 1
+    )[0]
+
+    assert "marqueeText: true" in dataset_combo
+    assert "elide: control.marqueeText ? Text.ElideNone : Text.ElideRight" in combo_qml
+    assert "easing.type: Easing.Linear" in combo_qml
+    assert "duration: selectedText.scrollDuration" in combo_qml
+    assert "to: selectedViewport.width - selectedText.implicitWidth" in combo_qml
+    assert "width: control.width" in combo_qml
+
+
+def test_training_algorithms_are_not_filtered_by_dataset_compatibility():
+    qml = (ROOT / "ui" / "views" / "EvaluateView.qml").read_text(encoding="utf-8")
+    filter_function = qml.split("function filterAlgorithmsByScenario", 1)[1].split(
+        "function requestTrainingCompatibility", 1
+    )[0]
+    compatibility_handler = qml.split("function onTrainingCompatibilityUpdated", 1)[1].split(
+        "function onAlgorithmsUpdated", 1
+    )[0]
+    start_handler = qml.split("function startSelectedTraining", 1)[1].split(
+        "function _startSelectedTrainingImpl", 1
+    )[0]
+
+    assert "compatible" not in filter_function
+    assert "root.filterAlgorithmsByScenario()" not in compatibility_handler
+    assert "selectedTrainingCompatibilityError" in start_handler
+    assert "数据集与算法不匹配" in qml
 
 
 def test_training_selectors_survive_page_navigation():

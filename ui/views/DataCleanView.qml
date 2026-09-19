@@ -73,6 +73,10 @@ Item {
     property bool parameterPresetPreviewVisible: false
     property var allCleaningHistoryItems: []
     property string historySearchText: ""
+    property int historyPageSize: 8
+    property int historyCurrentPage: 1
+    readonly property int historyTotalCount: cleaningHistoryModel.count
+    readonly property int historyPageCount: Math.max(1, Math.ceil(historyTotalCount / historyPageSize))
 
     function updateExportCount() {
         var count = 0
@@ -110,7 +114,7 @@ Item {
         return text.indexOf(keyword) !== -1
     }
 
-    function applyCleaningHistoryFilter() {
+    function applyCleaningHistoryFilter(resetPage) {
         var keyword = String(root.historySearchText || "").trim().toLowerCase()
         cleaningHistoryModel.clear()
         for (var i = 0; i < root.allCleaningHistoryItems.length; i++) {
@@ -119,7 +123,31 @@ Item {
                 cleaningHistoryModel.append(item)
             }
         }
+        if (resetPage !== false) root.historyCurrentPage = 1
+        root.updateCleaningHistoryPage()
         root.updateExportCount()
+    }
+
+    function updateCleaningHistoryPage() {
+        root.historyCurrentPage = Math.min(Math.max(root.historyCurrentPage, 1), root.historyPageCount)
+        cleaningHistoryPageModel.clear()
+        var start = (root.historyCurrentPage - 1) * root.historyPageSize
+        var end = Math.min(start + root.historyPageSize, cleaningHistoryModel.count)
+        for (var i = start; i < end; i++) {
+            var source = cleaningHistoryModel.get(i)
+            var pageItem = { sourceIndex: i }
+            for (var key in source) pageItem[key] = source[key]
+            cleaningHistoryPageModel.append(pageItem)
+        }
+        if (historyPageInput) historyPageInput.text = String(root.historyCurrentPage)
+        if (historyListView) historyListView.positionViewAtBeginning()
+    }
+
+    function goToCleaningHistoryPage(page) {
+        var requestedPage = parseInt(page, 10)
+        if (isNaN(requestedPage)) requestedPage = root.historyCurrentPage
+        root.historyCurrentPage = Math.min(Math.max(requestedPage, 1), root.historyPageCount)
+        root.updateCleaningHistoryPage()
     }
 
     function manualExcludeMonitorSample(rowIndex, taskId, sampleId) {
@@ -609,6 +637,7 @@ Item {
     }
 
     ListModel { id: cleaningHistoryModel }
+    ListModel { id: cleaningHistoryPageModel }
     ListModel { id: previewModel }
 
     // ================= 后端信号处理 =================
@@ -704,7 +733,7 @@ Item {
             }
             root.hasActiveCleaningTasks = hasActiveTasks
             root.allCleaningHistoryItems = historyItems
-            root.applyCleaningHistoryFilter()
+            root.applyCleaningHistoryFilter(false)
         }
 
         function onAlgorithmsUpdated(algorithms) {
@@ -1331,6 +1360,7 @@ Item {
                     onClicked: {
                         if (root.pendingEditIndex !== -1 && editProjectNameInput.text.trim() !== "") {
                             cleaningHistoryModel.setProperty(root.pendingEditIndex, "projectName", editProjectNameInput.text)
+                            root.updateCleaningHistoryPage()
                             root.showToast("✅ 工程名称已更新")
                         }
                         editProjectPopup.close()
@@ -1386,6 +1416,7 @@ Item {
                                 var result = backendService.deleteTask(item.taskId)
                                 if (result && result.status === "success") {
                                     cleaningHistoryModel.remove(root.pendingDeleteIndex)
+                                    root.updateCleaningHistoryPage()
                                     root.updateExportCount()
                                     root.showToast("记录已删除")
                                 } else {
@@ -1393,6 +1424,7 @@ Item {
                                 }
                             } else {
                                 cleaningHistoryModel.remove(root.pendingDeleteIndex)
+                                root.updateCleaningHistoryPage()
                                 root.updateExportCount()
                                 root.showToast("记录已删除")
                             }
@@ -1476,6 +1508,7 @@ Item {
                         for (var i = 0; i < cleaningHistoryModel.count; i++) {
                             cleaningHistoryModel.setProperty(i, "isSelected", false)
                         }
+                        root.updateCleaningHistoryPage()
                         root.updateExportCount()
                         root.showToast("🚀 选中的数据集已开始合并打包导出")
                     }
@@ -2256,7 +2289,7 @@ Item {
                         text: root.historySearchText
                         onTextChanged: {
                             root.historySearchText = text
-                            root.applyCleaningHistoryFilter()
+                            root.applyCleaningHistoryFilter(true)
                         }
                         Text {
                             anchors.verticalCenter: parent.verticalCenter
@@ -2330,7 +2363,7 @@ Item {
                 anchors.fill: parent
                 clip: true
                 spacing: 12
-                model: cleaningHistoryModel
+                model: cleaningHistoryPageModel
                 boundsBehavior: Flickable.StopAtBounds
                 ScrollBar.vertical: ScrollBar {
                     policy: ScrollBar.AlwaysOn
@@ -2350,7 +2383,9 @@ Item {
                         anchors.fill: parent
                         hoverEnabled: true
                         onClicked: {
-                            model.isSelected = !model.isSelected
+                            var selected = !model.isSelected
+                            cleaningHistoryPageModel.setProperty(index, "isSelected", selected)
+                            cleaningHistoryModel.setProperty(model.sourceIndex, "isSelected", selected)
                             root.updateExportCount()
                         }
                     }
@@ -2461,7 +2496,7 @@ Item {
                                         time: model.time
                                     }
                                     root.currentHistoryTitle = model.projectName || ""
-                                    root.currentHistoryIndex = index
+                                    root.currentHistoryIndex = model.sourceIndex
                                     root.detailAlgorithmIds = detailIds
                                     var algoItems = []
                                     for (var ai = 0; ai < root.detailAlgorithmIds.length; ai++) {
@@ -2487,7 +2522,7 @@ Item {
                                 background: Rectangle { color: parent.hovered ? "#F3F4F6" : "white"; radius: 4; border.color: parent.hovered ? "#9CA3AF" : Theme.border }
                                 contentItem: Text { text: parent.text; color: "black"; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                                 onClicked: {
-                                    root.pendingEditIndex = index
+                                    root.pendingEditIndex = model.sourceIndex
                                     editProjectNameInput.text = model.projectName
                                     editProjectPopup.open()
                                 }
@@ -2498,7 +2533,7 @@ Item {
                                 background: Rectangle { color: parent.hovered ? "#BE123C" : "transparent"; border.color: root.dangerColor; border.width: 1; radius: 4 }
                                 contentItem: Text { text: parent.text; color: parent.hovered ? "white" : root.dangerColor; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                                 onClicked: {
-                                    root.pendingDeleteIndex = index
+                                    root.pendingDeleteIndex = model.sourceIndex
                                     deleteConfirmPopup.open()
                                 }
                             }
@@ -2512,6 +2547,42 @@ Item {
                     color: Theme.muted
                     font.pixelSize: 16
                     visible: cleaningHistoryModel.count === 0
+                }
+            }
+        }
+
+        Rectangle {
+            Layout.fillWidth: true
+            height: 46
+            color: Theme.rowAlt
+            border.color: root.borderColor
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: 12
+                anchors.rightMargin: 12
+                spacing: 8
+                Label { text: "共 " + root.historyTotalCount + " 条记录"; color: root.textMuted; font.pixelSize: 13 }
+                Item { Layout.fillWidth: true }
+                Button {
+                    text: "上一页"
+                    enabled: root.historyCurrentPage > 1
+                    Layout.preferredWidth: 72; Layout.preferredHeight: 30
+                    onClicked: root.goToCleaningHistoryPage(root.historyCurrentPage - 1)
+                }
+                TextField {
+                    id: historyPageInput
+                    text: "1"
+                    Layout.preferredWidth: 58; Layout.preferredHeight: 30
+                    horizontalAlignment: TextInput.AlignHCenter
+                    validator: IntValidator { bottom: 1; top: root.historyPageCount }
+                    onEditingFinished: root.goToCleaningHistoryPage(text)
+                }
+                Label { text: "/ " + root.historyPageCount; color: root.textMuted; font.pixelSize: 13 }
+                Button {
+                    text: "下一页"
+                    enabled: root.historyCurrentPage < root.historyPageCount
+                    Layout.preferredWidth: 72; Layout.preferredHeight: 30
+                    onClicked: root.goToCleaningHistoryPage(root.historyCurrentPage + 1)
                 }
             }
         }

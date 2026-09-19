@@ -81,6 +81,10 @@ Item {
     property bool parameterPresetPreviewVisible: false
     property var allGenerationHistoryItems: []
     property string historySearchText: ""
+    property int historyPageSize: 8
+    property int historyCurrentPage: 1
+    readonly property int historyTotalCount: generationHistoryModel.count
+    readonly property int historyPageCount: Math.max(1, Math.ceil(historyTotalCount / historyPageSize))
 
     function updateExportCount() {
         var count = 0
@@ -126,7 +130,7 @@ Item {
         return text.indexOf(keyword) !== -1
     }
 
-    function applyGenerationHistoryFilter() {
+    function applyGenerationHistoryFilter(resetPage) {
         var keyword = String(root.historySearchText || "").trim().toLowerCase()
         generationHistoryModel.clear()
         for (var i = 0; i < root.allGenerationHistoryItems.length; i++) {
@@ -135,7 +139,31 @@ Item {
                 generationHistoryModel.append(item)
             }
         }
+        if (resetPage !== false) root.historyCurrentPage = 1
+        root.updateGenerationHistoryPage()
         root.updateExportCount()
+    }
+
+    function updateGenerationHistoryPage() {
+        root.historyCurrentPage = Math.min(Math.max(root.historyCurrentPage, 1), root.historyPageCount)
+        generationHistoryPageModel.clear()
+        var start = (root.historyCurrentPage - 1) * root.historyPageSize
+        var end = Math.min(start + root.historyPageSize, generationHistoryModel.count)
+        for (var i = start; i < end; i++) {
+            var source = generationHistoryModel.get(i)
+            var pageItem = { sourceIndex: i }
+            for (var key in source) pageItem[key] = source[key]
+            generationHistoryPageModel.append(pageItem)
+        }
+        if (historyPageInput) historyPageInput.text = String(root.historyCurrentPage)
+        if (historyListView) historyListView.positionViewAtBeginning()
+    }
+
+    function goToGenerationHistoryPage(page) {
+        var requestedPage = parseInt(page, 10)
+        if (isNaN(requestedPage)) requestedPage = root.historyCurrentPage
+        root.historyCurrentPage = Math.min(Math.max(requestedPage, 1), root.historyPageCount)
+        root.updateGenerationHistoryPage()
     }
 
     function modalityFromLabel(label) {
@@ -751,7 +779,7 @@ Item {
             generationHistoryModel.setProperty(i, "algos", root.formatParameters(algorithmIds, params))
             generationHistoryModel.setProperty(i, "algorithmNames", root.algorithmNames(algorithmIds))
         }
-        root.applyGenerationHistoryFilter()
+        root.applyGenerationHistoryFilter(false)
     }
 
     function generationTaskTitle(task, sourceName) {
@@ -939,6 +967,7 @@ Item {
     }
 
     ListModel { id: generationHistoryModel }
+    ListModel { id: generationHistoryPageModel }
     ListModel { id: previewModel }
 
     // ================= 后端信号处理 =================
@@ -1039,7 +1068,7 @@ Item {
             }
             root.hasActiveGenerationTasks = hasActiveTasks
             root.allGenerationHistoryItems = historyItems
-            root.applyGenerationHistoryFilter()
+            root.applyGenerationHistoryFilter(false)
         }
 
         function onAlgorithmsUpdated(algorithms) {
@@ -1936,6 +1965,7 @@ Item {
                     onClicked: {
                         if (root.pendingEditIndex !== -1 && editProjectNameInput.text.trim() !== "") {
                             generationHistoryModel.setProperty(root.pendingEditIndex, "projectName", editProjectNameInput.text)
+                            root.updateGenerationHistoryPage()
                             root.showToast("✅ 工程名称已更新")
                         }
                         editProjectPopup.close()
@@ -1991,6 +2021,7 @@ Item {
                                 var result = backendService.deleteTask(item.taskId)
                                 if (result && result.status === "success") {
                                     generationHistoryModel.remove(root.pendingDeleteIndex)
+                                    root.updateGenerationHistoryPage()
                                     root.updateExportCount()
                                     root.showToast("记录已删除")
                                 } else {
@@ -1998,6 +2029,7 @@ Item {
                                 }
                             } else {
                                 generationHistoryModel.remove(root.pendingDeleteIndex)
+                                root.updateGenerationHistoryPage()
                                 root.updateExportCount()
                                 root.showToast("记录已删除")
                             }
@@ -2081,6 +2113,7 @@ Item {
                         for (var i = 0; i < generationHistoryModel.count; i++) {
                             generationHistoryModel.setProperty(i, "isSelected", false)
                         }
+                        root.updateGenerationHistoryPage()
                         root.updateExportCount()
                         root.showToast("🚀 选中的数据集已开始合并打包导出")
                     }
@@ -3007,7 +3040,7 @@ Item {
                         text: root.historySearchText
                         onTextChanged: {
                             root.historySearchText = text
-                            root.applyGenerationHistoryFilter()
+                            root.applyGenerationHistoryFilter(true)
                         }
                         Text {
                             anchors.verticalCenter: parent.verticalCenter
@@ -3084,7 +3117,7 @@ Item {
                 anchors.fill: parent
                 clip: true
                 spacing: 12
-                model: generationHistoryModel
+                model: generationHistoryPageModel
                 boundsBehavior: Flickable.StopAtBounds
                 ScrollBar.vertical: ScrollBar {
                     policy: ScrollBar.AlwaysOn
@@ -3104,7 +3137,9 @@ Item {
                         anchors.fill: parent
                         hoverEnabled: true
                         onClicked: {
-                            model.isSelected = !model.isSelected
+                            var selected = !model.isSelected
+                            generationHistoryPageModel.setProperty(index, "isSelected", selected)
+                            generationHistoryModel.setProperty(model.sourceIndex, "isSelected", selected)
                             root.updateExportCount()
                         }
                     }
@@ -3294,7 +3329,7 @@ Item {
                                 background: Rectangle { color: parent.hovered ? "#E8F1FF" : Theme.control; radius: 4; border.color: parent.hovered ? Theme.primary : "#9CA3AF" }
                                 contentItem: Text { text: parent.text; color: Theme.text; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                                 onClicked: {
-                                    root.pendingEditIndex = index
+                                    root.pendingEditIndex = model.sourceIndex
                                     editProjectNameInput.text = model.projectName
                                     editProjectPopup.open()
                                 }
@@ -3306,7 +3341,7 @@ Item {
                                 background: Rectangle { color: parent.hovered ? "#BE123C" : "transparent"; border.color: root.dangerColor; border.width: 1; radius: 4 }
                                 contentItem: Text { text: parent.text; color: parent.hovered ? "white" : root.dangerColor; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                                 onClicked: {
-                                    root.pendingDeleteIndex = index
+                                    root.pendingDeleteIndex = model.sourceIndex
                                     deleteConfirmPopup.open()
                                 }
                             }
@@ -3320,6 +3355,42 @@ Item {
                     color: Theme.muted
                     font.pixelSize: 16
                     visible: generationHistoryModel.count === 0
+                }
+            }
+        }
+
+        Rectangle {
+            Layout.fillWidth: true
+            height: 46
+            color: Theme.rowAlt
+            border.color: root.borderColor
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: 12
+                anchors.rightMargin: 12
+                spacing: 8
+                Label { text: "共 " + root.historyTotalCount + " 条记录"; color: root.textMuted; font.pixelSize: 13 }
+                Item { Layout.fillWidth: true }
+                Button {
+                    text: "上一页"
+                    enabled: root.historyCurrentPage > 1
+                    Layout.preferredWidth: 72; Layout.preferredHeight: 30
+                    onClicked: root.goToGenerationHistoryPage(root.historyCurrentPage - 1)
+                }
+                TextField {
+                    id: historyPageInput
+                    text: "1"
+                    Layout.preferredWidth: 58; Layout.preferredHeight: 30
+                    horizontalAlignment: TextInput.AlignHCenter
+                    validator: IntValidator { bottom: 1; top: root.historyPageCount }
+                    onEditingFinished: root.goToGenerationHistoryPage(text)
+                }
+                Label { text: "/ " + root.historyPageCount; color: root.textMuted; font.pixelSize: 13 }
+                Button {
+                    text: "下一页"
+                    enabled: root.historyCurrentPage < root.historyPageCount
+                    Layout.preferredWidth: 72; Layout.preferredHeight: 30
+                    onClicked: root.goToGenerationHistoryPage(root.historyCurrentPage + 1)
                 }
             }
         }

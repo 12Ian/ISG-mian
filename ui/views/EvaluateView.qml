@@ -43,6 +43,10 @@ Item {
     property string pendingWeightExportName: ""
     property bool trainingHistoryExpanded: true
     property bool evaluationHistoryExpanded: true
+    property int historyPageSize: 8
+    property int historyCurrentPage: 1
+    readonly property int historyTotalCount: evalHistoryModel.count
+    readonly property int historyPageCount: Math.max(1, Math.ceil(historyTotalCount / historyPageSize))
     property string workMode: "train"  // "train" / "eval"
     property bool trainingWorkbenchExpanded: true
     property bool evaluationWorkbenchExpanded: false
@@ -78,6 +82,7 @@ Item {
     // 所有训练算法的完整列表 (用于场景过滤)
     property var allTrainingAlgos: []
     property var trainingCompatibilityMap: ({})
+    property var trainingCompatibilityReasonMap: ({})
     property int compatibilityDatasetId: 0
     property int pendingCompatibilityDatasetId: 0
 
@@ -121,15 +126,11 @@ Item {
         var scIdx = scenarioCombo.currentIndex
         var scKey = scIdx >= 0 ? (scenarioModel.get(scIdx).key || "") : ""
         var allowedKeys = root.scenarioAlgoMap[scKey] || []
-        var dsIdx = datasetCombo.currentIndex
-        var datasetId = dsIdx >= 0 ? Number(datasetModel.get(dsIdx).id || 0) : 0
-        var compatibilityReady = datasetId > 0 && root.compatibilityDatasetId === datasetId
         for (var i = 0; i < root.allTrainingAlgos.length; i++) {
             var algo = root.allTrainingAlgos[i]
             // 无场景映射时显示所有算法，有映射则只显示匹配的
             var scenarioMatched = allowedKeys.length === 0 || allowedKeys.indexOf(algo.key) >= 0
-            var compatible = !compatibilityReady || root.trainingCompatibilityMap[String(algo.id)] === true
-            if (scenarioMatched && compatible) {
+            if (scenarioMatched) {
                 algoModel.append(algo)
             }
         }
@@ -428,6 +429,48 @@ Item {
         return indexes
     }
 
+    function historyDisplayOrder() {
+        var trainingIndexes = []
+        var evaluationIndexes = []
+        for (var i = 0; i < evalHistoryModel.count; i++) {
+            var type = historyEntryType(evalHistoryModel.get(i))
+            if (type === "training") trainingIndexes.push(i)
+            else evaluationIndexes.push(i)
+        }
+
+        var indexes = []
+        var maxLength = Math.max(trainingIndexes.length, evaluationIndexes.length)
+        for (var j = 0; j < maxLength; j++) {
+            if (j < trainingIndexes.length) indexes.push(trainingIndexes[j])
+            if (j < evaluationIndexes.length) indexes.push(evaluationIndexes[j])
+        }
+        return indexes
+    }
+
+    function historyPageIndexesByType(type) {
+        var indexes = []
+        var orderedIndexes = historyDisplayOrder()
+        var start = (root.historyCurrentPage - 1) * root.historyPageSize
+        var end = Math.min(start + root.historyPageSize, orderedIndexes.length)
+        for (var i = start; i < end; i++) {
+            var historyIndex = orderedIndexes[i]
+            if (historyEntryType(evalHistoryModel.get(historyIndex)) === type) indexes.push(historyIndex)
+        }
+        return indexes
+    }
+
+    function normalizeHistoryPage() {
+        root.historyCurrentPage = Math.min(Math.max(root.historyCurrentPage, 1), root.historyPageCount)
+        if (historyPageInput) historyPageInput.text = String(root.historyCurrentPage)
+    }
+
+    function goToEvaluationHistoryPage(page) {
+        var requestedPage = parseInt(page, 10)
+        if (isNaN(requestedPage)) requestedPage = root.historyCurrentPage
+        root.historyCurrentPage = Math.min(Math.max(requestedPage, 1), root.historyPageCount)
+        root.normalizeHistoryPage()
+    }
+
     function historyTaskIds(item) {
         if (!item) return []
         try {
@@ -468,6 +511,7 @@ Item {
         }
 
         evalHistoryModel.remove(index)
+        root.normalizeHistoryPage()
         root.checkStates()
         root.saveToAppState()
         return true
@@ -490,7 +534,10 @@ Item {
             }
 
             var historyIndex = root.historyIndexForTask(taskId)
-            if (historyIndex >= 0) evalHistoryModel.remove(historyIndex)
+            if (historyIndex >= 0) {
+                evalHistoryModel.remove(historyIndex)
+                root.normalizeHistoryPage()
+            }
             root.forgetSavedWeight(taskId)
         }
 
@@ -515,6 +562,8 @@ Item {
         }
         if (status !== "completed" && status !== "failed" && status !== "interrupted" && status !== "cancelled") return
         evalHistoryModel.insert(0, buildAutoHistoryEntry(task))
+        root.historyCurrentPage = 1
+        root.normalizeHistoryPage()
     }
 
     function syncHistoryFromEvaluationTask(task) {
@@ -773,57 +822,30 @@ Item {
             }
             try {
                 var state = JSON.parse(value)
-                root.isTraining = state.isTraining || false
-                root.taskCounter = state.taskCounter || 1
+                // 每次启动都从空白工作区开始，历史记录和已保存权重仍然保留。
+                root.isTraining = false
+                root.taskCounter = 1
                 root.evalMetricHeaders = state.metricHeaders || []
                 root.savedWeightTaskIds = state.savedWeightTaskIds || []
                 root.migrateLegacySavedWeights = !state.hasOwnProperty("savedWeightTaskIds")
                 root.evalStateReady = true
 
+                taskQueueModel.clear()
+                evalResultModel.clear()
+                activeEvalSourceModel.clear()
+                root.pendingEvalTaskIds = []
+                root.restoredEvalTaskIds = []
+                root.expectedEvalResultCount = 0
+                root.isEvaluating = false
+                root.evalProgressValue = 0.0
+                root.evalProgressMessage = ""
+
+                evalHistoryModel.clear()
+                root.historyCurrentPage = 1
                 var h = state.evalHistory || []
                 for (var hi = 0; hi < h.length; hi++) evalHistoryModel.append(h[hi])
-
-                // 恢复任务队列：关闭时运行中的任务不保存，重开后都是已完成/待处理
-                var q = state.taskQueue || []
-                for (var qi = 0; qi < q.length; qi++) {
-                    if (q[qi].trainStatus === 1) q[qi].trainStatus = 4  // 标记为中断
-                    taskQueueModel.append(q[qi])
-                    root.checkStates()
-                }
-
-                var r = state.evalResults || []
-                for (var ri = 0; ri < r.length; ri++) evalResultModel.append(r[ri])
-                var activeSources = state.activeEvalSources || []
-                root.expectedEvalResultCount = Number(state.expectedEvalResultCount || activeSources.length || 0)
-                var restoredPendingIds = []
-                for (var ai = 0; ai < activeSources.length; ai++) {
-                    var src = activeSources[ai]
-                    activeEvalSourceModel.append({
-                        evalTaskId: src.evalTaskId || 0,
-                        trainingTaskId: src.trainingTaskId || 0,
-                        scenario: src.scenario || "",
-                        dataset: src.dataset || "",
-                        algo: src.algo || "",
-                        checkpointName: src.checkpointName || "",
-                        checkpointPath: src.checkpointPath || "",
-                        evalProgress: Number(src.evalProgress || 0),
-                        evalProgressMessage: src.evalProgressMessage || "",
-                        evalStatus: src.evalStatus || ""
-                    })
-                    var restoredTaskId = Number(src.evalTaskId || 0)
-                    var restoredStatus = String(src.evalStatus || "").toLowerCase()
-                    var terminalStatus = ["failed", "cancelled", "interrupted"].indexOf(restoredStatus) >= 0
-                    if (restoredTaskId > 0 && !terminalStatus && !root.hasEvalResultForTask(restoredTaskId)) {
-                        restoredPendingIds.push(restoredTaskId)
-                    }
-                }
-                root.pendingEvalTaskIds = restoredPendingIds
-                root.restoredEvalTaskIds = restoredPendingIds.slice()
-                root.isEvaluating = restoredPendingIds.length > 0
+                root.normalizeHistoryPage()
                 root.refreshEvaluationProgressState()
-                if (restoredPendingIds.length > 0) {
-                    backendService.getEvaluationTasks("")
-                }
                 backendService.getTrainingTasks(0, "")
             } catch(e) {}
         }
@@ -878,12 +900,15 @@ Item {
             if (Number(data && data.dataset_id ? data.dataset_id : 0) !== currentDatasetId) return
             var items = data && data.items ? data.items : []
             var compatibility = {}
+            var reasons = {}
             for (var i = 0; i < items.length; i++) {
-                compatibility[String(items[i].algorithm_id || 0)] = items[i].compatible === true
+                var algorithmId = String(items[i].algorithm_id || 0)
+                compatibility[algorithmId] = items[i].compatible === true
+                reasons[algorithmId] = items[i].reason || ""
             }
             root.compatibilityDatasetId = Number(data && data.dataset_id ? data.dataset_id : 0)
             root.trainingCompatibilityMap = compatibility
-            root.filterAlgorithmsByScenario()
+            root.trainingCompatibilityReasonMap = reasons
         }
 
         function onAlgorithmsUpdated(algorithms) {
@@ -1391,6 +1416,8 @@ Item {
                             detailsJson: JSON.stringify(detailsArr),
                             taskIdsJson: JSON.stringify(savedTaskIds)
                         })
+                        root.historyCurrentPage = 1
+                        root.normalizeHistoryPage()
                         root.saveToAppState()
                         saveProjectPopup.close()
                         root.showToast("✅ 评估工程已归档")
@@ -1547,7 +1574,7 @@ Item {
                         visible: root.trainingHistoryExpanded
 
                         Repeater {
-                            model: root.historyIndexesByType("training")
+                            model: root.historyPageIndexesByType("training")
 
                             delegate: Rectangle {
                                 required property int modelData
@@ -1697,7 +1724,7 @@ Item {
                         visible: root.evaluationHistoryExpanded
 
                         Repeater {
-                            model: root.historyIndexesByType("evaluation")
+                            model: root.historyPageIndexesByType("evaluation")
 
                             delegate: Rectangle {
                                 required property int modelData
@@ -1783,6 +1810,42 @@ Item {
                         font.pixelSize: 16
                         visible: evalHistoryModel.count === 0
                     }
+                }
+            }
+        }
+
+        Rectangle {
+            Layout.fillWidth: true
+            height: 46
+            color: Theme.rowAlt
+            border.color: root.borderColor
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: 12
+                anchors.rightMargin: 12
+                spacing: 8
+                Label { text: "共 " + root.historyTotalCount + " 条记录"; color: root.textMuted; font.pixelSize: 13 }
+                Item { Layout.fillWidth: true }
+                Button {
+                    text: "上一页"
+                    enabled: root.historyCurrentPage > 1
+                    Layout.preferredWidth: 72; Layout.preferredHeight: 30
+                    onClicked: root.goToEvaluationHistoryPage(root.historyCurrentPage - 1)
+                }
+                TextField {
+                    id: historyPageInput
+                    text: "1"
+                    Layout.preferredWidth: 58; Layout.preferredHeight: 30
+                    horizontalAlignment: TextInput.AlignHCenter
+                    validator: IntValidator { bottom: 1; top: root.historyPageCount }
+                    onEditingFinished: root.goToEvaluationHistoryPage(text)
+                }
+                Label { text: "/ " + root.historyPageCount; color: root.textMuted; font.pixelSize: 13 }
+                Button {
+                    text: "下一页"
+                    enabled: root.historyCurrentPage < root.historyPageCount
+                    Layout.preferredWidth: 72; Layout.preferredHeight: 30
+                    onClicked: root.goToEvaluationHistoryPage(root.historyCurrentPage + 1)
                 }
             }
         }
@@ -2083,28 +2146,6 @@ Item {
                     Text { text: "2. 挂载数据集"; color: root.textMuted; font.pixelSize: 12; font.bold: true }
                     StableComboBox { id: datasetCombo; model: datasetModel; textRole: "name"; marqueeText: true; Layout.preferredWidth: 220
                         background: Rectangle { color: root.bgDark; border.color: root.borderColor; radius: 4 }
-                        contentItem: Item {
-                            id: datasetSelectedClip
-                            clip: true
-                            Text {
-                                id: datasetSelectedText
-                                text: datasetCombo.currentText
-                                color: root.textColor
-                                font.pixelSize: 13
-                                width: Math.max(datasetSelectedClip.width - 48, implicitWidth)
-                                height: datasetSelectedClip.height
-                                x: 12
-                                verticalAlignment: Text.AlignVCenter
-                                SequentialAnimation on x {
-                                    loops: Animation.Infinite
-                                    running: datasetCombo.marqueeText && datasetSelectedText.implicitWidth > datasetSelectedClip.width - 48
-                                    PauseAnimation { duration: 900 }
-                                    NumberAnimation { to: -(datasetSelectedText.implicitWidth - datasetSelectedClip.width + 36); duration: 1800; easing.type: Easing.InOutQuad }
-                                    PauseAnimation { duration: 900 }
-                                    NumberAnimation { to: 12; duration: 500; easing.type: Easing.InOutQuad }
-                                }
-                            }
-                        }
                         onCurrentIndexChanged: root.requestTrainingCompatibility()
                     }
                 }
@@ -2661,6 +2702,26 @@ Item {
     }
 
     // ================= 状态判断函数 =================
+    function selectedTrainingCompatibilityError() {
+        var currentDatasetIndex = datasetCombo.currentIndex
+        var currentDatasetId = currentDatasetIndex >= 0 && currentDatasetIndex < datasetModel.count
+                ? Number(datasetModel.get(currentDatasetIndex).id || 0) : 0
+        if (currentDatasetId <= 0 || root.compatibilityDatasetId !== currentDatasetId) return ""
+
+        for (var i = 0; i < taskQueueModel.count; i++) {
+            var task = taskQueueModel.get(i)
+            if (!task.isSelected || task.trainStatus !== 0) continue
+            if (Number(task.datasetId || 0) !== currentDatasetId) continue
+            var algorithmId = String(task.algoId || 0)
+            if (Object.prototype.hasOwnProperty.call(root.trainingCompatibilityMap, algorithmId)
+                    && root.trainingCompatibilityMap[algorithmId] !== true) {
+                var reason = root.trainingCompatibilityReasonMap[algorithmId] || "当前数据集不满足该算法要求"
+                return "数据集与算法不匹配：" + reason
+            }
+        }
+        return ""
+    }
+
     function canStartTraining() {
         for (var i = 0; i < taskQueueModel.count; i++) {
             var t = taskQueueModel.get(i)
@@ -2671,6 +2732,11 @@ Item {
 
     function startSelectedTraining() {
         if (root.isTraining || !root.canStartTraining()) return
+        var compatibilityError = root.selectedTrainingCompatibilityError()
+        if (compatibilityError) {
+            root.showToast("⚠️ " + compatibilityError)
+            return
+        }
         root.isTraining = true
         root.showToast("⏳ 正在启动训练任务...")
         Qt.callLater(root._startSelectedTrainingImpl)
@@ -2686,7 +2752,9 @@ Item {
                 var result = backendService.createTrainingTask(scId, t.datasetId, t.algoId, params)
                 if (!result || result.status !== "success") {
                     if (startedCount === 0) root.isTraining = false
-                    root.showToast("⚠️ " + (result && result.message ? result.message : "训练任务创建失败"))
+                    var errorMessage = result && result.message ? result.message : "训练任务创建失败"
+                    errorMessage = errorMessage.replace("数据集与训练算法不兼容", "数据集与算法不匹配")
+                    root.showToast("⚠️ " + errorMessage)
                     return
                 }
                 taskQueueModel.setProperty(i, "taskId", result.id || 0)

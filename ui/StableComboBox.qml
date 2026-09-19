@@ -19,22 +19,47 @@ ComboBox {
     contentItem: Item {
         id: selectedClip
         clip: true
-        Text {
-            id: selectedText
-            text: control.displayText
-            color: Theme.text
-            font.pixelSize: 13
-            width: Math.max(selectedClip.width - 48, implicitWidth)
-            height: selectedClip.height
-            verticalAlignment: Text.AlignVCenter
+        Item {
+            id: selectedViewport
             x: 12
-            SequentialAnimation on x {
-                loops: Animation.Infinite
-                running: control.marqueeText && selectedText.implicitWidth > selectedClip.width - 48
-                PauseAnimation { duration: 900 }
-                NumberAnimation { to: -(selectedText.implicitWidth - selectedClip.width + 36); duration: 1800; easing.type: Easing.InOutQuad }
-                PauseAnimation { duration: 900 }
-                NumberAnimation { to: 12; duration: 500; easing.type: Easing.InOutQuad }
+            width: Math.max(0, selectedClip.width - 48)
+            height: selectedClip.height
+            clip: true
+
+            Text {
+                id: selectedText
+                property bool shouldMarquee: control.marqueeText && implicitWidth > selectedViewport.width
+                property real scrollDistance: Math.max(0, implicitWidth - selectedViewport.width)
+                property int scrollDuration: Math.max(3200, Math.round(scrollDistance * 36))
+                text: control.displayText
+                color: Theme.text
+                font.pixelSize: 13
+                width: shouldMarquee ? implicitWidth : selectedViewport.width
+                height: selectedViewport.height
+                verticalAlignment: Text.AlignVCenter
+                elide: control.marqueeText ? Text.ElideNone : Text.ElideRight
+                SequentialAnimation on x {
+                    id: selectedMarquee
+                    loops: Animation.Infinite
+                    running: selectedText.shouldMarquee
+                    PauseAnimation { duration: 900 }
+                    NumberAnimation {
+                        to: selectedViewport.width - selectedText.implicitWidth
+                        duration: selectedText.scrollDuration
+                        easing.type: Easing.Linear
+                    }
+                    PauseAnimation { duration: 900 }
+                    NumberAnimation { to: 0; duration: selectedText.scrollDuration; easing.type: Easing.Linear }
+                }
+            }
+
+            Connections {
+                target: control
+                function onCurrentTextChanged() {
+                    selectedMarquee.stop()
+                    selectedText.x = 0
+                    if (selectedText.shouldMarquee) selectedMarquee.start()
+                }
             }
         }
     }
@@ -75,7 +100,7 @@ ComboBox {
 
     popup: Popup {
         y: control.height + 2
-        width: Math.max(control.width, 280)
+        width: control.width
         padding: 4
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
 
@@ -108,28 +133,43 @@ ComboBox {
         id: optionDelegate
         required property int index
 
-        width: popupList.width - 8
+        width: popupList.width
         height: 36
 
         contentItem: Item {
             id: optionClip
             clip: true
-            Text {
-                id: optionText
-                text: control.textAt(optionDelegate.index)
-                color: Theme.text
-                font.pixelSize: 13
-                width: implicitWidth
-                height: optionClip.height
-                verticalAlignment: Text.AlignVCenter
+            Item {
+                id: optionViewport
                 x: 12
-                SequentialAnimation on x {
-                    loops: Animation.Infinite
-                    running: control.marqueeText && optionText.implicitWidth > optionClip.width - 24
-                    PauseAnimation { duration: 700 }
-                    NumberAnimation { to: -(optionText.implicitWidth - optionClip.width + 24); duration: 1800; easing.type: Easing.InOutQuad }
-                    PauseAnimation { duration: 700 }
-                    NumberAnimation { to: 12; duration: 500; easing.type: Easing.InOutQuad }
+                width: Math.max(0, optionClip.width - 24)
+                height: optionClip.height
+                clip: true
+
+                Text {
+                    id: optionText
+                    property bool shouldMarquee: control.marqueeText && implicitWidth > optionViewport.width
+                    property real scrollDistance: Math.max(0, implicitWidth - optionViewport.width)
+                    property int scrollDuration: Math.max(3200, Math.round(scrollDistance * 36))
+                    text: control.textAt(optionDelegate.index)
+                    color: Theme.text
+                    font.pixelSize: 13
+                    width: shouldMarquee ? implicitWidth : optionViewport.width
+                    height: optionViewport.height
+                    verticalAlignment: Text.AlignVCenter
+                    elide: control.marqueeText ? Text.ElideNone : Text.ElideRight
+                    SequentialAnimation on x {
+                        loops: Animation.Infinite
+                        running: optionText.shouldMarquee
+                        PauseAnimation { duration: 700 }
+                        NumberAnimation {
+                            to: optionViewport.width - optionText.implicitWidth
+                            duration: optionText.scrollDuration
+                            easing.type: Easing.Linear
+                        }
+                        PauseAnimation { duration: 700 }
+                        NumberAnimation { to: 0; duration: optionText.scrollDuration; easing.type: Easing.Linear }
+                    }
                 }
             }
         }

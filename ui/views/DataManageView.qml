@@ -41,7 +41,12 @@ Item {
     property var currentDirFiles: []     // 当前目录下的文件
 
     property var allDatasets: []
+    property var filteredDatasets: []
     property var displayedDatasets: []
+    property int pageSize: 15
+    property int currentPage: 1
+    readonly property int totalFilteredCount: filteredDatasets.length
+    readonly property int pageCount: Math.max(1, Math.ceil(totalFilteredCount / pageSize))
     property string currentCategory: "全部"
     property string currentStage: "all"
     property string searchQuery: ""
@@ -66,7 +71,7 @@ Item {
     // ======== 后端信号连接 ========
     Connections {
         target: backendService
-        function onDatasetsUpdated(data) {
+        function onAllDatasetsUpdated(data) {
             var items = []
             if (data && data.items) {
                 items = data.items
@@ -139,7 +144,7 @@ Item {
     }
 
     function loadData() {
-        backendService.getDatasets(1, 100, "")
+        backendService.getAllDatasets("")
     }
 
     function refreshPage() {
@@ -155,13 +160,34 @@ Item {
 
     function filterData() {
         var q = searchQuery.toLowerCase()
-        displayedDatasets = allDatasets.filter(function(item) {
+        filteredDatasets = allDatasets.filter(function(item) {
             var cleanName = item._cleanName || (item.name || "").split("|Status:")[0]
             var matchSearch = cleanName.toLowerCase().indexOf(q) !== -1
             var matchCategory = currentCategory === "全部" || item.type === currentCategory
             var matchStage = currentStage === "all" || (item._stage || datasetStage(item)) === currentStage
             return matchSearch && matchCategory && matchStage
         })
+        currentPage = 1
+        syncPageInput()
+        updatePagedDatasets()
+    }
+
+    function syncPageInput() {
+        if (pageInput) pageInput.text = String(currentPage)
+    }
+
+    function updatePagedDatasets() {
+        currentPage = Math.min(Math.max(currentPage, 1), pageCount)
+        var start = (currentPage - 1) * pageSize
+        displayedDatasets = filteredDatasets.slice(start, start + pageSize)
+    }
+
+    function goToPage(page) {
+        var requestedPage = parseInt(page, 10)
+        if (isNaN(requestedPage)) requestedPage = currentPage
+        currentPage = Math.min(Math.max(requestedPage, 1), pageCount)
+        syncPageInput()
+        updatePagedDatasets()
     }
 
     function datasetStage(item) {
@@ -750,6 +776,91 @@ Item {
                     color: Theme.muted
                     font.pixelSize: 16
                     visible: datasetListView.count === 0
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    height: 52
+                    color: Theme.rowAlt
+                    border.color: Theme.border
+
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: 15
+                        anchors.rightMargin: 15
+                        spacing: 8
+
+                        Label {
+                            text: "共 " + root.totalFilteredCount + " 个数据集"
+                            color: Theme.muted
+                            font.pixelSize: 13
+                        }
+
+                        Item { Layout.fillWidth: true }
+
+                        Button {
+                            text: "上一页"
+                            enabled: root.currentPage > 1
+                            Layout.preferredWidth: 72
+                            Layout.preferredHeight: 30
+                            background: Rectangle {
+                                color: parent.enabled ? (parent.hovered ? Theme.hover : Theme.control) : Theme.row
+                                border.color: Theme.border
+                                radius: 4
+                            }
+                            contentItem: Text {
+                                text: parent.text
+                                color: parent.enabled ? Theme.text : Theme.muted
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                            onClicked: root.goToPage(root.currentPage - 1)
+                        }
+
+                        TextField {
+                            id: pageInput
+                            text: "1"
+                            Layout.preferredWidth: 58
+                            Layout.preferredHeight: 30
+                            horizontalAlignment: TextInput.AlignHCenter
+                            verticalAlignment: TextInput.AlignVCenter
+                            color: Theme.text
+                            selectByMouse: true
+                            inputMethodHints: Qt.ImhDigitsOnly
+                            validator: IntValidator { bottom: 1; top: root.pageCount }
+                            background: Rectangle {
+                                color: Theme.control
+                                border.color: parent.activeFocus ? Theme.primary : Theme.border
+                                radius: 4
+                            }
+                            onEditingFinished: root.goToPage(text)
+                        }
+
+                        Label {
+                            text: "/ " + root.pageCount
+                            color: Theme.muted
+                            font.pixelSize: 13
+                        }
+
+                        Button {
+                            text: "下一页"
+                            enabled: root.currentPage < root.pageCount
+                            Layout.preferredWidth: 72
+                            Layout.preferredHeight: 30
+                            background: Rectangle {
+                                color: parent.enabled ? (parent.hovered ? Theme.hover : Theme.control) : Theme.row
+                                border.color: Theme.border
+                                radius: 4
+                            }
+                            contentItem: Text {
+                                text: parent.text
+                                color: parent.enabled ? Theme.text : Theme.muted
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                            onClicked: root.goToPage(root.currentPage + 1)
+                        }
+                    }
                 }
             }
         }
