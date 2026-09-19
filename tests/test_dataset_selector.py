@@ -193,6 +193,17 @@ def test_training_dataset_combo_scrolls_full_name_at_constant_speed():
     assert "width: control.width" in combo_qml
 
 
+def test_algo_config_does_not_expose_model_management():
+    qml = (ROOT / "ui" / "views" / "AlgoConfigView.qml").read_text(encoding="utf-8")
+
+    assert 'text: "模型管理"' not in qml
+    assert "modelManagerPopup" not in qml
+    assert "modelDeleteConfirmPopup" not in qml
+    assert "getModelAssets" not in qml
+    assert "importModelAsset" not in qml
+    assert "deleteModelAsset" not in qml
+
+
 def test_training_algorithms_are_not_filtered_by_dataset_compatibility():
     qml = (ROOT / "ui" / "views" / "EvaluateView.qml").read_text(encoding="utf-8")
     filter_function = qml.split("function filterAlgorithmsByScenario", 1)[1].split(

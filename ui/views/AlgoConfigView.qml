@@ -33,7 +33,7 @@ Item {
         anchors.topMargin: -16
         anchors.rightMargin: -16
         title: "算法配置帮助"
-        body: "本页用于查看、注册、修改和卸载算法插件，是生成、清洗、训练和评估算法的统一配置入口。\n\n1. 左侧按算法大类和数据模态分组展示插件，可通过顶部下拉框筛选全部、清洗、生成、评估或训练算法；点击分组可展开或折叠。\n2. 点击某个算法后，右侧会显示算法名称、所属类别、脚本或模块挂载路径、接口简述、使用说明和参数快照。\n3. “插件规范”按钮会弹出本项目的算法插件开发规范窗口，可下拉查看 run(payload, context) 入口、PARAMETERS 参数声明和输出格式。\n4. “模型管理”可在打包后导入、筛选和删除 YOLOv5、YOLOv8、YOLO11 或自定义模型；同系列模型会自动加入训练参数。\n5. “注册新插件环境”用于接入新的 Python 插件。选择脚本后系统会自动反射 PARAMETERS，生成参数配置表；填写名称、类别、模态和说明后确认注册。\n6. “调参修改”用于修改已有算法的参数定义、名称、类别、模态、脚本路径或模块路径。内置模块算法会保留 module_path，脚本插件会复制并保存 script_path。\n7. 参数表支持新增、删除和编辑参数名、显示标签、类型、默认值、数值范围和下拉选项。保存后，业务页面会按这些参数渲染动态配置控件。\n8. “卸载环境”会删除算法注册记录。删除前请确认没有正在运行的任务依赖该算法。\n9. 调整完成后建议回到对应业务页面刷新算法列表，确认新参数、模型和插件已经生效。"
+        body: "本页用于查看、注册、修改和卸载算法插件，是生成、清洗、训练和评估算法的统一配置入口。\n\n1. 左侧按算法大类和数据模态分组展示插件，可通过顶部下拉框筛选全部、清洗、生成、评估或训练算法；点击分组可展开或折叠。\n2. 点击某个算法后，右侧会显示算法名称、所属类别、脚本或模块挂载路径、接口简述、使用说明和参数快照。\n3. “插件规范”按钮会弹出本项目的算法插件开发规范窗口，可下拉查看 run(payload, context) 入口、PARAMETERS 参数声明和输出格式。\n4. “注册新插件环境”用于接入新的 Python 插件。选择脚本后系统会自动反射 PARAMETERS，生成参数配置表；填写名称、类别、模态和说明后确认注册。\n5. “调参修改”用于修改已有算法的参数定义、名称、类别、模态、脚本路径或模块路径。内置模块算法会保留 module_path，脚本插件会复制并保存 script_path。\n6. 参数表支持新增、删除和编辑参数名、显示标签、类型、默认值、数值范围和下拉选项。保存后，业务页面会按这些参数渲染动态配置控件。\n7. “卸载环境”会删除算法注册记录。删除前请确认没有正在运行的任务依赖该算法。\n8. 调整完成后建议回到对应业务页面刷新算法列表，确认新参数和插件已经生效。"
     }
 
     // 状态控制
@@ -41,9 +41,6 @@ Item {
     property int pendingDeleteIndex: -1
     property var pendingDatasetRequirements: ({})
     property bool pendingCustomDatasetValidator: false
-    property string pendingModelDeleteId: ""
-    property string pendingModelDeleteName: ""
-    property string modelLibraryRoot: ""
 
     // 分类折叠面板状态
     property int selectedAlgoId: -1
@@ -215,7 +212,6 @@ Item {
     }
 
     ListModel { id: bindingEvalModel }
-    ListModel { id: modelAssetListModel }
 
     function refreshBindingEvalCombo() {
         bindingEvalModel.clear()
@@ -798,25 +794,6 @@ Item {
 
     Connections {
         target: backendService
-        function onModelAssetsUpdated(result) {
-            if (!result || !result.ok) {
-                if (result && result.message) root.showToast("⚠️ " + result.message)
-                return
-            }
-            var data = result.data || {}
-            root.modelLibraryRoot = data.root_dir || ""
-            modelAssetListModel.clear()
-            var items = data.items || []
-            for (var i = 0; i < items.length; i++) modelAssetListModel.append(items[i])
-        }
-        function onModelAssetOperationFinished(result) {
-            if (result && result.ok) {
-                root.showToast("✅ 模型已导入: " + ((result.data || {}).name || ""))
-                backendService.getModelAssets(modelFamilyFilter.currentValue || "")
-            } else {
-                root.showToast("⚠️ 模型导入失败: " + ((result && result.message) ? result.message : "未知错误"))
-            }
-        }
         function onAlgorithmsUpdated(items) {
             if (!root.visible) return  // 只在当前页面可见时处理
             algoListModel.clear()
@@ -1742,255 +1719,6 @@ Item {
         }
     }
 
-    FileDialog {
-        id: modelAssetFileDialog
-        title: "导入模型文件"
-        fileMode: FileDialog.OpenFile
-        nameFilters: [
-            "模型文件 (*.pt *.pth *.onnx *.engine *.yaml *.yml)",
-            "全部文件 (*)"
-        ]
-        onAccepted: {
-            var path = selectedFile.toString()
-            var cleanPath = decodeURIComponent(path.replace(/^(file:\/{2,3})/, ""))
-            var result = backendService.importModelAsset(cleanPath, modelImportFamily.currentValue || "custom")
-            if (!result || result.status !== "started") {
-                root.showToast("⚠️ 模型导入启动失败")
-            } else {
-                root.showToast("⏳ 正在复制模型文件...")
-            }
-        }
-    }
-
-    Popup {
-        id: modelManagerPopup
-        width: 780
-        height: 570
-        modal: true
-        focus: true
-        x: Math.round((root.width - width) / 2)
-        y: Math.round((root.height - height) / 2)
-        closePolicy: Popup.CloseOnEscape | Popup.NoAutoClose
-        onOpened: backendService.getModelAssets(modelFamilyFilter.currentValue || "")
-        background: Rectangle {
-            color: root.panelBg
-            radius: 8
-            border.color: root.devAccentMuted
-            border.width: 1
-        }
-
-        ColumnLayout {
-            anchors.fill: parent
-            anchors.margins: 22
-            spacing: 12
-
-            RowLayout {
-                Layout.fillWidth: true
-                Text { text: "统一模型管理"; color: root.devAccentColor; font.pixelSize: 18; font.bold: true }
-                Item { Layout.fillWidth: true }
-                Button {
-                    text: "关闭"
-                    Layout.preferredWidth: 70; Layout.preferredHeight: 30
-                    background: Rectangle { color: "transparent"; border.color: root.borderColor; radius: 4 }
-                    contentItem: Text { text: "关闭"; color: root.textMuted; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                    onClicked: modelManagerPopup.close()
-                }
-            }
-
-            Text {
-                Layout.fillWidth: true
-                text: "模型保存在用户目录，软件升级或重新打包后仍可使用。训练参数会自动加入同系列模型。"
-                color: root.textMuted
-                font.pixelSize: 12
-                wrapMode: Text.WordWrap
-            }
-
-            Rectangle {
-                Layout.fillWidth: true
-                Layout.preferredHeight: 76
-                color: root.bgDark
-                border.color: root.borderColor
-                radius: 6
-                RowLayout {
-                    anchors.fill: parent
-                    anchors.margins: 12
-                    spacing: 10
-                    Text { text: "导入到"; color: root.textMuted; font.pixelSize: 12 }
-                    ComboBox {
-                        id: modelImportFamily
-                        Layout.preferredWidth: 130
-                        model: [
-                            {text: "YOLOv5", value: "yolov5"},
-                            {text: "YOLOv8", value: "yolov8"},
-                            {text: "YOLO11", value: "yolo11"},
-                            {text: "自定义", value: "custom"}
-                        ]
-                        textRole: "text"
-                        valueRole: "value"
-                        background: Rectangle { color: root.panelBg; border.color: root.borderColor; radius: 4 }
-                    }
-                    Button {
-                        text: "+ 导入模型文件"
-                        Layout.preferredWidth: 130; Layout.preferredHeight: 34
-                        background: Rectangle { color: root.devAccentColor; radius: 4 }
-                        contentItem: Text { text: "+ 导入模型文件"; color: root.bgDark; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                        onClicked: modelAssetFileDialog.open()
-                    }
-                    Item { Layout.fillWidth: true }
-                    Text { text: "筛选"; color: root.textMuted; font.pixelSize: 12 }
-                    ComboBox {
-                        id: modelFamilyFilter
-                        Layout.preferredWidth: 125
-                        model: [
-                            {text: "全部", value: ""},
-                            {text: "YOLOv5", value: "yolov5"},
-                            {text: "YOLOv8", value: "yolov8"},
-                            {text: "YOLO11", value: "yolo11"},
-                            {text: "自定义", value: "custom"}
-                        ]
-                        textRole: "text"
-                        valueRole: "value"
-                        background: Rectangle { color: root.panelBg; border.color: root.borderColor; radius: 4 }
-                        onActivated: backendService.getModelAssets(modelFamilyFilter.currentValue || "")
-                    }
-                }
-            }
-
-            Text {
-                Layout.fillWidth: true
-                text: "模型目录: " + (root.modelLibraryRoot || "加载中...")
-                color: root.textMuted
-                font.pixelSize: 11
-                elide: Text.ElideMiddle
-            }
-
-            Rectangle {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                color: root.bgDark
-                border.color: root.borderColor
-                radius: 6
-                clip: true
-
-                ColumnLayout {
-                    anchors.fill: parent
-                    spacing: 0
-                    Rectangle {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 36
-                        color: Theme.rowAlt
-                        RowLayout {
-                            anchors.fill: parent
-                            anchors.leftMargin: 12
-                            anchors.rightMargin: 12
-                            spacing: 10
-                            Text { text: "模型文件"; color: root.textMuted; font.pixelSize: 11; font.bold: true; Layout.fillWidth: true }
-                            Text { text: "系列"; color: root.textMuted; font.pixelSize: 11; font.bold: true; Layout.preferredWidth: 85 }
-                            Text { text: "格式"; color: root.textMuted; font.pixelSize: 11; font.bold: true; Layout.preferredWidth: 55 }
-                            Text { text: "大小"; color: root.textMuted; font.pixelSize: 11; font.bold: true; Layout.preferredWidth: 80 }
-                            Text { text: "操作"; color: root.textMuted; font.pixelSize: 11; font.bold: true; Layout.preferredWidth: 60; horizontalAlignment: Text.AlignHCenter }
-                        }
-                    }
-                    ListView {
-                        id: modelAssetListView
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        clip: true
-                        model: modelAssetListModel
-                        delegate: Rectangle {
-                            id: modelAssetDelegate
-                            required property int index
-                            required property var model
-                            width: modelAssetListView.width
-                            height: 54
-                            color: modelAssetDelegate.index % 2 === 0 ? "transparent" : root.tableHoverBg
-                            RowLayout {
-                                anchors.fill: parent
-                                anchors.leftMargin: 12
-                                anchors.rightMargin: 12
-                                spacing: 10
-                                ColumnLayout {
-                                    Layout.fillWidth: true
-                                    spacing: 1
-                                    Text { text: modelAssetDelegate.model.name || ""; color: root.textColor; font.pixelSize: 12; elide: Text.ElideRight; Layout.fillWidth: true }
-                                    Text { text: modelAssetDelegate.model.path || ""; color: root.textMuted; font.pixelSize: 9; elide: Text.ElideMiddle; Layout.fillWidth: true }
-                                }
-                                Text { text: String(modelAssetDelegate.model.family || "").toUpperCase(); color: root.devAccentColor; font.pixelSize: 11; Layout.preferredWidth: 85 }
-                                Text { text: String(modelAssetDelegate.model.format || "").toUpperCase(); color: root.textMuted; font.pixelSize: 11; Layout.preferredWidth: 55 }
-                                Text { text: modelAssetDelegate.model.size_text || ""; color: root.textMuted; font.pixelSize: 11; Layout.preferredWidth: 80 }
-                                Button {
-                                    text: "删除"
-                                    Layout.preferredWidth: 60; Layout.preferredHeight: 28
-                                    background: Rectangle { color: "transparent"; border.color: root.dangerColor; radius: 4 }
-                                    contentItem: Text { text: "删除"; color: root.dangerColor; font.pixelSize: 11; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                                    onClicked: {
-                                        root.pendingModelDeleteId = modelAssetDelegate.model.id || ""
-                                        root.pendingModelDeleteName = modelAssetDelegate.model.name || ""
-                                        modelDeleteConfirmPopup.open()
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                Text {
-                    visible: modelAssetListModel.count === 0
-                    anchors.centerIn: parent
-                    text: "暂无已导入模型"
-                    color: root.textMuted
-                    font.pixelSize: 13
-                }
-            }
-        }
-    }
-
-    Popup {
-        id: modelDeleteConfirmPopup
-        width: 360
-        height: 180
-        modal: true
-        focus: true
-        x: Math.round((root.width - width) / 2)
-        y: Math.round((root.height - height) / 2)
-        closePolicy: Popup.CloseOnEscape | Popup.NoAutoClose
-        background: Rectangle { color: root.panelBg; border.color: root.dangerColor; radius: 8 }
-        ColumnLayout {
-            anchors.fill: parent
-            anchors.margins: 20
-            spacing: 12
-            Text { text: "确认删除模型？"; color: root.dangerColor; font.pixelSize: 16; font.bold: true }
-            Text { text: root.pendingModelDeleteName; color: root.textColor; font.pixelSize: 13; Layout.fillWidth: true; elide: Text.ElideMiddle }
-            Text { text: "删除后，已保存但尚未执行的训练任务可能无法启动。"; color: root.textMuted; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-            Item { Layout.fillHeight: true }
-            RowLayout {
-                Layout.fillWidth: true
-                Item { Layout.fillWidth: true }
-                Button {
-                    text: "取消"; Layout.preferredWidth: 75; Layout.preferredHeight: 30
-                    background: Rectangle { color: "transparent"; border.color: root.borderColor; radius: 4 }
-                    contentItem: Text { text: "取消"; color: root.textMuted; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                    onClicked: modelDeleteConfirmPopup.close()
-                }
-                Button {
-                    text: "确认删除"; Layout.preferredWidth: 90; Layout.preferredHeight: 30
-                    background: Rectangle { color: root.dangerColor; radius: 4 }
-                    contentItem: Text { text: "确认删除"; color: "white"; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                    onClicked: {
-                        var result = backendService.deleteModelAsset(root.pendingModelDeleteId)
-                        if (result && result.ok) {
-                            root.showToast("✅ 模型已删除")
-                            backendService.getModelAssets(modelFamilyFilter.currentValue || "")
-                        } else {
-                            root.showToast("⚠️ 删除失败: " + ((result && result.message) ? result.message : "未知错误"))
-                        }
-                        modelDeleteConfirmPopup.close()
-                    }
-                }
-            }
-        }
-    }
-
-
     // ========================================================================
     // ======================== 全新界面主体：Master-Detail 控制台 ================
     // ========================================================================
@@ -2040,25 +1768,6 @@ Item {
                         root.showToast("\u26a0\ufe0f " + ((result && result.message) ? result.message : "\u63d2\u4ef6\u89c4\u8303\u52a0\u8f7d\u5931\u8d25"))
                     }
                 }
-            }
-
-            Button {
-                text: "模型管理"
-                font.bold: true
-                font.pixelSize: 14
-                background: Rectangle {
-                    color: parent.pressed ? "#1A00838F" : parent.hovered ? "#1A00E5FF" : "transparent"
-                    border.color: root.devAccentColor
-                    border.width: 1
-                    radius: 4
-                }
-                contentItem: Text {
-                    text: "模型管理"
-                    color: root.devAccentColor
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                }
-                onClicked: modelManagerPopup.open()
             }
 
             Button {
