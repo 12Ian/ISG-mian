@@ -38,10 +38,10 @@ def _normalize_manifest_label(label) -> dict:
         if class_id is not None:
             result["class_id"] = int(class_id)
         # 保留其他字段
-        for key in ("split", "confidence", "area", "bbox_format", "source_format", "source_class_id"):
+        for key in ("split", "confidence", "area", "bbox_format", "source_format", "source_class_id", "track_id"):
             val = label.get(key)
             if val is not None:
-                result[key] = val
+                result[key] = int(val) if key == "track_id" else val
         return result
     return {"type": "classification", "class_name": str(label), "source": "manifest"}
 
@@ -113,6 +113,144 @@ class DatasetService(ServiceBase):
                 resource_type="dataset",
                 resource_id=str(dataset.id),
                 message=f"Created dataset {clean_name}",
+            )
+            session.commit()
+            return {"ok": True, "data": self._serialize_dataset(session, dataset)}
+
+    def create_tracking_dataset(
+        self,
+        name: str,
+        frames: list[dict],
+        class_names: list[str] | None = None,
+        source_task_id: int | None = None,
+    ) -> dict:
+        """将已编辑的船舰追踪结果另存为可在数据管理中使用的数据集。"""
+        clean_name = (name or "").strip()
+        if not clean_name:
+            raise ValidationError("数据集名称不能为空。")
+        if not isinstance(frames, list) or not frames:
+            raise ValidationError("没有可保存的追踪帧。")
+
+        names = [str(value or "") for value in (class_names or [])]
+        records: list[dict] = []
+        for frame_index, frame in enumerate(frames):
+            if not isinstance(frame, dict):
+                raise ValidationError("追踪帧格式错误。")
+            image_path = Path(str(frame.get("image_path") or "")).expanduser()
+            if not image_path.is_file():
+                raise ValidationError(f"追踪图片不存在：{image_path}")
+            if image_path.suffix.casefold() not in self._IMAGE_EXTENSIONS:
+                raise ValidationError(f"追踪结果包含非图片文件：{image_path.name}")
+            try:
+                frame_id = int(frame.get("frame_id", frame_index))
+            except (TypeError, ValueError) as exc:
+                raise ValidationError("追踪帧编号无效。") from exc
+
+            labels = []
+            for track in frame.get("tracks") or []:
+                if not isinstance(track, dict):
+                    raise ValidationError("追踪目标格式错误。")
+                try:
+                    track_id = int(track.get("track_id"))
+                    class_id = int(track.get("class_id", 0))
+                    bbox = [float(value) for value in list(track.get("bbox") or [])[:4]]
+                except (TypeError, ValueError) as exc:
+                    raise ValidationError("追踪目标的序号、类别或框坐标无效。") from exc
+                if track_id < 0 or len(bbox) != 4:
+                    raise ValidationError("追踪目标的序号或框坐标无效。")
+                class_name = names[class_id] if 0 <= class_id < len(names) and names[class_id] else (
+                    "ship" if class_id == 0 else f"class_{class_id}"
+                )
+                labels.append({
+                    "type": "detection",
+                    "class_name": class_name,
+                    "class_id": class_id,
+                    "bbox": bbox,
+                    "bbox_format": "xyxy_pixels",
+                    "source_format": "ship_tracking",
+                    "track_id": track_id,
+                    "split": "train",
+                })
+
+            relative_path = f"images/frame_{frame_id:06d}{image_path.suffix.lower()}"
+            records.append({
+                "source_path": image_path,
+                "relative_path": relative_path,
+                "labels": labels,
+                "sample_modality": "image",
+                "metadata": {
+                    "split": "train",
+                    "frame_id": frame_id,
+                    "source_task_id": source_task_id,
+                    "label_source": "ship_tracking",
+                    "annotation_format": "tracking_manifest",
+                },
+                "import_format": "ship_tracking",
+            })
+
+        with self.session_factory() as session:
+            self._ensure_dataset_name_available(session, clean_name)
+            dataset = self.dataset_repository.create_dataset(
+                session,
+                name=clean_name,
+                modality="image",
+                description="由船舰追踪结果保存的带追踪序号数据集",
+                status="generated",
+                parent_dataset_id=None,
+                storage_path="",
+                tags_json=["generated", "ship_tracking", "tracking_labels"],
+                extra_json={
+                    "dataset_role": "train",
+                    "source_task_id": source_task_id,
+                    "source_algorithm": "船舰追踪算法",
+                    "label_mode": "track_id",
+                    "sample_count": len(records),
+                },
+            )
+            dataset.storage_path = str(self._allocate_dataset_dir(dataset.id, clean_name))
+            class_distribution: dict[str, int] = {}
+            for record in records:
+                source = record["source_path"]
+                copied = self.file_indexer.copy_into_dataset(
+                    source,
+                    Path(dataset.storage_path) / "raw",
+                    record["relative_path"],
+                )
+                labels = list(record.get("labels", []))
+                for label in labels:
+                    class_name = str(label.get("class_name") or "")
+                    if class_name:
+                        class_distribution[class_name] = class_distribution.get(class_name, 0) + 1
+                self.dataset_repository.create_sample(
+                    session,
+                    dataset_id=dataset.id,
+                    source_sample_id=None,
+                    name=copied.name,
+                    modality="image",
+                    file_path=str(copied),
+                    relative_path=copied.relative_to(Path(dataset.storage_path) / "raw").as_posix(),
+                    sha256=None,
+                    mime_type=self.file_indexer.detect_mime_type(copied),
+                    extension=copied.suffix.lower(),
+                    size_bytes=copied.stat().st_size,
+                    status="raw",
+                    metadata_json=record.get("metadata", {}),
+                    labels_json=labels,
+                )
+
+            extra_json = dict(dataset.extra_json or {})
+            extra_json["class_distribution"] = class_distribution
+            dataset.extra_json = extra_json
+            self._refresh_dataset_stats(session, dataset)
+            self._write_dataset_manifest(session, dataset)
+            self.log_repository.add(
+                session,
+                level="info",
+                action="save_tracking_dataset",
+                resource_type="dataset",
+                resource_id=str(dataset.id),
+                message=f"Saved tracking dataset {dataset.name}",
+                payload_json={"source_task_id": source_task_id, "sample_count": len(records)},
             )
             session.commit()
             return {"ok": True, "data": self._serialize_dataset(session, dataset)}
@@ -1826,10 +1964,10 @@ class DatasetService(ServiceBase):
                 payload["bbox"] = [float(value) for value in bbox[:4]]
             except (TypeError, ValueError):
                 pass
-        for key in ("bbox_format", "source_format", "source_class_id"):
+        for key in ("bbox_format", "source_format", "source_class_id", "track_id"):
             value = label.get(key)
             if value not in (None, ""):
-                payload[key] = value
+                payload[key] = int(value) if key == "track_id" else value
         return payload
 
     def _format_split_ratio(self, split_counts: dict[str, int]) -> str:

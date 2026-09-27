@@ -2813,6 +2813,30 @@ _DEFAULT_ALGORITHMS = (
         ],
     },
     # =========================================================================
+    # 船舰追踪执行 - YOLOv5 + ByteTrack
+    # =========================================================================
+    {
+        "key": "training.image.ship_tracking",
+        "name": "船舰追踪算法",
+        "category": "training",
+        "modality": "image",
+        "entry_type": "python_function",
+        "module_path": "plugins.training.ship_tracking",
+        "callable_name": "run",
+        "description": "使用指定 YOLOv5 权重对有序图片帧进行检测，并使用 ByteTrack 生成船舰轨迹、轨迹配置文件和带 track_id 的视频。",
+        "input_contract": {
+            "dataset_required": True,
+            "sample_required": True,
+            "fields": ["dataset_path", "samples", "model_checkpoint_path"],
+        },
+        "output_contract": {
+            "produces": ["tracking_manifest", "predictions", "video"],
+            "artifact_types": ["tracking_manifest", "video", "predictions"],
+        },
+        "validation_rules_json": {"scenario_key": "ship_target_recognition_tracking"},
+        "parameters": [],
+    },
+    # =========================================================================
     # 多模态语义分割评估
     # =========================================================================
     {
@@ -2956,6 +2980,30 @@ _DEFAULT_ALGORITHMS = (
         ],
     },
     # =========================================================================
+    # 船舰追踪评估 - HOTA/IDF1/MOTA
+    # =========================================================================
+    {
+        "key": "evaluation.image.ship_tracking",
+        "name": "船舰追踪评估算法",
+        "category": "evaluation",
+        "modality": "image",
+        "entry_type": "python_function",
+        "module_path": "plugins.evaluation.ship_tracking_evaluator",
+        "callable_name": "run",
+        "description": "比较船舰预测轨迹与真实轨迹，计算 HOTA、IDF1、MOTA、ID 切换、误检和漏检等指标。",
+        "input_contract": {
+            "dataset_required": True,
+            "sample_required": True,
+            "fields": ["model_checkpoint_path", "target_dataset", "tracking_labels"],
+        },
+        "output_contract": {
+            "produces": ["metrics", "artifacts"],
+            "artifact_types": ["report"],
+        },
+        "validation_rules_json": {"scenario_key": "ship_target_recognition_tracking"},
+        "parameters": [],
+    },
+    # =========================================================================
     # 模型评估 - PLUD 开放集识别 (1)
     # =========================================================================
     {
@@ -3056,6 +3104,7 @@ DEFAULT_BINDINGS: dict[str, str] = {
     "training.audio.audio_classifier": "evaluation.audio.audio_classifier",
     "training.image.sonar_oltr_classifier": "evaluation.multimodal.sonar_oltr_plud",
     "training.image.yolov5_detector": "evaluation.image.yolov5_evaluator",
+    "training.image.ship_tracking": "evaluation.image.ship_tracking",
     "training.timeseries.ship_predictor": "evaluation.timeseries.ship_evaluator",
     "training.timeseries.hyfd_fault_diagnosis": "evaluation.timeseries.hyfd_fault_evaluator",
     "training.multimodal.fusion_detector": "evaluation.multimodal.fusion_evaluator",

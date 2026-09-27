@@ -92,6 +92,15 @@ def analyze_training_compatibility(dataset, samples, algorithm, parameters: dict
         if len(detected) < 2:
             return _result(False, f"YOLOv5 至少需要 2 张带有效检测框的图片，当前 {len(detected)} 张")
         return _result(True, f"{len(detected)} 张图片包含有效检测框")
+    if key == "training.image.ship_tracking":
+        frames = [
+            sample
+            for sample in _image_samples(active_samples)
+            if Path(sample_path(sample)).is_file()
+        ]
+        if len(frames) < 2:
+            return _result(False, f"船舰追踪至少需要 2 张可读取的图片帧，当前 {len(frames)} 张")
+        return _result(True, f"找到 {len(frames)} 张可读取图片帧，运行时将按帧号或文件名排序")
     if key == "training.multimodal.seg":
         groups = _multimodal_groups(active_samples)
         paired = sum(1 for roles in groups.values() if roles["image"] and roles["mask"])

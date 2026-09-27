@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shutil
+import json
 from datetime import datetime
 from pathlib import Path
 
@@ -442,6 +443,158 @@ class BackendBridge:
             return self.facade.training_service.run_task(task_id)
         except Exception as exc:
             return _normalize_error(exc)
+
+    def get_tracking_result(self, task_id: int) -> dict:
+        try:
+            result = self._load_tracking_result(task_id)
+            return {"ok": True, "data": result}
+        except Exception as exc:
+            return _normalize_error(exc)
+
+    def save_tracking_result(self, task_id: int, payload: dict) -> dict:
+        try:
+            with self.facade.session_factory() as session:
+                task = self.facade.task_repository.get_task_model(session, int(task_id))
+                if task is None:
+                    raise NotFoundError(f"Task {task_id} not found.")
+                if task.task_type != "training":
+                    raise ValidationError("仅支持保存船舰追踪训练结果。")
+                output_dir = Path(task.output_dir or "").expanduser().resolve()
+                if not output_dir.is_dir():
+                    raise ValidationError("追踪任务输出目录不存在。")
+                manifest_path, predictions_path = self._tracking_paths(task, output_dir)
+
+                original = json.loads(predictions_path.read_text(encoding="utf-8"))
+                frames = (payload or {}).get("frames")
+                if not isinstance(frames, list):
+                    raise ValidationError("追踪结果格式错误：缺少 frames。")
+                normalized_frames = [self._normalize_tracking_frame(frame) for frame in frames]
+                original["frames"] = normalized_frames
+                predictions_path.write_text(
+                    json.dumps(original, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+                video_value = (json.loads(manifest_path.read_text(encoding="utf-8")) or {}).get("video_path")
+                if video_value:
+                    video_path = Path(str(video_value)).expanduser()
+                    if not video_path.is_absolute():
+                        video_path = manifest_path.parent / video_path
+                    video_path = video_path.resolve()
+                    if output_dir in video_path.parents:
+                        try:
+                            from plugins.training.ship_tracking import _write_video
+
+                            _write_video(normalized_frames, video_path, int(original.get("fps", 10)))
+                        except Exception:
+                            pass
+
+            dataset_name = f"船舰追踪标注数据集_任务{int(task_id)}_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
+            dataset_result = self.facade.dataset_service.create_tracking_dataset(
+                dataset_name,
+                normalized_frames,
+                original.get("class_names") or [],
+                int(task_id),
+            )
+            result_data = self._load_tracking_result(task_id)
+            result_data["dataset"] = dataset_result.get("data", {})
+            return {"ok": True, "data": result_data}
+        except Exception as exc:
+            return _normalize_error(exc)
+
+    def _load_tracking_result(self, task_id: int) -> dict:
+        with self.facade.session_factory() as session:
+            task = self.facade.task_repository.get_task_model(session, int(task_id))
+            if task is None:
+                raise NotFoundError(f"Task {task_id} not found.")
+            if task.task_type != "training" or task.status != "completed":
+                raise ValidationError("仅支持查看已完成的船舰追踪任务。")
+            output_dir = Path(task.output_dir or "").expanduser().resolve()
+            if not output_dir.is_dir():
+                raise ValidationError("追踪任务输出目录不存在。")
+            manifest_path, predictions_path = self._tracking_paths(task, output_dir)
+
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        predictions = json.loads(predictions_path.read_text(encoding="utf-8"))
+        frames = []
+        seen_frame_ids = set()
+        for frame in predictions.get("frames") or []:
+            item = dict(frame)
+            try:
+                frame_id = int(item.get("frame_id"))
+            except (TypeError, ValueError):
+                frame_id = len(frames)
+            if frame_id in seen_frame_ids:
+                continue
+            seen_frame_ids.add(frame_id)
+            item["frame_id"] = frame_id
+            image_path = Path(str(item.get("image_path") or "")).expanduser()
+            if image_path.exists():
+                image_path = image_path.resolve()
+                item["image_path"] = str(image_path)
+                item["image_url"] = image_path.as_uri()
+            else:
+                item["image_path"] = str(image_path)
+                item["image_url"] = ""
+            item["tracks"] = [self._normalize_tracking_object(track) for track in (item.get("tracks") or [])]
+            frames.append(item)
+        return {
+            "task_id": int(task_id),
+            "manifest": manifest,
+            "frames": frames,
+            "class_names": predictions.get("class_names") or manifest.get("class_names") or [],
+            "video_path": manifest.get("video_path") or "",
+        }
+
+    def _tracking_paths(self, task, output_dir: Path) -> tuple[Path, Path]:
+        artifacts = (task.result_json or {}).get("artifacts") or []
+        manifest_path = next(
+            (Path(str(path)).expanduser() for path in artifacts if Path(str(path)).name == "ship_tracking_manifest.json"),
+            output_dir / "ship_tracking_manifest.json",
+        ).resolve()
+        if output_dir not in manifest_path.parents:
+            raise ValidationError("追踪清单路径不在任务输出目录内。")
+        if not manifest_path.is_file():
+            raise ValidationError("未找到船舰追踪结果清单。")
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        predictions_value = manifest.get("predictions_path") or (output_dir / "tracking_predictions.json")
+        predictions_path = Path(str(predictions_value)).expanduser()
+        if not predictions_path.is_absolute():
+            predictions_path = manifest_path.parent / predictions_path
+        predictions_path = predictions_path.resolve()
+        if output_dir not in predictions_path.parents or not predictions_path.is_file():
+            raise ValidationError("未找到可编辑的追踪配置文件。")
+        return manifest_path, predictions_path
+
+    @staticmethod
+    def _normalize_tracking_object(track: dict) -> dict:
+        if not isinstance(track, dict):
+            raise ValidationError("追踪结果包含无效对象。")
+        try:
+            track_id = int(track.get("track_id"))
+            bbox = [float(value) for value in list(track.get("bbox") or [])[:4]]
+            class_id = int(track.get("class_id", 0))
+        except (TypeError, ValueError):
+            raise ValidationError("追踪结果中的序号、类别或框坐标无效。")
+        if len(bbox) != 4 or track_id < 0:
+            raise ValidationError("追踪结果中的序号或框坐标无效。")
+        item = dict(track)
+        item["track_id"] = track_id
+        item["bbox"] = bbox
+        item["class_id"] = class_id
+        return item
+
+    @classmethod
+    def _normalize_tracking_frame(cls, frame: dict) -> dict:
+        if not isinstance(frame, dict):
+            raise ValidationError("追踪结果包含无效帧。")
+        try:
+            frame_id = int(frame.get("frame_id"))
+        except (TypeError, ValueError):
+            raise ValidationError("追踪结果中的帧序号无效。")
+        item = dict(frame)
+        item["frame_id"] = frame_id
+        item["tracks"] = [cls._normalize_tracking_object(track) for track in (frame.get("tracks") or [])]
+        return item
 
     def import_test_set(self, dataset_name: str, folder_path: str) -> dict:
         try:

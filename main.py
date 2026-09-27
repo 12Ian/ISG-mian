@@ -77,6 +77,7 @@ class BackendService(QObject):
     trainingTasksUpdated = Signal(dict)
     trainingStatusUpdated = Signal(str, bool, float)
     trainingCompatibilityUpdated = Signal(dict)
+    trackingResultUpdated = Signal(dict)
     testSetImported = Signal(dict)
     algorithmBindingsUpdated = Signal(dict)
 
@@ -630,6 +631,26 @@ class BackendService(QObject):
     def getTrainingTasks(self, datasetId: int, status: str):
         result = self._bridge.get_training_tasks(datasetId, status)
         self.trainingTasksUpdated.emit(result)
+
+    @Slot(int)
+    def getTrackingResult(self, taskId: int):
+        result = self._bridge.get_tracking_result(taskId)
+        self.trackingResultUpdated.emit(result)
+
+    @Slot(int, dict, result=dict)
+    def saveTrackingResult(self, taskId: int, payload: dict) -> dict:
+        result = self._bridge.save_tracking_result(taskId, payload or {})
+        if result.get("ok"):
+            self.trackingResultUpdated.emit(result)
+            self.datasetsUpdated.emit(self._bridge.get_datasets(1, 100, ""))
+            self.allDatasetsUpdated.emit(self._bridge.get_all_datasets(""))
+            data = result.get("data", {})
+            return {
+                "status": "success",
+                "data": data,
+                "dataset": data.get("dataset", {}),
+            }
+        return {"status": "error", "message": result.get("message", "保存追踪结果失败")}
 
     @Slot(int, str, str, result=dict)
     def exportTrainingWeights(self, taskId: int, exportName: str, targetDir: str) -> dict:

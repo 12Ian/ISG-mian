@@ -481,6 +481,8 @@ Item {
     }
 
     function scenarioKeyFromName(name) {
+        if (name === "文本分类") return "text_classification"
+        if (name === "音频事件分类") return "audio_event_detection"
         if (name === "水下目标检测与识别") return "underwater_target_detection_recognition"
         if (name === "舰船目标识别与跟踪") return "ship_target_recognition_tracking"
         if (name === "系统健康状态预估与故障诊断") return "system_health_fault_diagnosis"
@@ -490,6 +492,8 @@ Item {
     }
 
     function scenarioNameFromKey(key) {
+        if (key === "text_classification") return "文本分类"
+        if (key === "audio_event_detection") return "音频事件分类"
         if (key === "underwater_target_detection_recognition") return "水下目标检测与识别"
         if (key === "ship_target_recognition_tracking") return "舰船目标识别与跟踪"
         if (key === "system_health_fault_diagnosis") return "系统健康状态预估与故障诊断"

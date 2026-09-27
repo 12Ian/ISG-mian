@@ -86,6 +86,10 @@ Item {
     property var trainingCompatibilityReasonMap: ({})
     property int compatibilityDatasetId: 0
     property int pendingCompatibilityDatasetId: 0
+    property var trackingWeightOptions: []
+    property int trackingTaskId: 0
+    property var trackingFrames: []
+    property int trackingFrameIndex: 0
 
     ListModel { id: scenarioModel }
     ListModel { id: datasetModel }
@@ -96,6 +100,13 @@ Item {
     ListModel { id: currentDetailModel }
     ListModel { id: weightOptionModel }
     ListModel { id: activeEvalSourceModel }
+
+    onTrackingFramesChanged: {
+        if (trackingCanvas) trackingCanvas.requestPaint()
+    }
+    onTrackingFrameIndexChanged: {
+        if (trackingCanvas) trackingCanvas.requestPaint()
+    }
 
     function checkStates() {
         var _allSel = taskQueueModel.count > 0
@@ -202,8 +213,20 @@ Item {
         return labels[key] || String(key || "")
     }
 
+    function hasDisplayValue(value) {
+        if (value === undefined || value === null) return false
+        if (typeof value === "number") return isFinite(value)
+        if (typeof value === "string") {
+            var token = value.trim().toLowerCase()
+            return token !== "" && ["-", "n/a", "na", "null", "none", "nan", "undefined"].indexOf(token) < 0
+        }
+        if (Array.isArray(value)) return value.length > 0
+        if (typeof value === "object") return Object.keys(value).length > 0
+        return true
+    }
+
     function detailMetricValue(value) {
-        if (value === undefined || value === null || value === "") return "-"
+        if (!root.hasDisplayValue(value)) return ""
         if (typeof value === "number") return value < 10 ? Number(value).toFixed(4) : Number(value).toFixed(2)
         if (typeof value === "boolean") return value ? "是" : "否"
         return String(value)
@@ -330,6 +353,96 @@ Item {
         return detail
     }
 
+    function appendHistoryDetailItems(historyItem) {
+        if (!historyItem || !historyItem.detailsJson) return
+        var parsed = null
+        try { parsed = JSON.parse(historyItem.detailsJson) } catch(e) { parsed = null }
+        var items = Array.isArray(parsed) ? parsed : (parsed && typeof parsed === "object" ? [parsed] : [])
+        for (var i = 0; i < items.length; i++) {
+            var item = items[i]
+            if (!item || typeof item !== "object") continue
+            item.detailsJson = JSON.stringify(item)
+            currentDetailModel.append(item)
+        }
+    }
+
+    function appendHistoryDetailFallback(historyItem) {
+        if (!historyItem || currentDetailModel.count > 0 || root.trackingTaskId > 0) return
+        var dataset = String(historyItem.datasets || "")
+        var algo = String(historyItem.algos || "")
+        if (dataset === "" && algo === "") return
+        var fallback = {dataset: dataset, algo: algo}
+        fallback.detailsJson = JSON.stringify(fallback)
+        currentDetailModel.append(fallback)
+    }
+
+    function trackingWeightValues() {
+        var values = []
+        for (var i = 0; i < root.trackingWeightOptions.length; i++) {
+            var item = root.trackingWeightOptions[i]
+            if (item && item.path && values.indexOf(item.path) < 0) values.push(item.path)
+        }
+        return values
+    }
+
+    function trackingWeightLabels(values) {
+        var labels = []
+        for (var i = 0; i < values.length; i++) {
+            var label = root.algorithmParamOptionLabel("weights", values[i])
+            for (var j = 0; j < root.trackingWeightOptions.length; j++) {
+                var item = root.trackingWeightOptions[j]
+                if (item && item.path === values[i]) {
+                    label = item.name || label
+                    break
+                }
+            }
+            labels.push(label)
+        }
+        return labels
+    }
+
+    function loadTrackingResult(taskId) {
+        root.trackingTaskId = Number(taskId || 0)
+        root.trackingFrames = []
+        root.trackingFrameIndex = 0
+        if (root.trackingTaskId > 0) backendService.getTrackingResult(root.trackingTaskId)
+    }
+
+    function currentTrackingFrame() {
+        if (root.trackingFrameIndex < 0 || root.trackingFrameIndex >= root.trackingFrames.length) return ({})
+        return root.trackingFrames[root.trackingFrameIndex] || ({})
+    }
+
+    function trackingColor(trackId) {
+        var colors = ["#22D3EE", "#F97316", "#A78BFA", "#34D399", "#F43F5E", "#FACC15", "#60A5FA", "#FB7185"]
+        var id = Math.abs(Number(trackId || 0))
+        return colors[id % colors.length]
+    }
+
+    function updateTrackingId(frameIndex, trackIndex, value) {
+        var trackId = parseInt(value, 10)
+        if (isNaN(trackId) || trackId < 0) return
+        var frames = JSON.parse(JSON.stringify(root.trackingFrames || []))
+        if (!frames[frameIndex] || !frames[frameIndex].tracks || !frames[frameIndex].tracks[trackIndex]) return
+        frames[frameIndex].tracks[trackIndex].track_id = trackId
+        root.trackingFrames = frames
+    }
+
+    function serializeTrackingFrames() {
+        return JSON.parse(JSON.stringify(root.trackingFrames || []))
+    }
+
+    function saveTrackingResult() {
+        if (root.trackingTaskId <= 0) return
+        var result = backendService.saveTrackingResult(root.trackingTaskId, {frames: root.serializeTrackingFrames()})
+        if (!result || result.status !== "success") {
+            root.showToast("⚠️ " + (result && result.message ? result.message : "保存追踪数据集失败"))
+            return
+        }
+        var datasetName = result.dataset && result.dataset.name ? result.dataset.name : "新数据集"
+        root.showToast("✅ 已保存为数据集：" + datasetName)
+    }
+
     function scenarioNameById(scenarioId) {
         var id = Number(scenarioId)
         for (var i = 0; i < scenarioModel.count; i++) {
@@ -396,7 +509,7 @@ Item {
         if (resultJson.summary) details["训练摘要"] = resultJson.summary
         return {
             historyType: "training",
-            projectName: "训练任务 #" + taskId,
+            projectName: task.title || ("训练任务 #" + taskId),
             scenario: scenarioNameById(payload.scenario_id || 0),
             datasets: details.dataset,
             algos: details.algo,
@@ -480,6 +593,16 @@ Item {
         } catch(e) {
             return []
         }
+    }
+
+    function trainingHistoryName(taskId, fallback) {
+        var id = Number(taskId || 0)
+        for (var i = 0; i < evalHistoryModel.count; i++) {
+            var item = evalHistoryModel.get(i)
+            var ids = root.historyTaskIds(item)
+            if (ids.indexOf(id) >= 0 || ids.indexOf(String(id)) >= 0) return item.projectName || fallback
+        }
+        return fallback
     }
 
     function deleteHistoryEntry(index) {
@@ -961,11 +1084,14 @@ Item {
             root.allTrainingAlgos = trainingList
             root.scenarioAlgoMap = newScenarioAlgoMap
             root.filterAlgorithmsByScenario()
+            // 训练历史和算法列表是异步返回的，算法列表到达后重新解析一次权重选项。
+            backendService.getTrainingTasks(0, "")
         }
 
         function onTrainingTasksUpdated(data) {
             var items = []
             if (data && data.items) items = data.items
+            var trackingWeights = []
             for (var i = 0; i < items.length; i++) {
                 var task = items[i]
                 root.upsertTrainingTask(task)
@@ -976,7 +1102,25 @@ Item {
                 if (root.evalStateReady) root.upsertWeightOption(task)
                 root.syncHistoryFromTrainingTask(task)
                 if (task.status === "running") root.isTraining = true
+
+                var taskKey = root.algorithmKeyById(task.algorithm_id || 0)
+                if (task.status === "completed" && taskKey === "training.image.yolov5_detector") {
+                    var artifacts = task.result && task.result.artifacts ? task.result.artifacts : []
+                    var bestPath = ""
+                    for (var artifactIndex = 0; artifactIndex < artifacts.length; artifactIndex++) {
+                        var artifactPath = String(artifacts[artifactIndex] || "")
+                        if (artifactPath.split(/[\\/]/).pop().toLowerCase() === "best.pt") {
+                            bestPath = artifactPath
+                            break
+                        }
+                    }
+                    if (bestPath) trackingWeights.push({
+                        path: bestPath,
+                        name: root.trainingHistoryName(task.id || 0, task.title || ("训练任务 #" + (task.id || 0)))
+                    })
+                }
             }
+            root.trackingWeightOptions = trackingWeights
             if (root.evalStateReady) root.migrateLegacySavedWeights = false
             if (root.isTraining) {
                 var allDone = true
@@ -994,6 +1138,18 @@ Item {
             if (!success) root.isTraining = false
             // 成功、失败和主动取消都必须刷新，确保终止任务显示删除按钮。
             backendService.getTrainingTasks(0, "")
+        }
+
+        function onTrackingResultUpdated(result) {
+            if (!result || result.ok !== true) {
+                root.showToast("⚠️ " + (result && result.message ? result.message : "读取追踪结果失败"))
+                return
+            }
+            var data = result.data || {}
+            if (Number(data.task_id || 0) !== root.trackingTaskId) return
+            root.trackingFrames = data.frames || []
+            root.trackingFrameIndex = 0
+            root.showToast("✅ 追踪结果已加载，可修改追踪序号")
         }
 
         function onEvaluationStatusUpdated(message, success) {
@@ -1074,8 +1230,32 @@ Item {
                 return out
             }
             var allKeys = filterKeys(existingKeys.concat(newKeys))
-            if (allKeys.length === 0) allKeys = ["accuracy", "macro_f1"]
-            evalMetricHeaders = allKeys
+            var populatedKeys = []
+            for (var pk = 0; pk < allKeys.length; pk++) {
+                var metricKey = allKeys[pk]
+                var hasValue = false
+                for (var pi = 0; pi < items.length; pi++) {
+                    if (root.hasDisplayValue((items[pi].metrics || {})[metricKey])) {
+                        hasValue = true
+                        break
+                    }
+                }
+                if (!hasValue) {
+                    var oldIndex = existingKeys.indexOf(metricKey)
+                    if (oldIndex >= 0) {
+                        for (var oi = 0; oi < evalResultModel.count; oi++) {
+                            var oldValues = []
+                            try { oldValues = JSON.parse(evalResultModel.get(oi).metricValuesJson || "[]") } catch(e) {}
+                            if (oldIndex < oldValues.length && root.hasDisplayValue(oldValues[oldIndex])) {
+                                hasValue = true
+                                break
+                            }
+                        }
+                    }
+                }
+                if (hasValue) populatedKeys.push(metricKey)
+            }
+            evalMetricHeaders = populatedKeys
 
             // 追加新结果行，同时记录已完成的任务ID
             var completedTaskIds = []
@@ -1094,13 +1274,13 @@ Item {
                 }
                 var trainingTaskId = root.trainingTaskIdForEvalTask(evalTaskId)
                 var vals = []
-                for (var k = 0; k < allKeys.length; k++) {
-                    var v = m[allKeys[k]]
-                    if (v !== undefined && v !== null) {
+                for (var k = 0; k < evalMetricHeaders.length; k++) {
+                    var v = m[evalMetricHeaders[k]]
+                    if (root.hasDisplayValue(v)) {
                         if (typeof v === "number") vals.push(v < 10 ? Number(v).toFixed(4) : Number(v).toFixed(2))
                         else vals.push(String(v))
                     } else {
-                        vals.push("-")
+                        vals.push("")
                     }
                 }
                 evalResultModel.append({
@@ -1629,21 +1809,23 @@ Item {
                                             contentItem: Text { text: parent.text; color: "#64748B"; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                                             onClicked: {
                                                 root.currentHistoryItem = { historyType: historyItem.historyType || "training", projectName: historyItem.projectName, scenario: historyItem.scenario, datasets: historyItem.datasets, algos: historyItem.algos, trainStatus: historyItem.trainStatus, evalReport: historyItem.evalReport }
+                                                root.trackingTaskId = 0
+                                                root.trackingFrames = []
                                                 currentDetailModel.clear()
                                                 var taskIds = []
                                                 try { taskIds = JSON.parse(historyItem.taskIdsJson || "[]") } catch(e) { taskIds = [] }
                                                 if (taskIds.length > 0) {
-                                                    var rebuilt = root.buildTrainingDetailFromTask(taskIds[0], historyItem)
-                                                    rebuilt.detailsJson = JSON.stringify(rebuilt)
-                                                    currentDetailModel.append(rebuilt)
-                                                } else if (historyItem.detailsJson && historyItem.detailsJson !== "") {
-                                                    var arr = JSON.parse(historyItem.detailsJson)
-                                                    for (var i = 0; i < arr.length; i++) {
-                                                        var item = arr[i]
-                                                        item.detailsJson = JSON.stringify(item)
-                                                        currentDetailModel.append(item)
+                                                    if (historyItem.algos === "船舰追踪算法") {
+                                                        root.loadTrackingResult(Number(taskIds[0]))
+                                                    } else {
+                                                        var rebuilt = root.buildTrainingDetailFromTask(taskIds[0], historyItem)
+                                                        rebuilt.detailsJson = JSON.stringify(rebuilt)
+                                                        currentDetailModel.append(rebuilt)
                                                     }
+                                                } else if (historyItem.detailsJson && historyItem.detailsJson !== "") {
+                                                    root.appendHistoryDetailItems(historyItem)
                                                 }
+                                                root.appendHistoryDetailFallback(historyItem)
                                                 root.viewMode = "detail"
                                             }
                                         }
@@ -1773,15 +1955,11 @@ Item {
                                             contentItem: Text { text: parent.text; color: "#D1D5DB"; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                                             onClicked: {
                                                 root.currentHistoryItem = { historyType: historyItem.historyType || "evaluation", projectName: historyItem.projectName, scenario: historyItem.scenario, datasets: historyItem.datasets, algos: historyItem.algos, trainStatus: historyItem.trainStatus, evalReport: historyItem.evalReport }
+                                                root.trackingTaskId = 0
+                                                root.trackingFrames = []
                                                 currentDetailModel.clear()
-                                                if (historyItem.detailsJson && historyItem.detailsJson !== "") {
-                                                    var arr = JSON.parse(historyItem.detailsJson)
-                                                    for (var i = 0; i < arr.length; i++) {
-                                                        var item = arr[i]
-                                                        item.detailsJson = JSON.stringify(item)
-                                                        currentDetailModel.append(item)
-                                                    }
-                                                }
+                                                root.appendHistoryDetailItems(historyItem)
+                                                root.appendHistoryDetailFallback(historyItem)
                                                 root.viewMode = "detail"
                                             }
                                         }
@@ -1872,14 +2050,7 @@ Item {
 
         Rectangle { Layout.fillWidth: true; Layout.fillHeight: true; color: Theme.row; border.color: Theme.border; border.width: 1; radius: 8; clip: true
             ColumnLayout { anchors.fill: parent; spacing: 0
-                Rectangle { Layout.fillWidth: true; height: 45; color: Theme.rowAlt
-                    RowLayout { anchors.fill: parent; anchors.leftMargin: 20; anchors.rightMargin: 20; spacing: 10
-                        Label { text: "使用数据集"; font.bold: true; color: "#A0AEC0"; Layout.preferredWidth: 170 }
-                        Label { text: "匹配算法模型"; font.bold: true; color: "#A0AEC0"; Layout.preferredWidth: 170 }
-                        Label { text: root.currentHistoryItem && root.currentHistoryItem.historyType === "training" ? "训练配置" : "评估指标"; font.bold: true; color: "#A0AEC0"; Layout.fillWidth: true }
-                    }
-                }
-                ListView { id: detailListView; Layout.fillWidth: true; Layout.fillHeight: true; clip: true; spacing: 1; model: currentDetailModel
+                ListView { id: detailListView; visible: root.trackingTaskId <= 0; Layout.fillWidth: true; Layout.fillHeight: root.trackingTaskId <= 0; Layout.preferredHeight: root.trackingTaskId > 0 ? 0 : -1; clip: true; spacing: 1; model: currentDetailModel
                     delegate: Rectangle {
                         width: detailListView.width
                         height: 96
@@ -1942,16 +2113,17 @@ Item {
                                         for (var mi = 0; mi < keys.length; mi++) {
                                             if (keys[mi] === "dataset" || keys[mi] === "algo") continue
                                             if (root.currentHistoryItem && root.currentHistoryItem.historyType === "training" && hiddenTrainingKeys.indexOf(keys[mi]) !== -1) continue
+                                            if (!root.hasDisplayValue(detailObj[keys[mi]])) continue
                                             entries.push({ "key": keys[mi], "value": detailObj[keys[mi]] })
                                         }
                                         return entries
                                     }
 
                                     Repeater {
-                                        model: metricRow.detailEntries.length > 0 ? metricRow.detailEntries : [{ "key": "empty", "value": "暂无指标" }]
+                                        model: metricRow.detailEntries
 
                                         delegate: Rectangle {
-                                            width: modelData.key === "empty" ? 120 : 132
+                                            width: 132
                                             height: 64
                                             radius: 8
                                             color: Theme.rowAlt
@@ -1965,7 +2137,7 @@ Item {
 
                                                 Label {
                                                     width: parent.width
-                                                    text: modelData.key === "empty" ? "提示" : root.detailMetricLabel(modelData.key)
+                                                    text: root.detailMetricLabel(modelData.key)
                                                     color: root.textMuted
                                                     font.pixelSize: 11
                                                     font.bold: true
@@ -1974,7 +2146,7 @@ Item {
                                                 }
                                                 Label {
                                                     width: parent.width
-                                                    text: root.detailMetricValue(modelData.value)
+                                                        text: root.detailMetricValue(modelData.value)
                                                     color: root.textColor
                                                     font.pixelSize: 14
                                                     font.bold: true
@@ -1985,6 +2157,159 @@ Item {
                                         }
                                     }
                                 }
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    id: trackingEditor
+                    visible: root.trackingTaskId > 0
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    color: Theme.panel
+                    border.color: Theme.border
+
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.margins: 12
+                        spacing: 12
+
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.minimumWidth: 450
+                            Layout.preferredWidth: 900
+                            Layout.fillHeight: true
+                            color: "#111827"
+                            border.color: Theme.border
+                            clip: true
+
+                            Image {
+                                id: trackingImage
+                                anchors.fill: parent
+                                fillMode: Image.PreserveAspectFit
+                                onStatusChanged: trackingCanvas.requestPaint()
+                                source: {
+                                    var frame = root.currentTrackingFrame()
+                                    var url = String(frame.image_url || "")
+                                    if (url) return url
+                                    var path = String(frame.image_path || "")
+                                    if (!path) return ""
+                                    return path.indexOf("file:") === 0 ? path : "file:///" + path.replace(/\\/g, "/")
+                                }
+                            }
+
+                            Canvas {
+                                id: trackingCanvas
+                                anchors.fill: parent
+                                onPaint: {
+                                    var frame = root.currentTrackingFrame()
+                                    var tracks = frame.tracks || []
+                                    if (trackingImage.sourceSize.width <= 0 || trackingImage.sourceSize.height <= 0) return
+                                    var ctx = getContext("2d")
+                                    ctx.clearRect(0, 0, width, height)
+                                    var scaleX = trackingImage.paintedWidth / trackingImage.sourceSize.width
+                                    var scaleY = trackingImage.paintedHeight / trackingImage.sourceSize.height
+                                    var offsetX = (width - trackingImage.paintedWidth) / 2
+                                    var offsetY = (height - trackingImage.paintedHeight) / 2
+                                    for (var i = 0; i < tracks.length; i++) {
+                                        var track = tracks[i]
+                                        var bbox = track.bbox || []
+                                        if (bbox.length < 4) continue
+                                        var x = offsetX + Number(bbox[0]) * scaleX
+                                        var y = offsetY + Number(bbox[1]) * scaleY
+                                        var w = (Number(bbox[2]) - Number(bbox[0])) * scaleX
+                                        var h = (Number(bbox[3]) - Number(bbox[1])) * scaleY
+                                        var color = root.trackingColor(track.track_id)
+                                        var label = "ID " + track.track_id
+                                        ctx.strokeStyle = color
+                                        ctx.lineWidth = 2
+                                        ctx.strokeRect(x, y, w, h)
+                                        ctx.font = "bold 13px sans-serif"
+                                        var labelWidth = ctx.measureText(label).width + 8
+                                        var labelY = Math.max(18, y + 16)
+                                        ctx.fillStyle = color
+                                        ctx.fillRect(Math.max(0, x + w - labelWidth), labelY - 15, labelWidth, 18)
+                                        ctx.fillStyle = "#111827"
+                                        ctx.fillText(label, Math.max(4, x + w - labelWidth + 4), labelY - 2)
+                                    }
+                                }
+                            }
+
+                            Label {
+                                anchors.centerIn: parent
+                                visible: root.trackingFrames.length === 0
+                                text: "正在加载追踪结果..."
+                                color: root.textMuted
+                            }
+                        }
+
+                        ColumnLayout {
+                            Layout.minimumWidth: 260
+                            Layout.preferredWidth: 250
+                            Layout.maximumWidth: 260
+                            Layout.fillWidth: false
+                            Layout.fillHeight: true
+                            spacing: 8
+
+                            Label {
+                                text: "追踪序号编辑"
+                                color: root.primaryColor
+                                font.bold: true
+                                font.pixelSize: 14
+                            }
+                            Label {
+                                text: root.trackingFrames.length > 0 ? "第 " + (root.trackingFrameIndex + 1) + " / " + root.trackingFrames.length + " 帧（原始帧 " + (root.currentTrackingFrame().frame_id || 0) + "）" : "无可用帧"
+                                color: root.textMuted
+                            }
+                            Label {
+                                text: (root.currentTrackingFrame().tracks || []).length > 0 ? "当前目标数：" + (root.currentTrackingFrame().tracks || []).length : "当前帧没有检测到目标"
+                                color: (root.currentTrackingFrame().tracks || []).length > 0 ? root.textColor : root.warningColor
+                                Layout.fillWidth: true
+                                elide: Text.ElideRight
+                            }
+                            ListView {
+                                id: trackingObjectList
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+                                clip: true
+                                spacing: 6
+                                model: root.currentTrackingFrame().tracks || []
+                                delegate: RowLayout {
+                                    width: trackingObjectList.width
+                                    height: 34
+                                    spacing: 6
+                                    Rectangle { width: 10; height: 10; radius: 5; color: root.trackingColor(modelData.track_id) }
+                                    Label { text: "目标 " + (index + 1); color: root.textColor; Layout.fillWidth: true }
+                                    TextField {
+                                        Layout.preferredWidth: 76
+                                        text: String(modelData.track_id)
+                                        validator: IntValidator { bottom: 0 }
+                                        onEditingFinished: root.updateTrackingId(root.trackingFrameIndex, index, text)
+                                    }
+                                }
+                            }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 6
+                                Button {
+                                    text: "上一帧"
+                                    enabled: root.trackingFrameIndex > 0
+                                    Layout.fillWidth: true
+                                    onClicked: root.trackingFrameIndex--
+                                }
+                                Button {
+                                    text: "下一帧"
+                                    enabled: root.trackingFrameIndex + 1 < root.trackingFrames.length
+                                    Layout.fillWidth: true
+                                    onClicked: root.trackingFrameIndex++
+                                }
+                            }
+                            Button {
+                                text: "保存为新数据集"
+                                Layout.fillWidth: true
+                                enabled: root.trackingFrames.length > 0
+                                onClicked: root.saveTrackingResult()
                             }
                         }
                     }
@@ -2634,7 +2959,7 @@ Item {
                                                 Repeater {
                                                     model: root.evalMetricHeaders.length
                                                     Label {
-                                                        text: index < _vals.length ? _vals[index] : "-"
+                                                        text: index < _vals.length ? _vals[index] : ""
                                                         color: root.textColor; font.pixelSize: 13; font.family: "Courier"; font.bold: true
                                                         width: Math.max(75, String(root.evalMetricHeaders[index] || "").length * 10)
                                                         horizontalAlignment: Text.AlignRight
@@ -2960,11 +3285,22 @@ Item {
                 var val = rp.default_value
                 if (key === "training.image.yolov5_detector" && rp.name === "weights") val = "yolov5n.pt"
                 if (key === "training.image.yolov5_detector" && rp.name === "model_yaml") val = "models/yolov5n.yaml"
-                if (typeof val !== "string") val = JSON.stringify(val)
                 var opts = rp.options || rp.options_json || []
                 if (key === "training.image.yolov5_detector" && rp.name === "weights") opts = ["yolov5n.pt"]
                 if (key === "training.image.yolov5_detector" && rp.name === "model_yaml") opts = ["models/yolov5n.yaml"]
-                editable.push({name: rp.name, label: rp.label || rp.name, value: val, defaultValue: val, optionsJson: JSON.stringify(opts)})
+                var optionLabels = root.algorithmParamOptionLabels(rp.name, opts)
+                if (key === "training.image.ship_tracking" && rp.name === "weights") {
+                    opts = root.trackingWeightValues()
+                    optionLabels = root.trackingWeightLabels(opts)
+                    if (!val && opts.length > 0) val = opts[0]
+                    if (opts.length === 0) {
+                        opts = [""]
+                        optionLabels = ["暂无可用的 YOLOv5 训练权重"]
+                    }
+                }
+                if (typeof val !== "string") val = JSON.stringify(val)
+                editable.push({name: rp.name, label: rp.label || rp.name, value: val, defaultValue: val,
+                               optionsJson: JSON.stringify(opts), optionLabelsJson: JSON.stringify(optionLabels)})
             }
             paramEditModel.clear()
             for (var j = 0; j < editable.length; j++) {
@@ -3012,7 +3348,7 @@ Item {
                         width: paramEditList.width; height: 40
                         color: index % 2 === 0 ? "transparent" : root.tableHoverBg
                         property var _opts: { try { return JSON.parse(model.optionsJson || "[]") } catch(e) { return [] } }
-                        property var _optionLabels: root.algorithmParamOptionLabels(model.name, _opts)
+                        property var _optionLabels: { try { return JSON.parse(model.optionLabelsJson || "[]") } catch(e) { return root.algorithmParamOptionLabels(model.name, _opts) } }
                         RowLayout {
                             anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12; spacing: 10
                             Text {
