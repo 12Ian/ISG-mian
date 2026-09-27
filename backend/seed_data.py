@@ -516,6 +516,27 @@ _DEFAULT_ALGORITHMS = (
         ],
     },
     {
+        "key": "training.audio.audio_classifier",
+        "name": "音频分类训练",
+        "category": "training",
+        "modality": "audio",
+        "entry_type": "python_function",
+        "module_path": "plugins.training.audio_classifier",
+        "callable_name": "run",
+        "description": "基于 AudioClassification-Pytorch 的音频分类训练，支持 CAMPPlus、EcapaTdnn 等模型。",
+        "input_contract": {
+            "dataset_required": True,
+            "sample_required": True,
+            "fields": ["dataset_path", "samples"],
+        },
+        "output_contract": {
+            "produces": ["model_checkpoint"],
+            "artifact_types": ["checkpoint"],
+        },
+        "validation_rules_json": {"scenario_key": "audio_event_detection"},
+        "parameters": [],
+    },
+    {
         "key": "training.demo_classifier",
         "name": "基础分类器训练",
         "category": "training",
@@ -583,6 +604,20 @@ _DEFAULT_ALGORITHMS = (
                 "description": "决策树最大深度",
             },
         ],
+    },
+    {
+        "key": "evaluation.audio.audio_classifier",
+        "name": "AudioCNN 音频分类评估",
+        "category": "evaluation",
+        "modality": "audio",
+        "entry_type": "python_function",
+        "module_path": "plugins.evaluation.audio_classifier_evaluator",
+        "callable_name": "run",
+        "description": "加载音频分类训练产出的 AudioCNN checkpoint，计算准确率和 Loss。",
+        "input_contract": {"dataset_required": True, "sample_required": True, "fields": ["baseline_dataset", "target_dataset"]},
+        "output_contract": {"produces": ["metrics", "report"], "artifact_types": ["json"]},
+        "validation_rules_json": {"scenario_key": "audio_event_detection"},
+        "parameters": [],
     },
     {
         "key": "evaluation.sample_count_comparator",
@@ -2989,6 +3024,7 @@ DEFAULT_ALGORITHMS = synchronize_default_algorithm_contracts(
 
 # 训练算法默认关联的评估插件
 DEFAULT_BINDINGS: dict[str, str] = {
+    "training.audio.audio_classifier": "evaluation.audio.audio_classifier",
     "training.image.sonar_oltr_classifier": "evaluation.multimodal.sonar_oltr_plud",
     "training.image.yolov5_detector": "evaluation.image.yolov5_evaluator",
     "training.timeseries.ship_predictor": "evaluation.timeseries.ship_evaluator",

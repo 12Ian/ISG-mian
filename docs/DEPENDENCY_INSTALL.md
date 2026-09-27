@@ -76,14 +76,19 @@ Windows 上如继续出现编译相关错误，请先安装 Microsoft C++ Build 
 - MSVC v143 build tools
 - Windows 10/11 SDK
 
-### `macls`
+### `macls`（仅旧音频评估插件）
 
 使用位置：
-- `plugins/user/training_plugin.py`
 - `plugins/user/evaluation_plugin.py`
 
 原因：
 - 代码中把它当作外部 `AudioClassification-Pytorch` 项目依赖使用，不是当前仓库自带的普通 PyPI 根依赖
+
+音频分类训练已使用仓库内置的 PyTorch CNN，不再依赖 `macls`。如需运行旧音频评估插件，再按以下方式准备：
+
+- 单独准备 `AudioClassification-Pytorch`
+- 确保 `macls` 可被 Python 导入
+- 在评估插件参数中配置 `ac_project_path`
 
 推荐做法：
 - 单独准备 `AudioClassification-Pytorch`

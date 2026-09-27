@@ -21,6 +21,14 @@ class EvaluationService(ServiceBase):
 
     _DEFAULT_SCENARIOS = (
         {
+            "key": "audio_event_detection",
+            "name": "音频事件分类",
+            "modality": "audio",
+            "description": "用于音频分类模型训练结果的准确率与损失评估。",
+            "baseline_models_json": ["audio-cnn"],
+            "metric_schema_json": ["accuracy", "loss", "num_samples", "num_classes"],
+        },
+        {
             "key": "underwater_target_detection_recognition",
             "name": "水下目标检测与识别",
             "modality": "multimodal",

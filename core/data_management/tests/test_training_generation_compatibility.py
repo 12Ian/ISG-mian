@@ -95,6 +95,30 @@ class MultimodalAssociationTests(unittest.TestCase):
 
 
 class TrainingCompatibilityTests(unittest.TestCase):
+    def test_audio_classifier_accepts_labeled_audio_dataset(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            samples = []
+            for index in range(12):
+                audio_path = root / f"sample_{index}.wav"
+                audio_path.write_bytes(b"audio")
+                label = "whale" if index < 6 else "ship"
+                samples.append(
+                    SimpleNamespace(
+                        file_path=str(audio_path),
+                        status="active",
+                        labels_json=[{"class_name": label}],
+                    )
+                )
+
+            result = analyze_training_compatibility(
+                SimpleNamespace(modality="audio"),
+                samples,
+                SimpleNamespace(key="training.audio.audio_classifier", modality="audio"),
+            )
+
+            self.assertTrue(result["compatible"], result["reason"])
+
     def test_custom_algorithm_uses_declared_detection_requirements(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
