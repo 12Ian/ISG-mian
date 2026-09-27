@@ -18,8 +18,8 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def test_all_default_algorithms_use_plugin_parameter_contracts():
-    assert len(DEFAULT_ALGORITHMS) == 71
-    assert sum(len(item["parameters"]) for item in DEFAULT_ALGORITHMS) == 244
+    assert len(DEFAULT_ALGORITHMS) == 73
+    assert sum(len(item["parameters"]) for item in DEFAULT_ALGORITHMS) == 249
 
     for algorithm in DEFAULT_ALGORITHMS:
         assert algorithm["parameters"] == load_plugin_parameters(ROOT, algorithm["module_path"])

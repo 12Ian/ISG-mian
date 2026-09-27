@@ -516,6 +516,20 @@ _DEFAULT_ALGORITHMS = (
         ],
     },
     {
+        "key": "training.text.text_classifier",
+        "name": "文本分类训练",
+        "category": "training",
+        "modality": "text",
+        "entry_type": "python_function",
+        "module_path": "plugins.training.text_classifier",
+        "callable_name": "run",
+        "description": "使用 TF-IDF + LinearSVC 进行轻量文本分类训练。",
+        "input_contract": {"dataset_required": True, "sample_required": True, "fields": ["dataset_path", "samples"]},
+        "output_contract": {"produces": ["model_checkpoint"], "artifact_types": ["checkpoint"]},
+        "validation_rules_json": {"scenario_key": "text_classification"},
+        "parameters": [],
+    },
+    {
         "key": "training.audio.audio_classifier",
         "name": "音频分类训练",
         "category": "training",
@@ -604,6 +618,20 @@ _DEFAULT_ALGORITHMS = (
                 "description": "决策树最大深度",
             },
         ],
+    },
+    {
+        "key": "evaluation.text.text_classifier",
+        "name": "TF-IDF 文本分类评估",
+        "category": "evaluation",
+        "modality": "text",
+        "entry_type": "python_function",
+        "module_path": "plugins.evaluation.text_classifier_evaluator",
+        "callable_name": "run",
+        "description": "加载 TF-IDF + LinearSVC 文本分类模型，计算准确率、Precision、Recall 和 F1。",
+        "input_contract": {"dataset_required": True, "sample_required": True, "fields": ["baseline_dataset", "target_dataset"]},
+        "output_contract": {"produces": ["metrics", "report"], "artifact_types": ["json"]},
+        "validation_rules_json": {"scenario_key": "text_classification"},
+        "parameters": [],
     },
     {
         "key": "evaluation.audio.audio_classifier",
@@ -3024,6 +3052,7 @@ DEFAULT_ALGORITHMS = synchronize_default_algorithm_contracts(
 
 # 训练算法默认关联的评估插件
 DEFAULT_BINDINGS: dict[str, str] = {
+    "training.text.text_classifier": "evaluation.text.text_classifier",
     "training.audio.audio_classifier": "evaluation.audio.audio_classifier",
     "training.image.sonar_oltr_classifier": "evaluation.multimodal.sonar_oltr_plud",
     "training.image.yolov5_detector": "evaluation.image.yolov5_evaluator",

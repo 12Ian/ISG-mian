@@ -34,6 +34,15 @@ def analyze_training_compatibility(dataset, samples, algorithm, parameters: dict
 
     if key == "training.demo_classifier":
         return _result(True, "演示算法接受任意非空数据集")
+    if key == "training.text.text_classifier":
+        text_exts = {".txt", ".md", ".log", ".csv", ".json", ".yaml", ".yml"}
+        labeled = [sample for sample in active_samples if Path(sample_path(sample)).suffix.casefold() in text_exts and _classification_names(sample) and Path(sample_path(sample)).is_file()]
+        if len(labeled) < 10:
+            return _result(False, f"文本分类至少需要 10 个可读取且有标签的文本，当前 {len(labeled)} 个")
+        counts = Counter(name for sample in labeled for name in _classification_names(sample)[:1])
+        if len(counts) < 2 or min(counts.values()) < 2:
+            return _result(False, "文本分类至少需要 2 个类别，且每类至少 2 个样本")
+        return _result(True, f"找到 {len(labeled)} 个文本，{len(counts)} 个类别")
     if str(algorithm.modality or "") == "audio" or "audio_classifier" in key:
         audio_exts = {".wav", ".mp3", ".flac", ".ogg", ".aac", ".m4a"}
         labeled = [

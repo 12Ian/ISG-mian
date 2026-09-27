@@ -69,6 +69,7 @@ Item {
 
     // 训练算法 -> 评估算法 绑定表 (key -> key)
     property var trainingToEvalKey: ({
+        "training.text.text_classifier": "evaluation.text.text_classifier",
         "training.image.sonar_oltr_classifier": "evaluation.multimodal.sonar_oltr_plud",
         "training.image.yolov5_detector": "evaluation.image.yolov5_evaluator",
         "training.timeseries.ship_predictor": "evaluation.timeseries.ship_evaluator",

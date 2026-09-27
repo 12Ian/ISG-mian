@@ -21,6 +21,14 @@ class EvaluationService(ServiceBase):
 
     _DEFAULT_SCENARIOS = (
         {
+            "key": "text_classification",
+            "name": "文本分类",
+            "modality": "text",
+            "description": "用于文本分类模型的准确率、Precision、Recall 和 F1 评估。",
+            "baseline_models_json": ["tfidf-linearsvc"],
+            "metric_schema_json": ["accuracy", "precision", "recall", "f1"],
+        },
+        {
             "key": "audio_event_detection",
             "name": "音频事件分类",
             "modality": "audio",
