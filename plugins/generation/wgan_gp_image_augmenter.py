@@ -86,13 +86,6 @@ def run(payload: dict, context) -> dict:
     samples = [sample for sample in samples if _is_image_sample(sample)]
     if not samples:
         return {"ok": False, "error_code": "NO_INPUT_SAMPLES"}
-    if any(has_detection_labels(sample.get("labels") or sample.get("labels_json") or []) for sample in samples):
-        return {
-            "ok": False,
-            "error_code": "UNSUPPORTED_LABEL_TRANSFORM",
-            "message": "WGAN-GP 会改变图像内容，暂不能可靠继承检测框。",
-        }
-
     target_count = max(1, int(payload.get("target_count") or len(samples)))
     gp_lambda = float(parameters.get("gp_lambda", parameters.get("gradient_penalty", 10.0)) or 10.0)
     n_critic = int(parameters.get("n_critic", parameters.get("critic_iters", parameters.get("discriminator_iterations", 5))) or 5)
@@ -159,6 +152,12 @@ def run(payload: dict, context) -> dict:
         source_path = _sample_path(src)
         source_img = read_image(source_path)
         if source_img is None:
+            if has_detection_labels(src.get("labels") or src.get("labels_json") or []):
+                return {
+                    "ok": False,
+                    "error_code": "SOURCE_FILE_READ_ERROR",
+                    "message": f"无法读取带检测标注的源图片，不能安全继承标注：{source_path}",
+                }
             img_bgr = gan_bgr
             source_conditioned = False
         else:
@@ -167,15 +166,19 @@ def run(payload: dict, context) -> dict:
         output_path = output_dir / f"wgan_gp_{index:04d}.jpg"
         if not write_image(output_path, img_bgr):
             return {"ok": False, "error_code": "IMAGE_WRITE_ERROR", "message": f"Cannot write image: {output_path}"}
+        source_labels = list(src.get("labels") or src.get("labels_json") or [])
         outputs.append({
             "source_sample_id": src.get("id"),
             "output_path": str(output_path),
             "relative_path": output_path.name,
+            "labels": source_labels,
+            "label_policy": "inherit",
             "metadata": {
                 "method": "wgan_gp",
                 "algorithm_key": payload.get("algorithm_key", "generation.image.wgan_gp"),
                 "source_conditioned": source_conditioned,
                 "enhance_strength": enhance_strength,
+                "geometry_preserved": source_conditioned,
             },
             "status": "created",
         })
@@ -196,9 +199,11 @@ def _run_texture_augmentation(payload, context, output_dir, samples, target_coun
         img = read_image(source_path)
         if img is None:
             continue
-        flipped = cv2.flip(img, 1)
-        blurred = cv2.GaussianBlur(flipped, (5, 5), 0)
-        detail = cv2.addWeighted(flipped, 1.4, blurred, -0.4, 0)
+        source_labels = list(sample.get("labels") or sample.get("labels_json") or [])
+        # 检测/追踪样本不能水平翻转，否则原框和 track_id 会失效。
+        base = img if has_detection_labels(source_labels) else cv2.flip(img, 1)
+        blurred = cv2.GaussianBlur(base, (5, 5), 0)
+        detail = cv2.addWeighted(base, 1.4, blurred, -0.4, 0)
         color_boost = cv2.convertScaleAbs(detail, alpha=1.0 + 0.18 * enhance_strength, beta=10 * enhance_strength)
         img = cv2.addWeighted(img, max(0.0, 1.0 - 0.55 * enhance_strength), color_boost, min(1.0, 0.55 * enhance_strength), 0)
         output_path = output_dir / f"{method}_{index:04d}.jpg"
@@ -208,6 +213,8 @@ def _run_texture_augmentation(payload, context, output_dir, samples, target_coun
             "source_sample_id": sample.get("id"),
             "output_path": str(output_path),
             "relative_path": output_path.name,
+            "labels": source_labels,
+            "label_policy": "inherit",
             "metadata": {"method": method, "fallback": True, "algorithm_key": payload.get("algorithm_key", "")},
             "status": "created",
         })
@@ -244,6 +251,7 @@ def _is_image_sample(sample):
 
 
 def _blend_gan_texture(source_img, gan_img, enhance_strength):
+    """仅改变源图的颜色和纹理，保持目标的像素位置不变。"""
     strength = max(0.3, min(float(enhance_strength or 1.0), 2.0))
     gan_resized = cv2.resize(gan_img, (source_img.shape[1], source_img.shape[0]), interpolation=cv2.INTER_CUBIC)
     source_float = source_img.astype(np.float32)
@@ -260,22 +268,9 @@ def _blend_gan_texture(source_img, gan_img, enhance_strength):
     gan_weight = min(0.7, 0.42 * strength)
     styled = cv2.addWeighted(source_float, 1.0 - gan_weight, styled, gan_weight, 0)
 
-    gray_gan = cv2.cvtColor(np.clip(gan_resized, 0, 255).astype(np.uint8), cv2.COLOR_BGR2GRAY).astype(np.float32)
-    flow_x = cv2.GaussianBlur(gray_gan - 127.5, (0, 0), 9) / 127.5 * (4.0 * strength)
-    flow_y = cv2.GaussianBlur(np.roll(gray_gan, gray_gan.shape[1] // 5, axis=1) - 127.5, (0, 0), 9) / 127.5 * (4.0 * strength)
-    h, w = gray_gan.shape
-    grid_x, grid_y = np.meshgrid(np.arange(w, dtype=np.float32), np.arange(h, dtype=np.float32))
-    warped = cv2.remap(
-        np.clip(styled, 0, 255).astype(np.uint8),
-        grid_x + flow_x.astype(np.float32),
-        grid_y + flow_y.astype(np.float32),
-        cv2.INTER_LINEAR,
-        borderMode=cv2.BORDER_REFLECT_101,
-    ).astype(np.float32)
-
     source_edges = cv2.Canny(source_img, 80, 160).astype(np.float32) / 255.0
     edge_mask = cv2.GaussianBlur(source_edges, (0, 0), 1.2)[:, :, None]
-    mixed = warped * (1.0 - edge_mask * 0.25) + source_float * (edge_mask * 0.25)
+    mixed = styled * (1.0 - edge_mask * 0.25) + source_float * (edge_mask * 0.25)
     return np.clip(mixed, 0, 255).astype(np.uint8)
 
 
